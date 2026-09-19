@@ -1,6 +1,7 @@
 # Local configuration and data
 .env
 data/
+config/config.yaml
 
 # Build output
 .cache/
