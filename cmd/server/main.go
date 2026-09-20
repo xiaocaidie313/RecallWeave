@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
 	"recallweave/internal/config"
+	"recallweave/internal/db"
 	apphttp "recallweave/internal/http"
 )
 
@@ -20,8 +22,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 连接数据库并建表
+	database, err := db.NewDB(cfg.Database)
+	if err != nil {
+		logger.Error("failed to connect database", "error", err)
+		os.Exit(1)
+	}
+
+	if err := db.AutoMigrate(database); err != nil {
+		logger.Error("failed to migrate database", "error", err)
+		os.Exit(1)
+	}
+
 	// 启动路由
-	r := apphttp.NewRouter()
+	r := apphttp.NewRouter(database)
 
 	address := fmt.Sprintf(":%d", cfg.Server.Port)
 	logger.Info("RecallWeave API started", "address", address)
