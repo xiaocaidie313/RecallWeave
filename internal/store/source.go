@@ -14,8 +14,8 @@ type Source struct {
 
 // Message 是从一次导入里切出来的单条对话，Seq 用来还原顺序。
 type Message struct {
-	ID        uint      `gorm:"primaryKey"json:"id"`
-	SourceID  uint      `gorm:"index;not null"json:"source_id"`
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	SourceID  uint      `gorm:"index;not null" json:"source_id"`
 	Seq       int       `gorm:"not null" json:"seq"`
 	Role      string    `gorm:"size:32;not null" json:"role"`
 	Content   string    `gorm:"type:text;not null" json:"content"`

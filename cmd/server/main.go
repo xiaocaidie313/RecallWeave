@@ -44,4 +44,6 @@ func main() {
 		logger.Error("failed to start server", "error", err)
 		os.Exit(1)
 	}
+
+	
 }

@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 
+	"recallweave/internal/extract"
 	"recallweave/internal/ingest"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,11 @@ func NewRouter(db *gorm.DB) *gin.Engine {
 	ingestHandler := ingest.NewIngestHandler(ingestService)
 
 	router.POST("/api/imports", ingestHandler.ImportText)
+
+	extractExcuter := extract.NewExtractExcuter(db)
+	extractHandler := extract.NewExtractHandler(extractExcuter)
+
+	router.POST("/api/sources/:source_id/extract", extractHandler.ExtractSource)
 
 	return router
 }
