@@ -1,7 +1,10 @@
 package ingest
 
 import (
+	"errors"
 	"net/http"
+
+	"recallweave/internal/store"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,8 +18,9 @@ func NewIngestHandler(service *IngestService) *IngestHandler {
 }
 
 type importTextRequest struct {
-	Source string `json:"source" binding:"required"`
-	Text   string `json:"text" binding:"required"`
+	SourceTag string `json:"source_tag" binding:"required"`
+	Name      string `json:"name"`
+	Text      string `json:"text" binding:"required"`
 }
 
 func (h *IngestHandler) ImportText(c *gin.Context) {
@@ -27,15 +31,29 @@ func (h *IngestHandler) ImportText(c *gin.Context) {
 		})
 		return
 	}
-	res, err := h.service.ImportText(req.Source, req.Text)
+
+	result, err := h.service.ImportText(
+		c.Request.Context(),
+		store.SourceTag(req.SourceTag),
+		req.Name,
+		req.Text,
+	)
 	if err != nil {
+		if errors.Is(err, ErrInvalidSource) || errors.Is(err, ErrEmptyText) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
 		return
 	}
+
 	c.JSON(http.StatusCreated, gin.H{
-		"source_id":     res.SourceID,
-		"message_count": res.MessageCount,
+		"session_id":    result.SessionID,
+		"message_count": result.MessageCount,
 	})
 }

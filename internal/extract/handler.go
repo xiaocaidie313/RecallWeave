@@ -15,18 +15,18 @@ func NewExtractHandler(excuter *ExtractExcuter) *ExtractHandler {
 	return &ExtractHandler{excuter: excuter}
 }
 
-// ExtractSource 手动触发提炼，目前只用来验证链路。
+// ExtractSession 手动触发提炼，目前只用来验证链路。
 // 等提炼稳定后，这一步会由导入成功之后自动带起来。
-func (h *ExtractHandler) ExtractSource(c *gin.Context) {
-	sourceID, err := strconv.ParseUint(c.Param("source_id"), 10, 64)
+func (h *ExtractHandler) ExtractSession(c *gin.Context) {
+	sessionID, err := strconv.ParseUint(c.Param("session_id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "invalid source id",
+			"error": "invalid session id",
 		})
 		return
 	}
 
-	count, err := h.excuter.ExtractSource(uint(sourceID))
+	count, err := h.excuter.ExtractSession(c.Request.Context(), uint(sessionID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -35,7 +35,7 @@ func (h *ExtractHandler) ExtractSource(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"source_id":    sourceID,
+		"session_id":   sessionID,
 		"memory_count": count,
 	})
 }

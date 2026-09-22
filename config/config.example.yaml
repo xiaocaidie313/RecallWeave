@@ -7,3 +7,9 @@ database:
   user_name: root
   password: your-password
   db_name: recallweave
+
+llm:
+  base_url: https://api.siliconflow.cn/v1
+  api_key: "sk-jrmfpovtlgpwyjojjgicsxqaslbhqhpswlnfqdvlyhpjtfqv"
+  model: deepseek-ai/DeepSeek-V4-Flash
+  timeout_seconds: 30

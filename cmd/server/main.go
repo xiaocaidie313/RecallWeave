@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"recallweave/internal/config"
 	"recallweave/internal/db"
+	"recallweave/internal/extract"
 	apphttp "recallweave/internal/http"
+	"recallweave/internal/ingest"
+	"recallweave/internal/llm"
 )
 
 const defaultConfigPath = "config/config.yaml"
@@ -34,8 +38,30 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 没配 api_key 时 segmenter 为 nil，提炼退回整段兜底
+	var segmenter llm.Segmenter
+	if cfg.LLM.APIKey == "" {
+		logger.Info("llm api key is empty, extraction falls back to whole session")
+	} else {
+		client, err := llm.NewClient(llm.Config{
+			BaseURL: cfg.LLM.BaseURL,
+			APIKey:  cfg.LLM.APIKey,
+			Model:   cfg.LLM.Model,
+			Timeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		})
+		if err != nil {
+			logger.Error("failed to create llm client", "error", err)
+			os.Exit(1)
+		}
+		segmenter = client
+	}
+
+	// 组装依赖
+	ingestHandler := ingest.NewIngestHandler(ingest.NewIngestService(ingest.NewIngestRepo(database)))
+	extractHandler := extract.NewExtractHandler(extract.NewExtractExcuter(database, segmenter))
+
 	// 启动路由
-	r := apphttp.NewRouter(database)
+	r := apphttp.NewRouter(ingestHandler, extractHandler)
 
 	address := fmt.Sprintf(":%d", cfg.Server.Port)
 	logger.Info("RecallWeave API started", "address", address)
@@ -44,6 +70,4 @@ func main() {
 		logger.Error("failed to start server", "error", err)
 		os.Exit(1)
 	}
-
-	
 }

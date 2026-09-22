@@ -7,10 +7,10 @@ import (
 	"recallweave/internal/ingest"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB) *gin.Engine {
+// NewRouter 只做「路径 → 处理函数」的映射，依赖在 main 里组装好再传进来。
+func NewRouter(ingestHandler *ingest.IngestHandler, extractHandler *extract.ExtractHandler) *gin.Engine {
 	router := gin.Default()
 
 	router.GET("/healthz", func(c *gin.Context) {
@@ -19,16 +19,8 @@ func NewRouter(db *gorm.DB) *gin.Engine {
 		})
 	})
 
-	ingestRepo := ingest.NewIngestRepo(db)
-	ingestService := ingest.NewIngestService(ingestRepo)
-	ingestHandler := ingest.NewIngestHandler(ingestService)
-
 	router.POST("/api/imports", ingestHandler.ImportText)
-
-	extractExcuter := extract.NewExtractExcuter(db)
-	extractHandler := extract.NewExtractHandler(extractExcuter)
-
-	router.POST("/api/sources/:source_id/extract", extractHandler.ExtractSource)
+	router.POST("/api/sessions/:session_id/extract", extractHandler.ExtractSession)
 
 	return router
 }

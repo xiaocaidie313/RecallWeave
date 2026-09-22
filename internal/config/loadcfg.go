@@ -10,6 +10,7 @@ import (
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
+	LLM      LLMConfig      `yaml:"llm"`
 }
 
 type ServerConfig struct {
@@ -22,6 +23,14 @@ type DatabaseConfig struct {
 	UserName string `yaml:"user_name"`
 	Password string `yaml:"password"`
 	DBName   string `yaml:"db_name"`
+}
+
+// LLMConfig 留空时提炼会退回到本地兜底，不调模型。
+type LLMConfig struct {
+	BaseURL        string `yaml:"base_url"`
+	APIKey         string `yaml:"api_key"`
+	Model          string `yaml:"model"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
 
 // 自定义  通过加载配置文件
