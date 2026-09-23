@@ -6,12 +6,14 @@ import (
 	"os"
 	"time"
 
+	"recallweave/internal/ask"
 	"recallweave/internal/config"
 	"recallweave/internal/db"
 	"recallweave/internal/extract"
 	apphttp "recallweave/internal/http"
 	"recallweave/internal/ingest"
 	"recallweave/internal/llm"
+	"recallweave/internal/memory"
 )
 
 const defaultConfigPath = "config/config.yaml"
@@ -38,12 +40,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 没配 api_key 时 segmenter 为 nil，提炼退回整段兜底
-	var segmenter llm.Segmenter
+	// 没配 api_key 时提炼退回整段兜底，问答直接不可用
+	var client *llm.Client
 	if cfg.LLM.APIKey == "" {
-		logger.Info("llm api key is empty, extraction falls back to whole session")
+		logger.Info("llm api key is empty, extraction falls back to whole session and ask is disabled")
 	} else {
-		client, err := llm.NewClient(llm.Config{
+		client, err = llm.NewClient(llm.Config{
 			BaseURL: cfg.LLM.BaseURL,
 			APIKey:  cfg.LLM.APIKey,
 			Model:   cfg.LLM.Model,
@@ -53,15 +55,25 @@ func main() {
 			logger.Error("failed to create llm client", "error", err)
 			os.Exit(1)
 		}
+	}
+
+	// client 为 nil 时不能直接赋给接口变量，否则接口不为 nil，下游判断会失效
+	var segmenter llm.Segmenter
+	var responder llm.Responder
+	if client != nil {
 		segmenter = client
+		responder = client
 	}
 
 	// 组装依赖
 	ingestHandler := ingest.NewIngestHandler(ingest.NewIngestService(ingest.NewIngestRepo(database)))
 	extractHandler := extract.NewExtractHandler(extract.NewExtractExcuter(database, segmenter))
 
+	memoryManger := memory.NewMemoryManger(database)
+	askHandler := ask.NewAskHandler(ask.NewAgent(responder, ask.NewToolSet(memoryManger)))
+
 	// 启动路由
-	r := apphttp.NewRouter(ingestHandler, extractHandler)
+	r := apphttp.NewRouter(ingestHandler, extractHandler, askHandler)
 
 	address := fmt.Sprintf(":%d", cfg.Server.Port)
 	logger.Info("RecallWeave API started", "address", address)

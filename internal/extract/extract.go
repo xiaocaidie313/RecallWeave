@@ -60,10 +60,8 @@ func (e *ExtractExcuter) ExtractSession(ctx context.Context, sessionID uint) (in
 // #1 读取消息
 func (e *ExtractExcuter) GetMessages(ctx context.Context, sessionID uint) ([]store.Message, error) {
 	var messages []store.Message
-	if err := e.db.WithContext(ctx).
-		Where("session_id = ?", sessionID).
-		Order("seq").
-		Find(&messages).Error; err != nil {
+
+	if err := e.db.WithContext(ctx).Where("session_id = ?", sessionID).Order("seq").Find(&messages).Error; err != nil {
 		return nil, err
 	}
 	return messages, nil
@@ -73,6 +71,7 @@ func (e *ExtractExcuter) GetMessages(ctx context.Context, sessionID uint) ([]sto
 func (e *ExtractExcuter) segment(ctx context.Context, messages []store.Message) []llm.Segment {
 	fallback := []llm.Segment{wholeSessionSegment(messages)}
 
+	// 模型失效
 	if e.segmenter == nil {
 		return fallback
 	}

@@ -93,6 +93,7 @@ type segmentResponse struct {
 	Segments []Segment `json:"segments"`
 }
 
+// Segment 把整段会话交给模型按话题切分。
 func (c *Client) Segment(ctx context.Context, messages []Message, allowedTags []string) ([]Segment, error) {
 	if len(messages) == 0 {
 		return nil, nil
@@ -112,33 +113,39 @@ func (c *Client) Segment(ctx context.Context, messages []Message, allowedTags []
 
 	prompt := fmt.Sprintf(segmentPromptTemplate, minSeq, maxSeq, strings.Join(allowedTags, ", "))
 
-	response, err := c.sdk.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model: shared.ChatModel(c.model),
-		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(prompt),
-			openai.UserMessage(builder.String()),
-		},
-		// 让模型只返回 JSON，省掉解析自由文本。
-		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
-			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
-		},
-	})
+	raw, err := c.completeJSON(ctx, prompt, builder.String())
 	if err != nil {
-		return nil, fmt.Errorf("llm: chat completion failed: %w", err)
-	}
-
-	if len(response.Choices) == 0 {
-		return nil, fmt.Errorf("llm: response has no choices")
+		return nil, err
 	}
 
 	var parsed segmentResponse
-	if err := json.Unmarshal([]byte(response.Choices[0].Message.Content), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 		return nil, fmt.Errorf("llm: decode segments: %w", err)
 	}
 
 	return parsed.Segments, nil
 }
 
-// 后期拓展画布能力  画图--类似思维导图
+// completeJSON 是单轮、强制返回 JSON 的调用，提炼这类结构化任务用它。
+// 问答走 Next，那边要的是自然语言，不能锁成 JSON。
+func (c *Client) completeJSON(ctx context.Context, systemPrompt, userMessage string) (string, error) {
+	response, err := c.sdk.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+		Model: shared.ChatModel(c.model),
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.SystemMessage(systemPrompt),
+			openai.UserMessage(userMessage),
+		},
+		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
+			OfJSONObject: &shared.ResponseFormatJSONObjectParam{},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("llm: chat completion failed: %w", err)
+	}
 
-// summary 的时候应该是根据 某个 session  然后说按照seq的顺序来提炼记忆
+	if len(response.Choices) == 0 {
+		return "", fmt.Errorf("llm: response has no choices")
+	}
+
+	return response.Choices[0].Message.Content, nil
+}

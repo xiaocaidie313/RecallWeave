@@ -65,6 +65,5 @@ func splitMessages(text string) []store.Message {
 			Content: block,
 		})
 	}
-
 	return messages
 }

@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 
+	"recallweave/internal/ask"
 	"recallweave/internal/extract"
 	"recallweave/internal/ingest"
 
@@ -10,7 +11,11 @@ import (
 )
 
 // NewRouter 只做「路径 → 处理函数」的映射，依赖在 main 里组装好再传进来。
-func NewRouter(ingestHandler *ingest.IngestHandler, extractHandler *extract.ExtractHandler) *gin.Engine {
+func NewRouter(
+	ingestHandler *ingest.IngestHandler,
+	extractHandler *extract.ExtractHandler,
+	askHandler *ask.AskHandler,
+) *gin.Engine {
 	router := gin.Default()
 
 	router.GET("/healthz", func(c *gin.Context) {
@@ -21,6 +26,7 @@ func NewRouter(ingestHandler *ingest.IngestHandler, extractHandler *extract.Extr
 
 	router.POST("/api/imports", ingestHandler.ImportText)
 	router.POST("/api/sessions/:session_id/extract", extractHandler.ExtractSession)
+	router.POST("/api/ask", askHandler.Ask)
 
 	return router
 }

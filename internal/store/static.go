@@ -122,9 +122,25 @@ func NormalizeContentType(raw string) ContentType {
 type Emotion string
 
 const (
-	EmotionPositive Emotion = "positive"
-	EmotionNeutral  Emotion = "neutral"
-	EmotionNegative Emotion = "negative"
+	EmotionPositive   Emotion = "positive"
+	EmotionNeutral    Emotion = "neutral"
+	EmotionNegative   Emotion = "negative"
+	EmotionPeaceful   Emotion = "peaceful"
+	EmotionAngry      Emotion = "angry"
+	EmotionSad        Emotion = "sad"
+	EmotionHappy      Emotion = "happy"
+	EmotionSurprised  Emotion = "surprised"
+	EmotionCurious    Emotion = "curious"
+	EmotionConfused   Emotion = "confused"
+	EmotionBored      Emotion = "bored"
+	EmotionStressed   Emotion = "stressed"
+	EmotionAnxious    Emotion = "anxious"
+	EmotionDepressed  Emotion = "depressed"
+	EmotionExited     Emotion = "exited"
+	EmotionRelaxed    Emotion = "relaxed"
+	EmotionCalm       Emotion = "calm"
+	EmotionFocused    Emotion = "focused"
+	EmotionDistracted Emotion = "distracted"
 )
 
 var Emotions = []Emotion{
