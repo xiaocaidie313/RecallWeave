@@ -70,7 +70,7 @@ func main() {
 	extractHandler := extract.NewExtractHandler(extract.NewExtractExcuter(database, segmenter))
 
 	memoryManger := memory.NewMemoryManger(database)
-	askHandler := ask.NewAskHandler(ask.NewAgent(responder, ask.NewToolSet(memoryManger)))
+	askHandler := ask.NewAskHandler(ask.NewAgent(responder, ask.NewAskToolHandle(memoryManger), memoryManger))
 
 	// 启动路由
 	r := apphttp.NewRouter(ingestHandler, extractHandler, askHandler)

@@ -39,8 +39,12 @@ func NewConversation(systemPrompt string) *Conversation {
 	}
 }
 
-func (conv *Conversation) AddUser(content string) {
+func (conv *Conversation) AddUserMessage(content string) {
 	conv.messages = append(conv.messages, openai.UserMessage(content)) // system, userMessage, assistantMessage, toolMessage, functionMessage
+}
+
+func (conv *Conversation) AddAssistantMessage(content string) {
+	conv.messages = append(conv.messages, openai.AssistantMessage(content))
 }
 
 // AddToolResult 把工具执行结果回灌给模型。toolCallID 必须和请求时的 ID 对上，

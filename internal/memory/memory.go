@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"recallweave/internal/store"
@@ -16,6 +17,14 @@ const (
 
 type MemoryManger struct {
 	db *gorm.DB
+}
+
+// 预加载历史对话的 总计的清单 让llm 不重新 根据全部历史记录 重新生成 而是 直接从清单里 提取 记忆
+type MemoryBriefParam struct {
+	ConversationID uint   `json:"conversation_id"`
+	SessionID      []uint `json:"session_id"`
+	// Brief string `json:"brief"`
+	// raw ? 如果太多 ?
 }
 
 func NewMemoryManger(db *gorm.DB) *MemoryManger {
@@ -73,4 +82,88 @@ func (m *MemoryManger) GetMessages(ctx context.Context, sessionID uint, seqStart
 		return nil, err
 	}
 	return messages, nil
+}
+
+// ChatSession 是跟助手的这一次聊天。同一个 conversation 只建一条，
+// 导入的其他来源会话不放进来。
+func (m *MemoryManger) ChatSession(ctx context.Context, conversationID uint) (*store.Session, error) {
+	var session store.Session
+	err := m.db.WithContext(ctx).
+		Where("conversation_id = ? AND source_tag = ?", conversationID, store.SourceChat).
+		First(&session).Error
+	if err == nil {
+		return &session, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	session = store.Session{
+		ConversationID: conversationID,
+		SourceTag:      store.SourceChat,
+		Name:           "chat",
+	}
+	if err := m.db.WithContext(ctx).Create(&session).Error; err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+// ListMessages 按顺序返回一次聊天里已经保存的消息。
+func (m *MemoryManger) ListMessages(ctx context.Context, sessionID uint) ([]store.Message, error) {
+	var messages []store.Message
+	err := m.db.WithContext(ctx).
+		Where("session_id = ?", sessionID).
+		Order("seq").
+		Find(&messages).Error
+	return messages, err
+}
+
+// AppendMessages 把新消息接在已有序号后面。
+func (m *MemoryManger) AppendMessages(ctx context.Context, sessionID uint, messages []store.Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var last store.Message
+		err := tx.Where("session_id = ?", sessionID).Order("seq desc").First(&last).Error
+		seq := 0
+		if err == nil {
+			seq = last.Seq
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		for i := range messages {
+			seq++
+			messages[i].SessionID = sessionID
+			messages[i].Seq = seq
+		}
+		return tx.Create(&messages).Error
+	})
+}
+
+func (m *MemoryManger) GetSessions(ctx context.Context, conversationID uint) ([]store.Session, error) {
+	var sessions []store.Session
+	if err := m.db.WithContext(ctx).Model(&store.Session{}).Where("conversation_id = ?", conversationID).Find(&sessions).Error; err != nil {
+		return nil, err
+	}
+	return sessions, nil
+}
+
+// 根据conversationID 找 session 找 memmory 然后汇总
+func (m *MemoryManger) GetMemoryBrief(ctx context.Context, conversationID uint) (MemoryBriefParam, error) {
+	var relatedSessions []store.Session
+	if err := m.db.WithContext(ctx).Model(&store.Session{}).Where("conversation_id = ?", conversationID).Find(&relatedSessions).Error; err != nil {
+		return MemoryBriefParam{}, err
+	}
+	var sessionIDs []uint
+	for _, session := range relatedSessions {
+		sessionIDs = append(sessionIDs, session.ID)
+	}
+	return MemoryBriefParam{
+		ConversationID: conversationID,
+		SessionID:      sessionIDs,
+	}, nil
 }

@@ -22,6 +22,12 @@ type memoryHit struct {
 	Content   string `json:"content"`
 }
 
+type memoryBrief struct {
+	ConversationID uint   `json:"conversation_id"`
+	SessionID      []uint `json:"session_id"`
+	Brief          string `json:"brief"`
+}
+
 type searchMemoriesResult struct {
 	Memories []memoryHit `json:"memories"`
 }
@@ -37,12 +43,13 @@ type getMessagesResult struct {
 	Messages  []messageLine `json:"messages"`
 }
 
-// NewToolSet 声明 agent 可用的工具。都是只读、细粒度的数据访问，
+// NewAskToolHandle 声明 agent 可用的工具。都是只读、细粒度的数据访问，
 // 提炼那种流水线不放进来——它的触发时机是确定的，不需要模型判断。
-func NewToolSet(manager *memory.MemoryManger) *llm.ToolHandle {
+func NewAskToolHandle(manager *memory.MemoryManger) *llm.ToolHandle {
 	tools := llm.NewToolHandle()
 	tools.Register(searchMemoriesTool(manager))
 	tools.Register(getMessagesTool(manager))
+	tools.Register(getSessionsTool(manager))
 	return tools
 }
 
@@ -171,6 +178,42 @@ func getMessagesTool(manager *memory.MemoryManger) llm.Tool {
 	}
 }
 
+func getSessionsTool(manager *memory.MemoryManger) llm.Tool {
+	return llm.Tool{
+		Schema: llm.ToolSchema{
+			Name:        "get_sessions",
+			Description: "根据conversationID 获取相关的session对话",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"conversation_id": map[string]any{
+						"type":        "integer",
+						"description": "conversationID",
+					},
+				},
+			},
+		},
+		Run: func(ctx context.Context, arguments string) (string, error) {
+			var args struct {
+				ConversationID uint `json:"conversation_id"`
+			}
+			if err := decodeArguments(arguments, &args); err != nil {
+				return "", err
+			}
+
+			if args.ConversationID == 0 {
+				return "", fmt.Errorf("conversation_id is required")
+			}
+
+			sessions, err := manager.GetSessions(ctx, args.ConversationID)
+			if err != nil {
+				return "", err
+			}
+			return encodeResult(sessions)
+		},
+	}
+}
+
 // decodeArguments 容忍空参数，模型在无参调用时会给空字符串。
 func decodeArguments(arguments string, target any) error {
 	if arguments == "" || arguments == "null" {
@@ -182,6 +225,7 @@ func decodeArguments(arguments string, target any) error {
 	return nil
 }
 
+// 转化成json字符串
 func encodeResult(value any) (string, error) {
 	encoded, err := json.Marshal(value)
 	if err != nil {
@@ -197,3 +241,7 @@ func allowedTags() []string {
 	}
 	return tags
 }
+
+// func memoryBriefTool(manager *memory.MemoryManger) llm.Tool {
+
+// }

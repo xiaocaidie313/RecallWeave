@@ -8,6 +8,8 @@ import (
 	"log/slog"
 
 	"recallweave/internal/llm"
+	"recallweave/internal/memory"
+	"recallweave/internal/store"
 )
 
 // maxRounds 限制「模型调工具 → 回灌结果」的往返次数。没有上限的话，
@@ -41,21 +43,26 @@ type Answer struct {
 type Agent struct {
 	responder llm.Responder
 	tools     *llm.ToolHandle
+	memory    *memory.MemoryManger
 }
 
 // responder 为 nil 表示没配 api_key，这时问答直接报错。
 // 提炼有本地兜底，问答没有——没有模型就没法组织回答。
-func NewAgent(responder llm.Responder, tools *llm.ToolSet) *Agent {
-	return &Agent{responder: responder, tools: tools}
+func NewAgent(responder llm.Responder, tools *llm.ToolHandle, memoryManger *memory.MemoryManger) *Agent {
+	return &Agent{responder: responder, tools: tools, memory: memoryManger}
 }
 
-func (a *Agent) Ask(ctx context.Context, question string) (Answer, error) {
+func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (Answer, error) {
 	if a.responder == nil {
 		return Answer{}, ErrNoModel
 	}
 
 	conversation := llm.NewConversation(systemPrompt)
-	conversation.AddUser(question)
+	sessionID, err := a.preload(ctx, conversation, conversationID)
+	if err != nil {
+		return Answer{}, err
+	}
+	conversation.AddUserMessage(question)
 
 	var citations []Citation
 	// 模型往往会换关键词多搜几轮，同一条记忆会重复命中，这里按 id 去重。
@@ -67,7 +74,11 @@ func (a *Agent) Ask(ctx context.Context, question string) (Answer, error) {
 			return Answer{}, err
 		}
 
+		// 没有工具调用，直接返回回答 1 进行的对话不需要工具  2 这一轮对话 工具用完了
 		if len(turn.ToolCalls) == 0 {
+			if err := a.saveTurn(ctx, sessionID, question, turn.Content); err != nil {
+				return Answer{}, err
+			}
 			return Answer{
 				Text:      turn.Content,
 				Citations: citations,
@@ -75,6 +86,7 @@ func (a *Agent) Ask(ctx context.Context, question string) (Answer, error) {
 			}, nil
 		}
 
+		// 有工具调用，执行工具
 		for _, call := range turn.ToolCalls {
 			result, err := a.tools.Run(ctx, call.Name, call.Arguments)
 			if err != nil {
@@ -92,10 +104,10 @@ func (a *Agent) Ask(ctx context.Context, question string) (Answer, error) {
 				if _, seen := cited[citation.MemoryID]; seen {
 					continue
 				}
-				cited[citation.MemoryID] = struct{}{}
+				cited[citation.MemoryID] = struct{}{} // 去重  标记为已访问
 				citations = append(citations, citation)
 			}
-
+			// 添加工具调用结果
 			conversation.AddToolResult(call.ID, result)
 		}
 	}
@@ -135,3 +147,63 @@ func citationsFrom(toolName, result string) []Citation {
 	}
 	return citations
 }
+
+// preload 把这次聊天里已经有的消息放进上下文，并返回对应的 session。
+// 没有记忆库或没有 conversation 时跳过，测试可以不连数据库。
+func (a *Agent) preload(ctx context.Context, conv *llm.Conversation, conversationID uint) (uint, error) {
+	if a.memory == nil || conversationID == 0 {
+		return 0, nil
+	}
+
+	session, err := a.memory.ChatSession(ctx, conversationID)
+	if err != nil {
+		return 0, err
+	}
+
+	messages, err := a.memory.ListMessages(ctx, session.ID)
+	if err != nil {
+		return 0, err
+	}
+	for _, msg := range messages {
+		if msg.Role == "assistant" {
+			conv.AddAssistantMessage(msg.Content)
+			continue
+		}
+		conv.AddUserMessage(msg.Content)
+	}
+	return session.ID, nil
+}
+
+func (a *Agent) saveTurn(ctx context.Context, sessionID uint, question, answer string) error {
+	if a.memory == nil || sessionID == 0 {
+		return nil
+	}
+	return a.memory.AppendMessages(ctx, sessionID, []store.Message{
+		{Role: "user", Content: question},
+		{Role: "assistant", Content: answer},
+	})
+}
+
+// 预加载历史对话的总计清单，让模型不用每次根据全部历史重新生成，而是直接从清单里提取记忆。
+// 下面几段还没写完，先留着，不参与编译。
+//
+// type MemoryBrief struct {
+// 	ConversationID uint   `json:"conversation_id"`
+// 	SessionID      []uint `json:"session_id"`
+// 	Brief          string `json:"brief"`
+// 	// raw ? 如果太多 ?
+// }
+//
+// // 加载同一对话下的长期记忆
+// func InjectPostMemory(ctx context.Context, conversationID uint) {
+// 	// @todo 区分在同一轮对话下的不同 session 的记忆
+// 	memoryBrief, err := GenerateMemoryBrief(ctx, conversationID)
+// }
+//
+// func GenerateMemoryBrief(ctx context.Context, conversationID uint) (MemoryBrief, error) {
+// 	// 根据 conversationID 找 session，找 memory，然后汇总
+// 	// warn：可能很粗糙，准确性不高
+// }
+//
+// // 应该在生成记忆的时候再让模型处理一轮，评估优先级和一些 tag（分类）
+// // @todo 后期做 multi-agent 的时候，应该分出一个 executor 专门执行，参数由发任务的 agent 给的单子带上，会带上 user 期望的

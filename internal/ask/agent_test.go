@@ -43,9 +43,9 @@ func recordingTool(name, response string, gotArguments *string) llm.Tool {
 
 func TestAskReturnsAnswerWithoutTools(t *testing.T) {
 	responder := &fakeResponder{turns: []llm.Turn{{Content: "没有相关记录。"}}}
-	agent := NewAgent(responder, llm.NewToolSet())
+	agent := NewAgent(responder, llm.NewToolHandle(), nil)
 
-	answer, err := agent.Ask(context.Background(), "我上次怎么说的")
+	answer, err := agent.Ask(context.Background(), "我上次怎么说的", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 	}
 
 	var gotArguments string
-	tools := llm.NewToolSet()
+	tools := llm.NewToolHandle()
 	tools.Register(recordingTool("search_memories", string(encoded), &gotArguments))
 
 	responder := &fakeResponder{turns: []llm.Turn{
@@ -83,9 +83,9 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 		{Content: "你说过 cmd 是可执行入口。"},
 	}}
 
-	agent := NewAgent(responder, tools)
+	agent := NewAgent(responder, tools, nil)
 
-	answer, err := agent.Ask(context.Background(), "cmd 目录是干什么的")
+	answer, err := agent.Ask(context.Background(), "cmd 目录是干什么的", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestAskDeduplicatesCitations(t *testing.T) {
 	}
 
 	var ignored string
-	tools := llm.NewToolSet()
+	tools := llm.NewToolHandle()
 	tools.Register(recordingTool("search_memories", string(encoded), &ignored))
 
 	// 模型换了关键词又搜一次，两次都命中同一条记忆。
@@ -128,7 +128,7 @@ func TestAskDeduplicatesCitations(t *testing.T) {
 		{Content: "你说过 cmd 是可执行入口。"},
 	}}
 
-	answer, err := NewAgent(responder, tools).Ask(context.Background(), "问题")
+	answer, err := NewAgent(responder, tools, nil).Ask(context.Background(), "问题", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestAskDeduplicatesCitations(t *testing.T) {
 }
 
 func TestAskFeedsToolErrorBackToModel(t *testing.T) {
-	tools := llm.NewToolSet()
+	tools := llm.NewToolHandle()
 	tools.Register(llm.Tool{
 		Schema: llm.ToolSchema{Name: "search_memories"},
 		Run: func(context.Context, string) (string, error) {
@@ -151,9 +151,9 @@ func TestAskFeedsToolErrorBackToModel(t *testing.T) {
 		{Content: "检索失败了，暂时查不到。"},
 	}}
 
-	agent := NewAgent(responder, tools)
+	agent := NewAgent(responder, tools, nil)
 
-	answer, err := agent.Ask(context.Background(), "问题")
+	answer, err := agent.Ask(context.Background(), "问题", 0)
 	if err != nil {
 		t.Fatalf("tool failure should not abort the loop: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestAskFeedsToolErrorBackToModel(t *testing.T) {
 }
 
 func TestAskStopsAfterMaxRounds(t *testing.T) {
-	tools := llm.NewToolSet()
+	tools := llm.NewToolHandle()
 	tools.Register(llm.Tool{
 		Schema: llm.ToolSchema{Name: "search_memories"},
 		Run: func(context.Context, string) (string, error) {
@@ -179,18 +179,18 @@ func TestAskStopsAfterMaxRounds(t *testing.T) {
 		}}}
 	}
 
-	agent := NewAgent(&fakeResponder{turns: turns}, tools)
+	agent := NewAgent(&fakeResponder{turns: turns}, tools, nil)
 
-	_, err := agent.Ask(context.Background(), "问题")
+	_, err := agent.Ask(context.Background(), "问题", 0)
 	if err == nil || !strings.Contains(err.Error(), "gave up") {
 		t.Fatalf("expected give-up error, got %v", err)
 	}
 }
 
 func TestAskWithoutModel(t *testing.T) {
-	agent := NewAgent(nil, llm.NewToolSet())
+	agent := NewAgent(nil, llm.NewToolHandle(), nil)
 
-	if _, err := agent.Ask(context.Background(), "问题"); !errors.Is(err, ErrNoModel) {
+	if _, err := agent.Ask(context.Background(), "问题", 0); !errors.Is(err, ErrNoModel) {
 		t.Fatalf("expected ErrNoModel, got %v", err)
 	}
 }
@@ -201,9 +201,9 @@ func TestUnknownToolIsReportedToModel(t *testing.T) {
 		{Content: "换个方式回答。"},
 	}}
 
-	agent := NewAgent(responder, llm.NewToolSet())
+	agent := NewAgent(responder, llm.NewToolHandle(), nil)
 
-	answer, err := agent.Ask(context.Background(), "问题")
+	answer, err := agent.Ask(context.Background(), "问题", 0)
 	if err != nil {
 		t.Fatalf("unknown tool should not abort the loop: %v", err)
 	}

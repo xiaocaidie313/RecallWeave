@@ -26,7 +26,7 @@ func NewRouter(
 
 	router.POST("/api/imports", ingestHandler.ImportText)
 	router.POST("/api/sessions/:session_id/extract", extractHandler.ExtractSession)
-	router.POST("/api/ask", askHandler.Ask)
+	router.POST("/api/ask/:conversation_id", askHandler.Ask)
 
 	return router
 }

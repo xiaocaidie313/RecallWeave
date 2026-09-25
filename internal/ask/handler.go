@@ -3,6 +3,7 @@ package ask
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,15 @@ type askRequest struct {
 // Ask 是用户问答的入口。handler 只做 JSON 绑定和状态码，
 // 往下传的是普通字符串，agent 不认识 gin。
 func (h *AskHandler) Ask(c *gin.Context) {
+
+	conversationID, err := strconv.ParseUint(c.Param("conversation_id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid conversation id",
+		})
+		return
+	}
+
 	var req askRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -39,7 +49,7 @@ func (h *AskHandler) Ask(c *gin.Context) {
 		return
 	}
 
-	answer, err := h.agent.Ask(c.Request.Context(), question)
+	answer, err := h.agent.Ask(c.Request.Context(), question, uint(conversationID))
 	if err != nil {
 		if errors.Is(err, ErrNoModel) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{

@@ -18,6 +18,7 @@ type Tool struct {
 	Run    ToolFunc // 统一的 run 运行
 }
 
+// ToolHandle 是工具的集合，用于管理工具的注册和运行。 set 注册
 type ToolHandle struct {
 	tools map[string]Tool
 	order []string
