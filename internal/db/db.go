@@ -27,6 +27,7 @@ func NewDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 
 func AutoMigrate(db *gorm.DB) error {
 	return db.AutoMigrate(
+		&store.Conversation{},
 		&store.Session{},
 		&store.Message{},
 		&store.Memory{},

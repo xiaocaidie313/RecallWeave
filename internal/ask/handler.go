@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type AskHandler struct {
@@ -51,6 +52,10 @@ func (h *AskHandler) Ask(c *gin.Context) {
 
 	answer, err := h.agent.Ask(c.Request.Context(), question, uint(conversationID))
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
+			return
+		}
 		if errors.Is(err, ErrNoModel) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error": err.Error(),

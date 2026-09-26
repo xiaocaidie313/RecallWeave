@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"time"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/param"
@@ -27,12 +28,18 @@ type Turn struct {
 // 上层看见的都是普通字符串。
 // ChatCompletionMessageParamUnion 包裹任意一种角色的信息
 type Conversation struct {
-	messages []openai.ChatCompletionMessageParamUnion
+	ConversationID uint
+	Title          string
+	messages       []openai.ChatCompletionMessageParamUnion
+	CreatedAt      time.Time
 }
 
 // 开启新对话 注入system prompt
-func NewConversation(systemPrompt string) *Conversation {
+func NewConversation(systemPrompt string, conversationID uint) *Conversation {
 	return &Conversation{
+		ConversationID: conversationID,
+		Title:          "",
+		CreatedAt:      time.Now(),
 		messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage(systemPrompt),
 		},
@@ -56,6 +63,7 @@ func (conv *Conversation) AddToolResult(toolCallID, content string) {
 // Responder 是 ask 循环依赖的能力，测试时可以塞假实现。
 type Responder interface {
 	Next(ctx context.Context, conv *Conversation, tools []ToolSchema) (Turn, error)
+	NewOneTurnChat(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 }
 
 // Next 请求模型的下一轮输出，并把模型这轮的回复追加进对话历史。
@@ -106,4 +114,22 @@ func (c *Client) Next(ctx context.Context, conv *Conversation, tools []ToolSchem
 	}
 
 	return turn, nil
+}
+
+func (c *Client) NewOneTurnChat(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	params := openai.ChatCompletionNewParams{
+		Model: shared.ChatModel(c.model),
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.SystemMessage(systemPrompt),
+			openai.UserMessage(userPrompt),
+		},
+	}
+	response, err := c.sdk.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return "", fmt.Errorf("llm: chat completion failed: %w", err)
+	}
+	if len(response.Choices) == 0 {
+		return "", fmt.Errorf("llm: response has no choices")
+	}
+	return response.Choices[0].Message.Content, nil
 }

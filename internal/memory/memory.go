@@ -31,6 +31,27 @@ func NewMemoryManger(db *gorm.DB) *MemoryManger {
 	return &MemoryManger{db: db}
 }
 
+func (m *MemoryManger) ConversationExists(ctx context.Context, conversationID uint) (bool, error) {
+	var count int64
+	err := m.db.WithContext(ctx).Model(&store.Conversation{}).Where("id = ?", conversationID).Count(&count).Error
+	return count > 0, err
+}
+
+func (m *MemoryManger) ConversationTitle(ctx context.Context, conversationID uint) (string, error) {
+	var item store.Conversation
+	err := m.db.WithContext(ctx).Select("title").First(&item, conversationID).Error
+	if err != nil {
+		return "", err
+	}
+	return item.Title, nil
+}
+
+func (m *MemoryManger) UpdateConversationTitle(ctx context.Context, conversationID uint, title string) error {
+	return m.db.WithContext(ctx).Model(&store.Conversation{}).
+		Where("id = ?", conversationID).
+		Update("title", title).Error
+}
+
 func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag store.MemoryTag, limit int) ([]store.Memory, error) {
 	if limit <= 0 {
 		limit = defaultSearchLimit
@@ -87,8 +108,16 @@ func (m *MemoryManger) GetMessages(ctx context.Context, sessionID uint, seqStart
 // ChatSession 是跟助手的这一次聊天。同一个 conversation 只建一条，
 // 导入的其他来源会话不放进来。
 func (m *MemoryManger) ChatSession(ctx context.Context, conversationID uint) (*store.Session, error) {
+	exists, err := m.ConversationExists(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, gorm.ErrRecordNotFound
+	}
+
 	var session store.Session
-	err := m.db.WithContext(ctx).
+	err = m.db.WithContext(ctx).
 		Where("conversation_id = ? AND source_tag = ?", conversationID, store.SourceChat).
 		First(&session).Error
 	if err == nil {

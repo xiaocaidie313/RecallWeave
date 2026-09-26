@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"recallweave/internal/ask"
+	"recallweave/internal/conversation"
 	"recallweave/internal/extract"
 	"recallweave/internal/ingest"
 
@@ -15,6 +16,7 @@ func NewRouter(
 	ingestHandler *ingest.IngestHandler,
 	extractHandler *extract.ExtractHandler,
 	askHandler *ask.AskHandler,
+	conversationHandler *conversation.ConversationHandler,
 ) *gin.Engine {
 	router := gin.Default()
 
@@ -26,6 +28,9 @@ func NewRouter(
 
 	router.POST("/api/imports", ingestHandler.ImportText)
 	router.POST("/api/sessions/:session_id/extract", extractHandler.ExtractSession)
+	// 对话管理  预加载对话的信息
+	router.POST("/api/conversations", conversationHandler.Create)
+	router.GET("/api/conversations", conversationHandler.List)
 	router.POST("/api/ask/:conversation_id", askHandler.Ask)
 
 	return router

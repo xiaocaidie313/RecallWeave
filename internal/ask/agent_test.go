@@ -19,6 +19,10 @@ type fakeResponder struct {
 	lastTool []llm.ToolSchema
 }
 
+func (f *fakeResponder) NewOneTurnChat(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
 func (f *fakeResponder) Next(_ context.Context, _ *llm.Conversation, tools []llm.ToolSchema) (llm.Turn, error) {
 	if f.err != nil {
 		return llm.Turn{}, f.err
@@ -43,7 +47,7 @@ func recordingTool(name, response string, gotArguments *string) llm.Tool {
 
 func TestAskReturnsAnswerWithoutTools(t *testing.T) {
 	responder := &fakeResponder{turns: []llm.Turn{{Content: "没有相关记录。"}}}
-	agent := NewAgent(responder, llm.NewToolHandle(), nil)
+	agent := NewAgent(responder, llm.NewToolHandle(), nil, nil)
 
 	answer, err := agent.Ask(context.Background(), "我上次怎么说的", 0)
 	if err != nil {
@@ -83,7 +87,7 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 		{Content: "你说过 cmd 是可执行入口。"},
 	}}
 
-	agent := NewAgent(responder, tools, nil)
+	agent := NewAgent(responder, tools, nil, nil)
 
 	answer, err := agent.Ask(context.Background(), "cmd 目录是干什么的", 0)
 	if err != nil {
@@ -128,7 +132,7 @@ func TestAskDeduplicatesCitations(t *testing.T) {
 		{Content: "你说过 cmd 是可执行入口。"},
 	}}
 
-	answer, err := NewAgent(responder, tools, nil).Ask(context.Background(), "问题", 0)
+	answer, err := NewAgent(responder, tools, nil, nil).Ask(context.Background(), "问题", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,7 +155,7 @@ func TestAskFeedsToolErrorBackToModel(t *testing.T) {
 		{Content: "检索失败了，暂时查不到。"},
 	}}
 
-	agent := NewAgent(responder, tools, nil)
+	agent := NewAgent(responder, tools, nil, nil)
 
 	answer, err := agent.Ask(context.Background(), "问题", 0)
 	if err != nil {
@@ -179,7 +183,7 @@ func TestAskStopsAfterMaxRounds(t *testing.T) {
 		}}}
 	}
 
-	agent := NewAgent(&fakeResponder{turns: turns}, tools, nil)
+	agent := NewAgent(&fakeResponder{turns: turns}, tools, nil, nil)
 
 	_, err := agent.Ask(context.Background(), "问题", 0)
 	if err == nil || !strings.Contains(err.Error(), "gave up") {
@@ -188,7 +192,7 @@ func TestAskStopsAfterMaxRounds(t *testing.T) {
 }
 
 func TestAskWithoutModel(t *testing.T) {
-	agent := NewAgent(nil, llm.NewToolHandle(), nil)
+	agent := NewAgent(nil, llm.NewToolHandle(), nil, nil)
 
 	if _, err := agent.Ask(context.Background(), "问题", 0); !errors.Is(err, ErrNoModel) {
 		t.Fatalf("expected ErrNoModel, got %v", err)
@@ -201,7 +205,7 @@ func TestUnknownToolIsReportedToModel(t *testing.T) {
 		{Content: "换个方式回答。"},
 	}}
 
-	agent := NewAgent(responder, llm.NewToolHandle(), nil)
+	agent := NewAgent(responder, llm.NewToolHandle(), nil, nil)
 
 	answer, err := agent.Ask(context.Background(), "问题", 0)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 
 	"recallweave/internal/ask"
 	"recallweave/internal/config"
+	"recallweave/internal/conversation"
 	"recallweave/internal/db"
 	"recallweave/internal/extract"
 	apphttp "recallweave/internal/http"
@@ -67,13 +68,15 @@ func main() {
 
 	// 组装依赖
 	ingestHandler := ingest.NewIngestHandler(ingest.NewIngestService(ingest.NewIngestRepo(database)))
-	extractHandler := extract.NewExtractHandler(extract.NewExtractExcuter(database, segmenter))
+	extracter := extract.NewExtractExcuter(database, segmenter)
+	extractHandler := extract.NewExtractHandler(extracter)
 
 	memoryManger := memory.NewMemoryManger(database)
-	askHandler := ask.NewAskHandler(ask.NewAgent(responder, ask.NewAskToolHandle(memoryManger), memoryManger))
+	askHandler := ask.NewAskHandler(ask.NewAgent(responder, ask.NewAskToolHandle(memoryManger), memoryManger, extracter))
 
 	// 启动路由
-	r := apphttp.NewRouter(ingestHandler, extractHandler, askHandler)
+	conversationHandler := conversation.NewConversationHandler(database)
+	r := apphttp.NewRouter(ingestHandler, extractHandler, askHandler, conversationHandler)
 
 	address := fmt.Sprintf(":%d", cfg.Server.Port)
 	logger.Info("RecallWeave API started", "address", address)
