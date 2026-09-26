@@ -18,11 +18,12 @@ const maxTitleLength = 60
 type ExtractExcuter struct {
 	db        *gorm.DB
 	segmenter llm.Segmenter
+	embedder  llm.Embedder
 }
 
 // segmenter 传 nil 时退回本地兜底：整个会话算一段，标题取第一条消息的第一行。
-func NewExtractExcuter(db *gorm.DB, segmenter llm.Segmenter) *ExtractExcuter {
-	return &ExtractExcuter{db: db, segmenter: segmenter}
+func NewExtractExcuter(db *gorm.DB, segmenter llm.Segmenter, embedder llm.Embedder) *ExtractExcuter {
+	return &ExtractExcuter{db: db, segmenter: segmenter, embedder: embedder}
 }
 
 // ExtractSession 把一个会话提炼成若干条记忆，返回生成的条数。
@@ -40,6 +41,8 @@ func (e *ExtractExcuter) ExtractSession(ctx context.Context, sessionID uint) (in
 	segments := e.segment(ctx, messages)
 	memories := make([]store.Memory, 0, len(segments))
 	for _, segment := range segments {
+		embedding := e.embedMemory(ctx, segment.Title, segment.Summary)
+
 		memories = append(memories, store.Memory{
 			SessionID: sessionID,
 			SeqStart:  segment.SeqStart,
@@ -47,7 +50,9 @@ func (e *ExtractExcuter) ExtractSession(ctx context.Context, sessionID uint) (in
 			Title:     truncateTitle(segment.Title),
 			Content:   segment.Summary,
 			Tag:       store.NormalizeMemoryTag(segment.Tag),
+			Embedding: embedding,
 		})
+
 	}
 
 	if err := e.replaceMemories(ctx, sessionID, memories); err != nil {
@@ -55,6 +60,20 @@ func (e *ExtractExcuter) ExtractSession(ctx context.Context, sessionID uint) (in
 	}
 
 	return len(memories), nil
+}
+
+// embedMemory 给一条记忆算向量。没配嵌入模型或调用失败时返回空，记忆仍会写入。
+func (e *ExtractExcuter) embedMemory(ctx context.Context, title, content string) []float64 {
+	if e.embedder == nil {
+		return nil
+	}
+
+	vector, err := e.embedder.Embed(ctx, title+"\n"+content)
+	if err != nil {
+		slog.Warn("embed memory failed", "error", err)
+		return nil
+	}
+	return vector
 }
 
 // #1 读取消息

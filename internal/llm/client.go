@@ -9,6 +9,7 @@ import (
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/shared"
 )
 
@@ -38,16 +39,22 @@ type Segmenter interface {
 	Segment(ctx context.Context, messages []Message, allowedTags []string) ([]Segment, error)
 }
 
+type Embedder interface {
+	Embed(ctx context.Context, text string) ([]float64, error)
+}
+
 type Config struct {
-	BaseURL string
-	APIKey  string
-	Model   string
-	Timeout time.Duration
+	BaseURL        string
+	APIKey         string
+	Model          string
+	EmbeddingModel string
+	Timeout        time.Duration
 }
 
 type Client struct {
-	model string
-	sdk   openai.Client
+	model          string
+	embeddingModel string
+	sdk            openai.Client
 }
 
 func NewClient(cfg Config) (*Client, error) {
@@ -71,8 +78,9 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	return &Client{
-		model: cfg.Model,
-		sdk:   openai.NewClient(opts...),
+		model:          cfg.Model,
+		embeddingModel: cfg.EmbeddingModel,
+		sdk:            openai.NewClient(opts...),
 	}, nil
 }
 
@@ -148,4 +156,30 @@ func (c *Client) completeJSON(ctx context.Context, systemPrompt, userMessage str
 	}
 
 	return response.Choices[0].Message.Content, nil
+}
+
+// Embed 把一段文字变成向量。用的是嵌入模型，和聊天模型分开。
+// 没配嵌入模型时返回错误，调用方可以退回关键词检索。
+func (c *Client) Embed(ctx context.Context, text string) ([]float64, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, fmt.Errorf("llm: embedding input is empty")
+	}
+	if c.embeddingModel == "" {
+		return nil, fmt.Errorf("llm: embedding model is not configured")
+	}
+
+	response, err := c.sdk.Embeddings.New(ctx, openai.EmbeddingNewParams{
+		Model: c.embeddingModel,
+		Input: openai.EmbeddingNewParamsInputUnion{
+			OfString: param.NewOpt(text),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("llm: embedding failed: %w", err)
+	}
+	if len(response.Data) == 0 || len(response.Data[0].Embedding) == 0 {
+		return nil, fmt.Errorf("llm: embedding response is empty")
+	}
+	return response.Data[0].Embedding, nil
 }

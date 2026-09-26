@@ -3,8 +3,12 @@ package memory
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"math"
+	"sort"
 	"strings"
 
+	"recallweave/internal/llm"
 	"recallweave/internal/store"
 
 	"gorm.io/gorm"
@@ -16,7 +20,8 @@ const (
 )
 
 type MemoryManger struct {
-	db *gorm.DB
+	embedder llm.Embedder
+	db       *gorm.DB
 }
 
 // 预加载历史对话的 总计的清单 让llm 不重新 根据全部历史记录 重新生成 而是 直接从清单里 提取 记忆
@@ -27,8 +32,8 @@ type MemoryBriefParam struct {
 	// raw ? 如果太多 ?
 }
 
-func NewMemoryManger(db *gorm.DB) *MemoryManger {
-	return &MemoryManger{db: db}
+func NewMemoryManger(db *gorm.DB, embedder llm.Embedder) *MemoryManger {
+	return &MemoryManger{db: db, embedder: embedder}
 }
 
 func (m *MemoryManger) ConversationExists(ctx context.Context, conversationID uint) (bool, error) {
@@ -60,7 +65,20 @@ func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag s
 		limit = maxSearchLimit
 	}
 
-	// 只是词的匹配
+	keywordHits, err := m.keywordSearch(ctx, keyword, tag, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	vectorHits, err := m.vectorSearch(ctx, keyword, tag, limit)
+	if err != nil {
+		slog.Warn("vector search failed", "error", err)
+		return keywordHits, nil
+	}
+	return mergeMemories(vectorHits, keywordHits, limit), nil
+}
+
+func (m *MemoryManger) keywordSearch(ctx context.Context, keyword string, tag store.MemoryTag, limit int) ([]store.Memory, error) {
 	query := m.db.WithContext(ctx).Model(&store.Memory{})
 	if tokens := strings.Fields(keyword); len(tokens) > 0 {
 		conditions := m.db.Session(&gorm.Session{NewDB: true})
@@ -79,6 +97,73 @@ func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag s
 		return nil, err
 	}
 	return memories, nil
+}
+
+// vectorSearch 把检索词变成向量，和每条已有向量的记忆比相似度，取得分最高的几条。
+func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag store.MemoryTag, limit int) ([]store.Memory, error) {
+	if m.embedder == nil || strings.TrimSpace(keyword) == "" {
+		return nil, nil
+	}
+
+	queryVector, err := m.embedder.Embed(ctx, keyword)
+	if err != nil {
+		return nil, err
+	}
+
+	query := m.db.WithContext(ctx).Model(&store.Memory{})
+	if tag != "" {
+		query = query.Where("tag = ?", tag)
+	}
+	var memories []store.Memory
+	if err := query.Find(&memories).Error; err != nil {
+		return nil, err
+	}
+
+	type scoredMemory struct {
+		memory store.Memory
+		score  float64
+	}
+	scored := make([]scoredMemory, 0, len(memories))
+	for _, item := range memories {
+		if len(item.Embedding) == 0 {
+			continue
+		}
+		score := CalculateSimilarity(queryVector, item.Embedding)
+		if score <= 0 {
+			continue
+		}
+		scored = append(scored, scoredMemory{memory: item, score: score})
+	}
+	sort.Slice(scored, func(i, j int) bool {
+		return scored[i].score > scored[j].score
+	})
+	if len(scored) > limit {
+		scored = scored[:limit]
+	}
+
+	hits := make([]store.Memory, 0, len(scored))
+	for _, item := range scored {
+		hits = append(hits, item.memory)
+	}
+	return hits, nil
+}
+
+func mergeMemories(primary, extra []store.Memory, limit int) []store.Memory {
+	merged := make([]store.Memory, 0, limit)
+	seen := make(map[uint]struct{})
+	for _, group := range [][]store.Memory{primary, extra} {
+		for _, item := range group {
+			if _, ok := seen[item.ID]; ok {
+				continue
+			}
+			seen[item.ID] = struct{}{}
+			merged = append(merged, item)
+			if len(merged) == limit {
+				return merged
+			}
+		}
+	}
+	return merged
 }
 
 // ListBySession 返回一个会话下的记忆，按它在原文里的起始位置排序。
@@ -195,4 +280,20 @@ func (m *MemoryManger) GetMemoryBrief(ctx context.Context, conversationID uint) 
 		ConversationID: conversationID,
 		SessionID:      sessionIDs,
 	}, nil
+}
+
+func CalculateSimilarity(a, b []float64) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		dot += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }

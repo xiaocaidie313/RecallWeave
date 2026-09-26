@@ -47,10 +47,11 @@ func main() {
 		logger.Info("llm api key is empty, extraction falls back to whole session and ask is disabled")
 	} else {
 		client, err = llm.NewClient(llm.Config{
-			BaseURL: cfg.LLM.BaseURL,
-			APIKey:  cfg.LLM.APIKey,
-			Model:   cfg.LLM.Model,
-			Timeout: time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+			BaseURL:        cfg.LLM.BaseURL,
+			APIKey:         cfg.LLM.APIKey,
+			Model:          cfg.LLM.Model,
+			EmbeddingModel: cfg.LLM.EmbeddingModel,
+			Timeout:        time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 		})
 		if err != nil {
 			logger.Error("failed to create llm client", "error", err)
@@ -60,18 +61,20 @@ func main() {
 
 	// client 为 nil 时不能直接赋给接口变量，否则接口不为 nil，下游判断会失效
 	var segmenter llm.Segmenter
+	var embedder llm.Embedder
 	var responder llm.Responder
 	if client != nil {
 		segmenter = client
+		embedder = client
 		responder = client
 	}
 
 	// 组装依赖
 	ingestHandler := ingest.NewIngestHandler(ingest.NewIngestService(ingest.NewIngestRepo(database)))
-	extracter := extract.NewExtractExcuter(database, segmenter)
+	extracter := extract.NewExtractExcuter(database, segmenter, embedder)
 	extractHandler := extract.NewExtractHandler(extracter)
 
-	memoryManger := memory.NewMemoryManger(database)
+	memoryManger := memory.NewMemoryManger(database, embedder)
 	askHandler := ask.NewAskHandler(ask.NewAgent(responder, ask.NewAskToolHandle(memoryManger), memoryManger, extracter))
 
 	// 启动路由

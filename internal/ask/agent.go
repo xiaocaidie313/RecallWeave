@@ -159,7 +159,7 @@ func citationsFrom(toolName, result string) []Citation {
 		}
 		return citations
 	default:
-		return nil
+		return []Citation{}
 	}
 }
 

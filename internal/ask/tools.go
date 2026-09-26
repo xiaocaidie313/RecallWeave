@@ -57,13 +57,13 @@ func searchMemoriesTool(manager *memory.MemoryManger) llm.Tool {
 	return llm.Tool{
 		Schema: llm.ToolSchema{
 			Name:        "search_memories",
-			Description: "按关键词和标签检索用户过去的记忆，返回标题、摘要和它在原文里的位置。",
+			Description: "按问题或关键词检索用户过去的记忆，返回标题、摘要和它在原文里的位置。意思相近也会命中。",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"keyword": map[string]any{
 						"type":        "string",
-						"description": "检索关键词。多个词用空格隔开，任一命中即返回；不要传整句问题。留空表示不限。",
+						"description": "检索词，可以是整句问题，也可以是几个关键词。留空表示不按文字限制。",
 					},
 					"tag": map[string]any{
 						"type":        "string",

@@ -30,6 +30,7 @@ type LLMConfig struct {
 	BaseURL        string `yaml:"base_url"`
 	APIKey         string `yaml:"api_key"`
 	Model          string `yaml:"model"`
+	EmbeddingModel string `yaml:"embedding_model"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
 

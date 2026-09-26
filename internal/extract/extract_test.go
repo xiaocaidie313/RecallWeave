@@ -50,7 +50,7 @@ func TestSegmentUsesModelResult(t *testing.T) {
 			{SeqStart: 1, SeqEnd: 2, Title: "前两条", Summary: "摘要", Tag: "tech"},
 			{SeqStart: 3, SeqEnd: 3, Title: "第三条", Summary: "摘要", Tag: "work"},
 		},
-	})
+	}, nil)
 
 	got := excuter.segment(context.Background(), testMessages())
 
@@ -69,7 +69,7 @@ func TestSegmentDropsOutOfRangeSegments(t *testing.T) {
 			{SeqStart: 4, SeqEnd: 9, Title: "编号越界", Summary: "摘要", Tag: "tech"},
 			{SeqStart: 3, SeqEnd: 1, Title: "区间反向", Summary: "摘要", Tag: "tech"},
 		},
-	})
+	}, nil)
 
 	got := excuter.segment(context.Background(), testMessages())
 
@@ -81,7 +81,7 @@ func TestSegmentDropsOutOfRangeSegments(t *testing.T) {
 func TestSegmentFillsEmptyTitleAndSummary(t *testing.T) {
 	excuter := NewExtractExcuter(nil, fakeSegmenter{
 		segments: []llm.Segment{{SeqStart: 1, SeqEnd: 2, Tag: "tech"}},
-	})
+	}, nil)
 
 	got := excuter.segment(context.Background(), testMessages())
 
@@ -94,7 +94,7 @@ func TestSegmentFillsEmptyTitleAndSummary(t *testing.T) {
 }
 
 func TestSegmentFallsBackOnError(t *testing.T) {
-	excuter := NewExtractExcuter(nil, fakeSegmenter{err: errors.New("boom")})
+	excuter := NewExtractExcuter(nil, fakeSegmenter{err: errors.New("boom")}, nil)
 
 	got := excuter.segment(context.Background(), testMessages())
 
@@ -107,7 +107,7 @@ func TestSegmentFallsBackOnError(t *testing.T) {
 }
 
 func TestSegmentFallsBackWithoutSegmenter(t *testing.T) {
-	excuter := NewExtractExcuter(nil, nil)
+	excuter := NewExtractExcuter(nil, nil, nil)
 
 	got := excuter.segment(context.Background(), testMessages())
 
