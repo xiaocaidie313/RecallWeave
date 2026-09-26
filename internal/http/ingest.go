@@ -1,19 +1,20 @@
-package ingest
+package http
 
 import (
 	"errors"
 	"net/http"
 
+	"recallweave/internal/ingest"
 	"recallweave/internal/store"
 
 	"github.com/gin-gonic/gin"
 )
 
 type IngestHandler struct {
-	service *IngestService
+	service *ingest.Service
 }
 
-func NewIngestHandler(service *IngestService) *IngestHandler {
+func NewIngestHandler(service *ingest.Service) *IngestHandler {
 	return &IngestHandler{service: service}
 }
 
@@ -39,7 +40,7 @@ func (h *IngestHandler) ImportText(c *gin.Context) {
 		req.Text,
 	)
 	if err != nil {
-		if errors.Is(err, ErrInvalidSource) || errors.Is(err, ErrEmptyText) {
+		if errors.Is(err, ingest.ErrInvalidSource) || errors.Is(err, ingest.ErrEmptyText) {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": err.Error(),
 			})

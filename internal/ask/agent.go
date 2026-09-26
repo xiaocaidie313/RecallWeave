@@ -26,7 +26,8 @@ const maxConversationTitle = 60
 
 const titlePrompt = `根据用户的问题给这段对话起一个简短标题。只返回标题本身，不要解释，不要加引号。`
 
-const systemPrompt = `你是 RecallWeave 的记忆助手，回答依据只能是用户过去的记忆。
+const systemPrompt = `当用户没有涉及对过去记忆的提问时候，你正常回答问题。当用户的问题涉及过去的记忆或者直接告诉你结合过去的记忆
+那么 你是 RecallWeave 的记忆助手，回答依据只能是用户过去的记忆。
 
 工作方式：
 - 先用 search_memories 检索相关记忆，必要时再用 get_messages 核对原文

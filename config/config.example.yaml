@@ -12,5 +12,5 @@ llm:
   base_url: https://api.siliconflow.cn/v1
   api_key: "sk-jrmfpovtlgpwyjojjgicsxqaslbhqhpswlnfqdvlyhpjtfqv"
   model: deepseek-ai/DeepSeek-V4-Flash
-  embedding_model:Qwen/Qwen3-VL-Embedding-8B
+  embedding_model: Qwen/Qwen3-VL-Embedding-8B
   timeout_seconds: 30

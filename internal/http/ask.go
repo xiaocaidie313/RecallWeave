@@ -1,4 +1,4 @@
-package ask
+package http
 
 import (
 	"errors"
@@ -6,15 +6,17 @@ import (
 	"strconv"
 	"strings"
 
+	"recallweave/internal/ask"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type AskHandler struct {
-	agent *Agent
+	agent *ask.Agent
 }
 
-func NewAskHandler(agent *Agent) *AskHandler {
+func NewAskHandler(agent *ask.Agent) *AskHandler {
 	return &AskHandler{agent: agent}
 }
 
@@ -25,7 +27,6 @@ type askRequest struct {
 // Ask 是用户问答的入口。handler 只做 JSON 绑定和状态码，
 // 往下传的是普通字符串，agent 不认识 gin。
 func (h *AskHandler) Ask(c *gin.Context) {
-
 	conversationID, err := strconv.ParseUint(c.Param("conversation_id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -56,7 +57,7 @@ func (h *AskHandler) Ask(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
 			return
 		}
-		if errors.Is(err, ErrNoModel) {
+		if errors.Is(err, ask.ErrNoModel) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error": err.Error(),
 			})

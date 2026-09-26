@@ -57,6 +57,18 @@ func (m *MemoryManger) UpdateConversationTitle(ctx context.Context, conversation
 		Update("title", title).Error
 }
 
+func (m *MemoryManger) CreateConversation(ctx context.Context, title string) (store.Conversation, error) {
+	item := store.Conversation{Title: title}
+	err := m.db.WithContext(ctx).Create(&item).Error
+	return item, err
+}
+
+func (m *MemoryManger) ListConversations(ctx context.Context) ([]store.Conversation, error) {
+	var items []store.Conversation
+	err := m.db.WithContext(ctx).Order("updated_at DESC, id DESC").Find(&items).Error
+	return items, err
+}
+
 func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag store.MemoryTag, limit int) ([]store.Memory, error) {
 	if limit <= 0 {
 		limit = defaultSearchLimit
@@ -114,6 +126,8 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 	if tag != "" {
 		query = query.Where("tag = ?", tag)
 	}
+
+	// 很直白啊  搜索所有的记忆  这样肯定是不行的
 	var memories []store.Memory
 	if err := query.Find(&memories).Error; err != nil {
 		return nil, err

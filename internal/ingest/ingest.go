@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"recallweave/internal/store"
+
+	"gorm.io/gorm"
 )
 
 var (
@@ -13,12 +15,12 @@ var (
 	ErrInvalidSource = errors.New("unknown source tag")
 )
 
-type IngestService struct {
-	repo *IngestRepo
+type Service struct {
+	db *gorm.DB
 }
 
-func NewIngestService(repo *IngestRepo) *IngestService {
-	return &IngestService{repo: repo}
+func NewService(db *gorm.DB) *Service {
+	return &Service{db: db}
 }
 
 type ImportResult struct {
@@ -26,7 +28,7 @@ type ImportResult struct {
 	MessageCount int
 }
 
-func (s *IngestService) ImportText(ctx context.Context, sourceTag store.SourceTag, name, text string) (ImportResult, error) {
+func (s *Service) ImportText(ctx context.Context, sourceTag store.SourceTag, name, text string) (ImportResult, error) {
 	if !store.IsValidSourceTag(sourceTag) {
 		return ImportResult{}, ErrInvalidSource
 	}
@@ -41,11 +43,31 @@ func (s *IngestService) ImportText(ctx context.Context, sourceTag store.SourceTa
 		Name:      name,
 		RawText:   text,
 	}
-	if err := s.repo.CreateSessionWithMessages(ctx, session, messages); err != nil {
+	if err := s.createSessionWithMessages(ctx, session, messages); err != nil {
 		return ImportResult{}, err
 	}
 
 	return ImportResult{SessionID: session.ID, MessageCount: len(messages)}, nil
+}
+
+// createSessionWithMessages 在一个事务里写入会话和它的消息。
+// session 插入后自增 ID 才可用，所以 SessionID 在这里回填。
+func (s *Service) createSessionWithMessages(ctx context.Context, session *store.Session, messages []store.Message) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(session).Error; err != nil {
+			return err
+		}
+
+		if len(messages) == 0 {
+			return nil
+		}
+
+		for i := range messages {
+			messages[i].SessionID = session.ID
+		}
+
+		return tx.Create(&messages).Error
+	})
 }
 
 // splitMessages 按空行分段，是目前最笨也最稳的切法。

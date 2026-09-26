@@ -1,22 +1,23 @@
-package extract
+package http
 
 import (
 	"net/http"
 	"strconv"
 
+	"recallweave/internal/extract"
+
 	"github.com/gin-gonic/gin"
 )
 
 type ExtractHandler struct {
-	excuter *ExtractExcuter
+	excuter *extract.ExtractExcuter
 }
 
-func NewExtractHandler(excuter *ExtractExcuter) *ExtractHandler {
+func NewExtractHandler(excuter *extract.ExtractExcuter) *ExtractHandler {
 	return &ExtractHandler{excuter: excuter}
 }
 
 // ExtractSession 手动触发提炼，目前只用来验证链路。
-// 等提炼稳定后，这一步会由导入成功之后自动带起来。
 func (h *ExtractHandler) ExtractSession(c *gin.Context) {
 	sessionID, err := strconv.ParseUint(c.Param("session_id"), 10, 64)
 	if err != nil {

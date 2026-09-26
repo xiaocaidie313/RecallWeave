@@ -1,30 +1,28 @@
-package conversation
+package http
 
 import (
 	"net/http"
 	"strings"
 
-	"recallweave/internal/store"
+	"recallweave/internal/memory"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 type ConversationHandler struct {
-	db *gorm.DB
+	memory *memory.MemoryManger
 }
 
-func NewConversationHandler(db *gorm.DB) *ConversationHandler {
-	return &ConversationHandler{db: db}
+func NewConversationHandler(memoryManger *memory.MemoryManger) *ConversationHandler {
+	return &ConversationHandler{memory: memoryManger}
 }
 
-type createRequest struct {
+type createConversationRequest struct {
 	Title string `json:"title"`
 }
 
-// Create creates a conversation and returns its persistent ID for subsequent ask requests.
 func (h *ConversationHandler) Create(c *gin.Context) {
-	var req createRequest
+	var req createConversationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -35,8 +33,8 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 		title = "新对话"
 	}
 
-	item := store.Conversation{Title: title}
-	if err := h.db.WithContext(c.Request.Context()).Create(&item).Error; err != nil {
+	item, err := h.memory.CreateConversation(c.Request.Context(), title)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create conversation"})
 		return
 	}
@@ -44,12 +42,9 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, item)
 }
 
-// List returns conversations ordered by most recently updated.
 func (h *ConversationHandler) List(c *gin.Context) {
-	var items []store.Conversation
-	if err := h.db.WithContext(c.Request.Context()).
-		Order("updated_at DESC, id DESC").
-		Find(&items).Error; err != nil {
+	items, err := h.memory.ListConversations(c.Request.Context())
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list conversations"})
 		return
 	}
