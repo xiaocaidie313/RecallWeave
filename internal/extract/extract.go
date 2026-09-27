@@ -38,11 +38,61 @@ func (e *ExtractExcuter) ExtractSession(ctx context.Context, sessionID uint) (in
 		return 0, nil
 	}
 
+	memories := e.memoriesFrom(ctx, sessionID, messages)
+	if err := e.replaceMemories(ctx, sessionID, memories); err != nil {
+		return 0, err
+	}
+
+	return len(memories), nil
+}
+
+// ExtractNew 只提炼上次覆盖序号之后的新消息，已有记忆保留。
+// 手动的 ExtractSession 仍会删掉旧记忆再整段重写。
+func (e *ExtractExcuter) ExtractNew(ctx context.Context, sessionID uint) (int, error) {
+	messages, err := e.GetMessages(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	if len(messages) == 0 {
+		return 0, nil
+	}
+
+	covered, err := e.coveredSeq(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	fresh := make([]store.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Seq > covered {
+			fresh = append(fresh, msg)
+		}
+	}
+	if len(fresh) == 0 {
+		return 0, nil
+	}
+
+	memories := e.memoriesFrom(ctx, sessionID, fresh)
+	if err := e.db.WithContext(ctx).Create(&memories).Error; err != nil {
+		return 0, err
+	}
+	return len(memories), nil
+}
+
+func (e *ExtractExcuter) coveredSeq(ctx context.Context, sessionID uint) (int, error) {
+	var row struct {
+		Seq int
+	}
+	err := e.db.WithContext(ctx).Model(&store.Memory{}).
+		Where("session_id = ?", sessionID).
+		Select("COALESCE(MAX(seq_end), 0) AS seq").
+		Scan(&row).Error
+	return row.Seq, err
+}
+
+func (e *ExtractExcuter) memoriesFrom(ctx context.Context, sessionID uint, messages []store.Message) []store.Memory {
 	segments := e.segment(ctx, messages)
 	memories := make([]store.Memory, 0, len(segments))
 	for _, segment := range segments {
-		embedding := e.embedMemory(ctx, segment.Title, segment.Summary)
-
 		memories = append(memories, store.Memory{
 			SessionID: sessionID,
 			SeqStart:  segment.SeqStart,
@@ -50,16 +100,10 @@ func (e *ExtractExcuter) ExtractSession(ctx context.Context, sessionID uint) (in
 			Title:     truncateTitle(segment.Title),
 			Content:   segment.Summary,
 			Tag:       store.NormalizeMemoryTag(segment.Tag),
-			Embedding: embedding,
+			Embedding: e.embedMemory(ctx, segment.Title, segment.Summary),
 		})
-
 	}
-
-	if err := e.replaceMemories(ctx, sessionID, memories); err != nil {
-		return 0, err
-	}
-
-	return len(memories), nil
+	return memories
 }
 
 // embedMemory 给一条记忆算向量。没配嵌入模型或调用失败时返回空，记忆仍会写入。

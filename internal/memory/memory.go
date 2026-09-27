@@ -51,6 +51,24 @@ func (m *MemoryManger) ConversationTitle(ctx context.Context, conversationID uin
 	return item.Title, nil
 }
 
+func (m *MemoryManger) ConversationBrief(ctx context.Context, conversationID uint) (string, int, error) {
+	var item store.Conversation
+	err := m.db.WithContext(ctx).Select("brief", "brief_until_seq").First(&item, conversationID).Error
+	if err != nil {
+		return "", 0, err
+	}
+	return item.Brief, item.BriefUntilSeq, nil
+}
+
+func (m *MemoryManger) UpdateConversationBrief(ctx context.Context, conversationID uint, brief string, untilSeq int) error {
+	return m.db.WithContext(ctx).Model(&store.Conversation{}).
+		Where("id = ?", conversationID).
+		Updates(map[string]any{
+			"brief":           brief,
+			"brief_until_seq": untilSeq,
+		}).Error
+}
+
 func (m *MemoryManger) UpdateConversationTitle(ctx context.Context, conversationID uint, title string) error {
 	return m.db.WithContext(ctx).Model(&store.Conversation{}).
 		Where("id = ?", conversationID).

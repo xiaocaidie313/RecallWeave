@@ -23,8 +23,11 @@ var ErrNoModel = errors.New("ask: llm is not configured")
 
 const defaultConversationTitle = "新对话"
 const maxConversationTitle = 60
+const keepRecentMessages = 20
 
 const titlePrompt = `根据用户的问题给这段对话起一个简短标题。只返回标题本身，不要解释，不要加引号。`
+
+const briefPrompt = `把对话压缩成一份可供后续继续聊天使用的摘要。保留决定、偏好、未完成的事和关键事实。只返回摘要本身，不要解释。`
 
 const systemPrompt = `当用户没有涉及对过去记忆的提问时候，你正常回答问题。当用户的问题涉及过去的记忆或者直接告诉你结合过去的记忆
 那么 你是 RecallWeave 的记忆助手，回答依据只能是用户过去的记忆。
@@ -93,6 +96,7 @@ func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (
 				return Answer{}, err
 			}
 			a.extractSession(ctx, sessionID)
+			a.condense(ctx, conversationID, sessionID)
 			return Answer{
 				Text:      turn.Content,
 				Citations: citations,
@@ -177,11 +181,22 @@ func (a *Agent) preload(ctx context.Context, conv *llm.Conversation, conversatio
 		return 0, err
 	}
 
+	brief, untilSeq, err := a.memory.ConversationBrief(ctx, conversationID)
+	if err != nil {
+		return 0, err
+	}
+	if brief != "" {
+		conv.AddUserMessage("此前对话摘要：\n" + brief)
+	}
+
 	messages, err := a.memory.ListMessages(ctx, session.ID)
 	if err != nil {
 		return 0, err
 	}
 	for _, msg := range messages {
+		if untilSeq > 0 && msg.Seq <= untilSeq {
+			continue
+		}
 		if msg.Role == "assistant" {
 			conv.AddAssistantMessage(msg.Content)
 			continue
@@ -191,18 +206,81 @@ func (a *Agent) preload(ctx context.Context, conv *llm.Conversation, conversatio
 	return session.ID, nil
 }
 
-// extractSession 在这一问已经写入会话之后，把整段聊天重新切成记忆。
+// extractSession 在这一问已经写入会话之后，只提炼还没覆盖到的新消息。
 // 没配提炼器、或这次没有会话时跳过。失败只记日志，不把已经生成的回答变成 500。
 func (a *Agent) extractSession(ctx context.Context, sessionID uint) {
 	if a.extracter == nil || sessionID == 0 {
 		return
 	}
-	if _, err := a.extracter.ExtractSession(ctx, sessionID); err != nil {
+	if _, err := a.extracter.ExtractNew(ctx, sessionID); err != nil {
 		slog.Warn("extract session failed",
 			"session_id", sessionID,
 			"error", err,
 		)
 	}
+}
+
+// condense 在消息超过最近窗口时，把更早的原文收成摘要。
+// 最近的消息保持原文。失败只记日志。
+func (a *Agent) condense(ctx context.Context, conversationID, sessionID uint) {
+	if a.memory == nil || a.responder == nil || conversationID == 0 || sessionID == 0 {
+		return
+	}
+
+	messages, err := a.memory.ListMessages(ctx, sessionID)
+	if err != nil {
+		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
+		return
+	}
+	if len(messages) <= keepRecentMessages {
+		return
+	}
+
+	brief, untilSeq, err := a.memory.ConversationBrief(ctx, conversationID)
+	if err != nil {
+		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
+		return
+	}
+
+	keepFrom := messages[len(messages)-keepRecentMessages].Seq
+	fresh := make([]store.Message, 0)
+	for _, msg := range messages {
+		if msg.Seq < keepFrom && msg.Seq > untilSeq {
+			fresh = append(fresh, msg)
+		}
+	}
+	if len(fresh) == 0 {
+		return
+	}
+
+	next, err := a.responder.NewOneTurnChat(ctx, briefPrompt, briefInput(brief, fresh))
+	if err != nil {
+		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
+		return
+	}
+	next = strings.TrimSpace(next)
+	if next == "" {
+		return
+	}
+	if err := a.memory.UpdateConversationBrief(ctx, conversationID, next, fresh[len(fresh)-1].Seq); err != nil {
+		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
+	}
+}
+
+func briefInput(brief string, messages []store.Message) string {
+	var builder strings.Builder
+	if brief != "" {
+		builder.WriteString("已有摘要：\n")
+		builder.WriteString(brief)
+		builder.WriteString("\n\n新增对话：\n")
+	}
+	for _, msg := range messages {
+		builder.WriteString(msg.Role)
+		builder.WriteString(": ")
+		builder.WriteString(msg.Content)
+		builder.WriteByte('\n')
+	}
+	return builder.String()
 }
 
 // generateTitle 只在标题还是默认值时，用第一问生成标题并写回 conversations。
