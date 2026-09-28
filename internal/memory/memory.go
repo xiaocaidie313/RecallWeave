@@ -245,7 +245,7 @@ func (m *MemoryManger) ChatSession(ctx context.Context, conversationID uint) (*s
 	}
 
 	session = store.Session{
-		ConversationID: conversationID,
+		ConversationID: &conversationID,
 		SourceTag:      store.SourceChat,
 		Name:           "chat",
 	}

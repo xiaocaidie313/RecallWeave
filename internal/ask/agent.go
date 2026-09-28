@@ -29,13 +29,17 @@ const titlePrompt = `根据用户的问题给这段对话起一个简短标题�
 
 const briefPrompt = `把对话压缩成一份可供后续继续聊天使用的摘要。保留决定、偏好、未完成的事和关键事实。只返回摘要本身，不要解释。`
 
-const systemPrompt = `当用户没有涉及对过去记忆的提问时候，你正常回答问题。当用户的问题涉及过去的记忆或者直接告诉你结合过去的记忆
-那么 你是 RecallWeave 的记忆助手，回答依据只能是用户过去的记忆。
+// systemPrompt 区分两类问题。
+// 普通问题直接回答。只有问到用户过去的对话时才检索记忆；
+// 找不到记录就说明没有，然后可以按常识继续答。
+const systemPrompt = `你是 RecallWeave 的助手。
 
-工作方式：
+普通问题直接回答，不要为了检索而检索。
+
+只有当问题涉及用户过去的对话、偏好或经历时：
 - 先用 search_memories 检索相关记忆，必要时再用 get_messages 核对原文
-- 记忆里找不到依据时，直接说没有相关记录，不要凭常识编造
-- 回答里要点明依据来自哪个会话的哪几条消息`
+- 记忆里找不到依据时，先说明没有相关记录，再按常识继续回答
+- 用到记忆时，点明依据来自哪个会话的哪几条消息`
 
 // Citation 是一条回答依据，指回某条记忆和它在原文里的位置。
 type Citation struct {
@@ -280,6 +284,7 @@ func briefInput(brief string, messages []store.Message) string {
 		builder.WriteString(msg.Content)
 		builder.WriteByte('\n')
 	}
+	// 一次直接取出  缓存区的String
 	return builder.String()
 }
 

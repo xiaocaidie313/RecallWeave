@@ -38,6 +38,7 @@ func (s *Service) ImportText(ctx context.Context, sourceTag store.SourceTag, nam
 		return ImportResult{}, ErrEmptyText
 	}
 
+	// 导入不填 ConversationID。这段原文不属于某一次助手对话。
 	session := &store.Session{
 		SourceTag: sourceTag,
 		Name:      name,
