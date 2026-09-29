@@ -51,3 +51,15 @@ func (h *ConversationHandler) List(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"conversations": items})
 }
+
+func (h *ConversationHandler) ListWithTitle(c *gin.Context) {
+	items, err := h.memory.ListConversationsWithTitle(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list conversations with title"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"conversations": items,
+	})
+}

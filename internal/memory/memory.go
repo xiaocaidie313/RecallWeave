@@ -10,6 +10,7 @@ import (
 
 	"recallweave/internal/llm"
 	"recallweave/internal/store"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -84,6 +85,24 @@ func (m *MemoryManger) CreateConversation(ctx context.Context, title string) (st
 func (m *MemoryManger) ListConversations(ctx context.Context) ([]store.Conversation, error) {
 	var items []store.Conversation
 	err := m.db.WithContext(ctx).Order("updated_at DESC, id DESC").Find(&items).Error
+	return items, err
+}
+
+func (m *MemoryManger) ListConversationsWithTitle(ctx context.Context) ([]struct {
+	ID        uint      `json:"id"`
+	Title     string    `json:"title"`
+	UpdatedAt time.Time `json:"updated_at"`
+}, error) {
+	var items = []struct {
+		ID        uint      `json:"id"`
+		Title     string    `json:"title"`
+		UpdatedAt time.Time `json:"updated_at"`
+	}{}
+
+	err := m.db.WithContext(ctx).Order("update_at DESC, id DESC").Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
 	return items, err
 }
 

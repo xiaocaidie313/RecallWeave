@@ -23,9 +23,14 @@ func NewRouter(
 
 	router.POST("/api/imports", ingestHandler.ImportText)
 	router.POST("/api/sessions/:session_id/extract", extractHandler.ExtractSession)
-	router.POST("/api/conversations", conversationHandler.Create)
-	router.GET("/api/conversations", conversationHandler.List)
 	router.POST("/api/ask/:conversation_id", askHandler.Ask)
+
+	ConversationGroup := router.Group("/api/conversations")
+	{
+		ConversationGroup.GET("/list", conversationHandler.List)
+		ConversationGroup.POST("/create", conversationHandler.Create)
+		ConversationGroup.GET("/list/with_title", conversationHandler.ListWithTitle)
+	}
 
 	return router
 }

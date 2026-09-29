@@ -33,7 +33,7 @@ func (s *Service) ImportText(ctx context.Context, sourceTag store.SourceTag, nam
 		return ImportResult{}, ErrInvalidSource
 	}
 
-	messages := splitMessages(text)
+	messages := splitMessages(text, sourceTag)
 	if len(messages) == 0 {
 		return ImportResult{}, ErrEmptyText
 	}
@@ -73,7 +73,7 @@ func (s *Service) createSessionWithMessages(ctx context.Context, session *store.
 
 // splitMessages 按空行分段，是目前最笨也最稳的切法。
 // 角色暂时统一记成 user，等确定了各平台的导出格式再解析。
-func splitMessages(text string) []store.Message {
+func splitMessages(text string, sourceTag store.SourceTag) []store.Message {
 	normalized := strings.ReplaceAll(text, "\r\n", "\n")
 
 	var messages []store.Message
@@ -83,10 +83,50 @@ func splitMessages(text string) []store.Message {
 			continue
 		}
 		messages = append(messages, store.Message{
-			Seq:     len(messages) + 1,
-			Role:    "user",
-			Content: block,
+			Seq:       len(messages) + 1,
+			Role:      "user",
+			SourceTag: sourceTag,
+			Content:   block,
 		})
 	}
 	return messages
+
+	switch sourceTag{
+		case store.SourceChatGPT:
+		case store.SourceCursorAgent:
+		case store.SourceCodex:
+		case store.SourceChat:
+		case store.SourceCursorIDE:
+			return splitMessage_agent()
+		case store.SourceWechat:
+		case store.SourceQQ:
+		case store.SourceTiktok:
+			return splitMessage_2()
+		case store.SourceWeibo:
+		case store.SourceTwitter:
+		case store.SourceFacebook:
+		case store.SourceInstagram:
+		case store.SourceYoutube:
+			return splitMessage_1()
+		default:
+			return nil
+	}
+}
+
+
+
+func dentifyTag(sourceTag store.SourceTag) {
+	if 
+}
+
+
+// 有ai参与的对话
+func splitMessage_agent(){
+
+}
+// 二人对话
+func splitMessage_2(){}
+// 一人对话
+func splitMessage_1(){
+
 }

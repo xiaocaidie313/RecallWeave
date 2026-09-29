@@ -21,6 +21,7 @@ type Session struct {
 // 也方便按区间把某条记忆的原文捞回来。
 type Message struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
+	SourceTag SourceTag `gorm:"size:32;index;not null" json:"source_tag"`
 	SessionID uint      `gorm:"uniqueIndex:idx_session_seq;not null" json:"session_id"`
 	Seq       int       `gorm:"uniqueIndex:idx_session_seq;not null" json:"seq"`
 	Role      string    `gorm:"size:32;not null" json:"role"`
