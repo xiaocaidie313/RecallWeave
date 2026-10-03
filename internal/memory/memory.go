@@ -18,6 +18,9 @@ import (
 const (
 	defaultSearchLimit = 5
 	maxSearchLimit     = 20
+
+	// recallHalfLifeDays 是活跃度的半衰期。超过这个时长没被命中的记忆，权重按时间折半衰减。
+	recallHalfLifeDays = 7
 )
 
 type MemoryManger struct {
@@ -122,9 +125,16 @@ func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag s
 	vectorHits, err := m.vectorSearch(ctx, keyword, tag, limit)
 	if err != nil {
 		slog.Warn("vector search failed", "error", err)
-		return keywordHits, nil
+		vectorHits = nil
 	}
-	return mergeMemories(vectorHits, keywordHits, limit), nil
+	merged := mergeMemories(vectorHits, keywordHits, limit)
+
+	// 命中一次就记录一次：次数 +1、刷新最近命中时间。异步做，不阻塞响应。
+	// 这就是「短期记忆 → 长期记忆」的升级依据，越常被用到的活得越久。
+	if len(merged) > 0 {
+		go m.bumpRecall(context.WithoutCancel(ctx), merged)
+	}
+	return merged, nil
 }
 
 func (m *MemoryManger) keywordSearch(ctx context.Context, keyword string, tag store.MemoryTag, limit int) ([]store.Memory, error) {
@@ -175,14 +185,17 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 		score  float64
 	}
 	scored := make([]scoredMemory, 0, len(memories))
+	now := time.Now()
 	for _, item := range memories {
 		if len(item.Embedding) == 0 {
 			continue
 		}
-		score := CalculateSimilarity(queryVector, item.Embedding)
-		if score <= 0 {
+		sim := CalculateSimilarity(queryVector, item.Embedding)
+		if sim <= 0 {
 			continue
 		}
+		// 相似度 × 活跃度：向量命中后，越常被用、越最近用的记忆排序越靠前。
+		score := sim * activationMultiplier(item.RecalledCount, item.LastAccessAt, now)
 		scored = append(scored, scoredMemory{memory: item, score: score})
 	}
 	sort.Slice(scored, func(i, j int) bool {
@@ -215,6 +228,45 @@ func mergeMemories(primary, extra []store.Memory, limit int) []store.Memory {
 		}
 	}
 	return merged
+}
+
+// activationMultiplier 把记忆的「活跃度」折成一个乘数，叠到相似度上做排序。
+// 召回次数越多乘数越大（log1p 压缩避免单条爆炸），但超过半衰期没被命中的记忆
+// 按年龄指数衰减——常被用的活记忆浮上来，冷门老记忆沉底。全是纯计算，方便测试。
+func activationMultiplier(recalled int, lastAccess time.Time, now time.Time) float64 {
+	recallBoost := math.Log1p(float64(recalled)) * 0.5
+
+	var decay float64
+	if !lastAccess.IsZero() && now.After(lastAccess) {
+		ageDays := now.Sub(lastAccess).Hours() / 24
+		decay = math.Pow(0.5, ageDays/recallHalfLifeDays)
+	} else {
+		// 从没被命中的记忆保持中性权重，不额外衰减。
+		decay = 1
+	}
+
+	return 1 + recallBoost*decay
+}
+
+// bumpRecall 给命中的记忆记一次召回：次数 +1、刷新最近命中时间。
+// 在事务里批量更新，更新失败只记日志，不影响这次检索的结果。
+// 把命中的memory 整体搜索到集体处理 +1 
+func (m *MemoryManger) bumpRecall(ctx context.Context, hits []store.Memory) {
+	now := time.Now()
+	// 直接拼 SQL 比逐条 Save 省一次查询，命中一多就不想逐条开事务。
+	ids := make([]uint, 0, len(hits))
+	for _, item := range hits {
+		ids = append(ids, item.ID)
+	}
+
+	if err := m.db.WithContext(ctx).Model(&store.Memory{}).
+		Where("id IN ?", ids).
+		Updates(map[string]any{
+			"recalled_count": gorm.Expr("recalled_count + 1"),
+			"last_access_at": now,
+		}).Error; err != nil {
+		slog.Warn("bump recall failed", "count", len(ids), "error", err)
+	}
 }
 
 // ListBySession 返回一个会话下的记忆，按它在原文里的起始位置排序。
