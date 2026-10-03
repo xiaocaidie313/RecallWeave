@@ -50,6 +50,12 @@ func (conv *Conversation) AddUserMessage(content string) {
 	conv.messages = append(conv.messages, openai.UserMessage(content)) // system, userMessage, assistantMessage, toolMessage, functionMessage
 }
 
+// AddSystemMessage 追加一条 system 消息。system 消息用于放背景资料，
+// 比如预取的记忆摘要——那是环境信息，不是用户说的话。
+func (conv *Conversation) AddSystemMessage(content string) {
+	conv.messages = append(conv.messages, openai.SystemMessage(content))
+}
+
 func (conv *Conversation) AddAssistantMessage(content string) {
 	conv.messages = append(conv.messages, openai.AssistantMessage(content))
 }

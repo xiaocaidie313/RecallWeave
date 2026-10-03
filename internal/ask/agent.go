@@ -24,20 +24,24 @@ var ErrNoModel = errors.New("ask: llm is not configured")
 const defaultConversationTitle = "新对话"
 const maxConversationTitle = 60
 const keepRecentMessages = 20
+// preloadedRecallLimit 混合检索预取的记忆条数。只放几条摘要进上下文，
+// 控制住 token 成本，细节让模型用工具自己挖。
+const preloadedRecallLimit = 4
 
 const titlePrompt = `根据用户的问题给这段对话起一个简短标题。只返回标题本身，不要解释，不要加引号。`
 
 const briefPrompt = `把对话压缩成一份可供后续继续聊天使用的摘要。保留决定、偏好、未完成的事和关键事实。只返回摘要本身，不要解释。`
 
 // systemPrompt 区分两类问题。
-// 普通问题直接回答。只有问到用户过去的对话时才检索记忆；
-// 找不到记录就说明没有，然后可以按常识继续答。
+// 普通问题直接回答。涉及用户过去的对话时，优先用预载的记忆摘要；
+// 摘要不够用或要核对原文，才用工具深挖。找不到记录就说明没有，再按常识答。
 const systemPrompt = `你是 RecallWeave 的助手。
 
 普通问题直接回答，不要为了检索而检索。
 
-只有当问题涉及用户过去的对话、偏好或经历时：
-- 先用 search_memories 检索相关记忆，必要时再用 get_messages 核对原文
+系统消息里可能已经预载了与问题相关的记忆摘要，涉及用户过去时先直接引用它们。
+当摘要不够用、或需要核实原文时：
+- 用 search_memories 检索更多记忆，必要时再用 get_messages 核对原文
 - 记忆里找不到依据时，先说明没有相关记录，再按常识继续回答
 - 用到记忆时，点明依据来自哪个会话的哪几条消息`
 
@@ -75,8 +79,8 @@ func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (
 	}
 
 	conversation := llm.NewConversation(systemPrompt, conversationID)
-	// 预加载历史对话
-	sessionID, err := a.preload(ctx, conversation, conversationID)
+	// 预加载历史对话 + 与问题相关的记忆（混合检索）
+	sessionID, err := a.preload(ctx, conversation, conversationID, question)
 	if err != nil {
 		return Answer{}, err
 	}
@@ -172,12 +176,18 @@ func citationsFrom(toolName, result string) []Citation {
 	}
 }
 
-// preload 把这次聊天里已经有的消息放进上下文，并返回对应的 session。
+// preload 把这次聊天里已有的消息放进上下文，并返回对应的 session。
 // 没有记忆库或没有 conversation 时跳过，测试可以不连数据库。
 // 单纯的加入信息
-func (a *Agent) preload(ctx context.Context, conv *llm.Conversation, conversationID uint) (uint, error) {
+// question 用于混合检索：把与问题最相关的几条记忆摘要直接放进上下文，
+// 模型开答前就知道用户过去的相关经历，不必先学会调工具。
+// 这些预取的记忆不进 citations——它们是「可能的背景」，真正的引用依据走工具链。
+func (a *Agent) preload(ctx context.Context, conv *llm.Conversation, conversationID uint, question string) (uint, error) {
 	if a.memory == nil || conversationID == 0 {
 		return 0, nil
+	}
+	if question != "" {
+		a.preloadRecall(ctx, conv, question)
 	}
 
 	session, err := a.memory.ChatSession(ctx, conversationID)
@@ -208,6 +218,33 @@ func (a *Agent) preload(ctx context.Context, conv *llm.Conversation, conversatio
 		conv.AddUserMessage(msg.Content)
 	}
 	return session.ID, nil
+}
+
+// preloadRecall 用当前问题检索相关记忆，把 top-K 的标题+摘要拼成一条 system 消息注入。
+// 混合检索：让模型在不开工具的情况下也能答对「记得的事」。
+// 检索失败只记日志，不让预取失败拦截掉这一次提问。
+func (a *Agent) preloadRecall(ctx context.Context, conv *llm.Conversation, question string) {
+	hits, err := a.memory.SearchMemories(ctx, question, "", preloadedRecallLimit)
+	if err != nil {
+		slog.Warn("preload recall failed", "error", err)
+		return
+	}
+	if len(hits) == 0 {
+		return
+	}
+
+	var builder strings.Builder
+	builder.WriteString("用户过去可能相关的经历：\n")
+	for _, hit := range hits {
+		builder.WriteString("- ")
+		builder.WriteString(hit.Title)
+		builder.WriteString("\n  ")
+		builder.WriteString(hit.Content)
+		builder.WriteByte('\n')
+	}
+	builder.WriteString("\n这些仅供参考，回答时如果你不确定，用 search_memories 或 get_messages 核实。")
+
+	conv.AddSystemMessage(builder.String())
 }
 
 // extractSession 在这一问已经写入会话之后，只提炼还没覆盖到的新消息。
