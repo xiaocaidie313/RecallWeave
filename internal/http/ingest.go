@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 	"recallweave/internal/ingest"
-	"recallweave/internal/ingest/parser"
+	"recallweave/internal/parser"
 	"recallweave/internal/store"
 
 	"github.com/gin-gonic/gin"
@@ -25,11 +25,6 @@ type importTextRequest struct {
 	Text      string `json:"text" binding:"required"`
 }
 
-type importFileRequest struct {
-	SourceTag string `json:"source_tag" binding:"required"`
-	Name      string `json:"name"`
-}
-
 func (h *IngestHandler) ImportText(c *gin.Context) {
 	var req importTextRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -39,70 +34,79 @@ func (h *IngestHandler) ImportText(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.ImportText(
+	results, err := h.service.ImportText(
 		c.Request.Context(),
 		store.SourceTag(req.SourceTag),
 		req.Name,
 		req.Text,
 	)
 	if err != nil {
-		if errors.Is(err, ingest.ErrInvalidSource) || errors.Is(err, ingest.ErrEmptyText) {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": err.Error(),
-			})
-			return
-		}
-
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
+		writeImportError(c, err)
 		return
 	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"session_id":    result.SessionID,
-		"message_count": result.MessageCount,
-	})
+	writeImportResults(c, results)
 }
 
 func (h *IngestHandler) ImportFile(c *gin.Context) {
-	var req importFileRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-		})
+	sourceTag := c.PostForm("source_tag")
+	if sourceTag == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "source_tag is required"})
 		return
 	}
-	// multipart/form-data
-	file, err := c.FormFile("file") // 文件指针
+
+	file, err := c.FormFile("file")
 	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
 		return
 	}
-	// 都是二进制 数据
+
 	content, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	defer content.Close()
+
+	data, err := io.ReadAll(io.LimitReader(content, 20<<20))
 	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 读取文件
-	data, err := io.ReadAll(content)
-	final, err := parser.ReadFile(data)
+	text, err := parser.ReadFile(data)
 	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	// 存入数据库？磁盘
-	result, err := h.service.ImportText(
+
+	results, err := h.service.ImportText(
 		c.Request.Context(),
-		store.SourceTag(req.SourceTag),
-		req.Name,
-		final,
+		store.SourceTag(sourceTag),
+		c.PostForm("name"),
+		text,
 	)
+	if err != nil {
+		writeImportError(c, err)
+		return
+	}
+	writeImportResults(c, results)
+}
 
-	c.JSON(http.StatusOK, gin.H{
-		"upload_file":   "ok",
-		"session_id":    result.SessionID,
-		"message_count": result.MessageCount,
-	})
+func writeImportError(c *gin.Context, err error) {
+	if errors.Is(err, ingest.ErrInvalidSource) || errors.Is(err, ingest.ErrEmptyText) || errors.Is(err, ingest.ErrUnreadable) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+}
 
+func writeImportResults(c *gin.Context, results []ingest.ImportResult) {
+	sessions := make([]gin.H, 0, len(results))
+	for _, result := range results {
+		sessions = append(sessions, gin.H{
+			"session_id":    result.SessionID,
+			"message_count": result.MessageCount,
+		})
+	}
+	c.JSON(http.StatusCreated, gin.H{"sessions": sessions})
 }

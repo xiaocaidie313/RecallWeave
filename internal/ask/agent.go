@@ -100,7 +100,7 @@ func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (
 				return Answer{}, err
 			}
 			a.extractSession(ctx, sessionID)
-			a.condense(ctx, conversationID, sessionID)
+			a.condenseWindow(ctx, conversationID, sessionID)
 			return Answer{
 				Text:      turn.Content,
 				Citations: citations,
@@ -216,7 +216,7 @@ func (a *Agent) extractSession(ctx context.Context, sessionID uint) {
 	if a.extracter == nil || sessionID == 0 {
 		return
 	}
-	if _, err := a.extracter.ExtractNew(ctx, sessionID); err != nil {
+	if _, err := a.extracter.ExtractNewToMemory(ctx, sessionID); err != nil {
 		slog.Warn("extract session failed",
 			"session_id", sessionID,
 			"error", err,
@@ -224,9 +224,9 @@ func (a *Agent) extractSession(ctx context.Context, sessionID uint) {
 	}
 }
 
-// condense 在消息超过最近窗口时，把更早的原文收成摘要。
+// condenseWindow 在消息超过最近窗口时，把更早的原文收成摘要。
 // 最近的消息保持原文。失败只记日志。
-func (a *Agent) condense(ctx context.Context, conversationID, sessionID uint) {
+func (a *Agent) condenseWindow(ctx context.Context, conversationID, sessionID uint) {
 	if a.memory == nil || a.responder == nil || conversationID == 0 || sessionID == 0 {
 		return
 	}
@@ -240,12 +240,14 @@ func (a *Agent) condense(ctx context.Context, conversationID, sessionID uint) {
 		return
 	}
 
+	// 已有简报 + 截止序号。untilSeq 之前的消息已被压缩过，不再重复压缩。
 	brief, untilSeq, err := a.memory.ConversationBrief(ctx, conversationID)
 	if err != nil {
 		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
 		return
 	}
 
+	// 获取超过 window 的消息
 	keepFrom := messages[len(messages)-keepRecentMessages].Seq
 	fresh := make([]store.Message, 0)
 	for _, msg := range messages {
@@ -256,7 +258,7 @@ func (a *Agent) condense(ctx context.Context, conversationID, sessionID uint) {
 	if len(fresh) == 0 {
 		return
 	}
-
+	// 压缩对话得到 简报
 	next, err := a.responder.NewOneTurnChat(ctx, briefPrompt, briefInput(brief, fresh))
 	if err != nil {
 		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)

@@ -28,7 +28,7 @@ func NewExtractExcuter(db *gorm.DB, segmenter llm.Segmenter, embedder llm.Embedd
 
 // ExtractSession 把一个会话提炼成若干条记忆，返回生成的条数。
 // 重复提炼同一个会话是幂等的：先删掉旧记忆，再写新的。
-func (e *ExtractExcuter) ExtractSession(ctx context.Context, sessionID uint) (int, error) {
+func (e *ExtractExcuter) ExtractSessionToMemory(ctx context.Context, sessionID uint) (int, error) {
 	messages, err := e.GetMessages(ctx, sessionID)
 	if err != nil {
 		return 0, err
@@ -48,7 +48,8 @@ func (e *ExtractExcuter) ExtractSession(ctx context.Context, sessionID uint) (in
 
 // ExtractNew 只提炼上次覆盖序号之后的新消息，已有记忆保留。
 // 手动的 ExtractSession 仍会删掉旧记忆再整段重写。
-func (e *ExtractExcuter) ExtractNew(ctx context.Context, sessionID uint) (int, error) {
+// 摘要失败做降级 ----> llm 自动重新提炼信息
+func (e *ExtractExcuter) ExtractNewToMemory(ctx context.Context, sessionID uint) (int, error) {
 	messages, err := e.GetMessages(ctx, sessionID)
 	if err != nil {
 		return 0, err

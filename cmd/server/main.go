@@ -74,7 +74,7 @@ func main() {
 	agent := ask.NewAgent(responder, ask.NewAskToolHandle(memoryManger), memoryManger, extracter)
 
 	r := apphttp.NewRouter(
-		apphttp.NewIngestHandler(ingest.NewService(database)),
+		apphttp.NewIngestHandler(ingest.NewService(database, extracter)),
 		apphttp.NewExtractHandler(extracter),
 		apphttp.NewAskHandler(agent),
 		apphttp.NewConversationHandler(memoryManger),

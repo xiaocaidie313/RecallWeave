@@ -3,8 +3,11 @@ package ingest
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
+	"log/slog"
 
+	"recallweave/internal/extract"
+	"recallweave/internal/parser"
 	"recallweave/internal/store"
 
 	"gorm.io/gorm"
@@ -13,14 +16,16 @@ import (
 var (
 	ErrEmptyText     = errors.New("text has no importable content")
 	ErrInvalidSource = errors.New("unknown source tag")
+	ErrUnreadable    = errors.New("unreadable import")
 )
 
 type Service struct {
-	db *gorm.DB
+	db             *gorm.DB
+	extractExcuter *extract.ExtractExcuter
 }
 
-func NewService(db *gorm.DB) *Service {
-	return &Service{db: db}
+func NewService(db *gorm.DB, extractExcuter *extract.ExtractExcuter) *Service {
+	return &Service{db: db, extractExcuter: extractExcuter}
 }
 
 type ImportResult struct {
@@ -28,105 +33,74 @@ type ImportResult struct {
 	MessageCount int
 }
 
-func (s *Service) ImportText(ctx context.Context, sourceTag store.SourceTag, name, text string) (ImportResult, error) {
+// ImportText 按来源把文本拆成一段或多段对话，每段各建一条 session。
+func (s *Service) ImportText(ctx context.Context, sourceTag store.SourceTag, name, text string) ([]ImportResult, error) {
 	if !store.IsValidSourceTag(sourceTag) {
-		return ImportResult{}, ErrInvalidSource
+		return nil, ErrInvalidSource
 	}
 
-	messages := splitMessages(text, sourceTag)
-	if len(messages) == 0 {
-		return ImportResult{}, ErrEmptyText
+	conversations, err := parser.Parse(text, sourceTag)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
+	}
+	if len(conversations) == 0 {
+		return nil, ErrEmptyText
 	}
 
-	// 导入不填 ConversationID。这段原文不属于某一次助手对话。
-	session := &store.Session{
-		SourceTag: sourceTag,
-		Name:      name,
-		RawText:   text,
-	}
-	if err := s.createSessionWithMessages(ctx, session, messages); err != nil {
-		return ImportResult{}, err
-	}
-
-	return ImportResult{SessionID: session.ID, MessageCount: len(messages)}, nil
-}
-
-// createSessionWithMessages 在一个事务里写入会话和它的消息。
-// session 插入后自增 ID 才可用，所以 SessionID 在这里回填。
-func (s *Service) createSessionWithMessages(ctx context.Context, session *store.Session, messages []store.Message) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(session).Error; err != nil {
-			return err
+	results := make([]ImportResult, 0, len(conversations))
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, conv := range conversations {
+			sessionName := name
+			if conv.Title != "" {
+				sessionName = conv.Title
+			}
+			session := &store.Session{
+				SourceTag: sourceTag,
+				Name:      sessionName,
+				RawText:   text,
+			}
+			if err := insertSession(tx, session, conv.Messages); err != nil {
+				return err
+			}
+			results = append(results, ImportResult{
+				SessionID:    session.ID,
+				MessageCount: len(conv.Messages),
+			})
 		}
-
-		if len(messages) == 0 {
-			return nil
-		}
-
-		for i := range messages {
-			messages[i].SessionID = session.ID
-		}
-
-		return tx.Create(&messages).Error
+		return nil
 	})
-}
-
-// splitMessages 按空行分段，是目前最笨也最稳的切法。
-// 角色暂时统一记成 user，等确定了各平台的导出格式再解析。
-func splitMessages(text string, sourceTag store.SourceTag) []store.Message {
-	normalized := strings.ReplaceAll(text, "\r\n", "\n")
-
-	var messages []store.Message
-	for _, block := range strings.Split(normalized, "\n\n") {
-		block = strings.TrimSpace(block)
-		if block == "" {
-			continue
+	if err != nil {
+		return nil, err
+	}
+	// 说明写入Session成功了 ---》 自动做摘要
+	// 没配 LLM（extractExcuter 为 nil）时不提炼，只入库。
+	if s.extractExcuter == nil {
+		return results, nil
+	}
+	go func() {
+		ctx := context.Background()
+		for _, result := range results {
+			_, err := s.extractExcuter.ExtractNewToMemory(ctx, result.SessionID)
+			if err != nil {
+				slog.Warn("extract new failed", "session_id", result.SessionID, "error", err)
+			}
 		}
-		messages = append(messages, store.Message{
-			Seq:       len(messages) + 1,
-			Role:      "user",
-			SourceTag: sourceTag,
-			Content:   block,
-		})
+	}()
+
+	return results, nil
+}
+
+// insertSession 在调用方的事务里写入会话和它的消息。
+// session 插入后自增 ID 才可用，所以 SessionID 在这里回填。
+func insertSession(tx *gorm.DB, session *store.Session, messages []store.Message) error {
+	if err := tx.Create(session).Error; err != nil {
+		return err
 	}
-	return messages
-
-	switch sourceTag{
-		case store.SourceChatGPT:
-		case store.SourceCursorAgent:
-		case store.SourceCodex:
-		case store.SourceChat:
-		case store.SourceCursorIDE:
-			return splitMessage_agent()
-		case store.SourceWechat:
-		case store.SourceQQ:
-		case store.SourceTiktok:
-			return splitMessage_2()
-		case store.SourceWeibo:
-		case store.SourceTwitter:
-		case store.SourceFacebook:
-		case store.SourceInstagram:
-		case store.SourceYoutube:
-			return splitMessage_1()
-		default:
-			return nil
+	if len(messages) == 0 {
+		return nil
 	}
-}
-
-
-
-func dentifyTag(sourceTag store.SourceTag) {
-	if 
-}
-
-
-// 有ai参与的对话
-func splitMessage_agent(){
-
-}
-// 二人对话
-func splitMessage_2(){}
-// 一人对话
-func splitMessage_1(){
-
+	for i := range messages {
+		messages[i].SessionID = session.ID
+	}
+	return tx.Create(&messages).Error
 }

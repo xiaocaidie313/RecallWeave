@@ -1,4 +1,4 @@
-package http_test
+package http
 
 import (
 	"encoding/json"
@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	apphttp "recallweave/internal/http"
 )
 
 func TestHealth(t *testing.T) {
@@ -15,7 +13,7 @@ func TestHealth(t *testing.T) {
 	recorder := httptest.NewRecorder()
 
 	// 伪造请求
-	apphttp.NewRouter(nil, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	// 检查 状态码、Content-Type、JSON 内容
 	if recorder.Code != http.StatusOK {

@@ -4,6 +4,7 @@ data/
 config/config.yaml
 
 # Build output
+.gocache/
 .cache/
 bin/
 *.exe

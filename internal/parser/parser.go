@@ -20,6 +20,8 @@ type Conversation struct {
 	Messages []store.Message
 }
 
+// 切割对话
+// 目前只对chatgpt 的对话做了单独的支持  其他都是 依照段落 块区分 \r\n
 type Parser interface {
 	Parse(raw string, sourceTag store.SourceTag) ([]Conversation, error)
 	ReadFile(content []byte) (string, error)
@@ -105,6 +107,7 @@ func DetectFileType(content []byte) string {
 }
 
 // Parse 按来源把文本拆成一段或多段对话，并填上 user / assistant。
+// 拆成Message
 func Parse(raw string, sourceTag store.SourceTag) ([]Conversation, error) {
 	switch sourceTag {
 	case store.SourceChatGPT:

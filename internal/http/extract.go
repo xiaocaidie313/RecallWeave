@@ -27,7 +27,7 @@ func (h *ExtractHandler) ExtractSession(c *gin.Context) {
 		return
 	}
 
-	count, err := h.excuter.ExtractSession(c.Request.Context(), uint(sessionID))
+	count, err := h.excuter.ExtractSessionToMemory(c.Request.Context(), uint(sessionID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
