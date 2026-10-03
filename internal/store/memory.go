@@ -14,6 +14,10 @@ type Memory struct {
 	Title     string    `gorm:"size:191" json:"title"`
 	Content   string    `gorm:"type:text" json:"content"`
 	Tag       MemoryTag `gorm:"size:32;index" json:"tag"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	// RecalledCount 被检索命中的次数。命中越多权重越大，是「短期记忆 → 长期记忆」的升级依据。
+	RecalledCount int `gorm:"default:0" json:"recalled_count"`
+	// LastAccessAt 最近一次被检索命中的时间，用于活跃度的时间衰减。
+	LastAccessAt time.Time `json:"last_access_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
