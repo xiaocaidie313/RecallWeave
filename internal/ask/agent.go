@@ -24,9 +24,9 @@ var ErrNoModel = errors.New("ask: llm is not configured")
 const defaultConversationTitle = "新对话"
 const maxConversationTitle = 60
 const keepRecentMessages = 20
-// preloadedRecallLimit 混合检索预取的记忆条数。只放几条摘要进上下文，
+// preloadedMemoriesLimit 混合检索预取的记忆条数。只放几条摘要进上下文，
 // 控制住 token 成本，细节让模型用工具自己挖。
-const preloadedRecallLimit = 4
+const preloadedMemoriesLimit = 4
 
 const titlePrompt = `根据用户的问题给这段对话起一个简短标题。只返回标题本身，不要解释，不要加引号。`
 
@@ -79,8 +79,8 @@ func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (
 	}
 
 	conversation := llm.NewConversation(systemPrompt, conversationID)
-	// 预加载历史对话 + 与问题相关的记忆（混合检索）
-	sessionID, err := a.preload(ctx, conversation, conversationID, question)
+	// 预载上下文：历史对话 + 简报 + 与问题相关的记忆（混合检索）
+	sessionID, err := a.preloadContext(ctx, conversation, conversationID, question)
 	if err != nil {
 		return Answer{}, err
 	}
@@ -176,18 +176,20 @@ func citationsFrom(toolName, result string) []Citation {
 	}
 }
 
-// preload 把这次聊天里已有的消息放进上下文，并返回对应的 session。
+// preloadContext 把这次提问需要的全部背景放进上下文，并返回对应的 session。
+// 分两个层面：
+//  1. 记忆层：preloadMemories 从全库检索与问题相关的记忆（混合检索），
+//     模型开答前就知道用户过去的相关经历，不必先学会调工具。
+//  2. 对话层：本对话的历史消息 + 之前的简报，模型才知道「这次聊到哪了」。
+// 记忆层和对话层是两套数据：记忆来自所有导入来源的提炼（微信、GPT、Cursor…），
+// 对话是本 conversation 专属的 chat session。别混在一起看。
 // 没有记忆库或没有 conversation 时跳过，测试可以不连数据库。
-// 单纯的加入信息
-// question 用于混合检索：把与问题最相关的几条记忆摘要直接放进上下文，
-// 模型开答前就知道用户过去的相关经历，不必先学会调工具。
-// 这些预取的记忆不进 citations——它们是「可能的背景」，真正的引用依据走工具链。
-func (a *Agent) preload(ctx context.Context, conv *llm.Conversation, conversationID uint, question string) (uint, error) {
+func (a *Agent) preloadContext(ctx context.Context, conv *llm.Conversation, conversationID uint, question string) (uint, error) {
 	if a.memory == nil || conversationID == 0 {
 		return 0, nil
 	}
 	if question != "" {
-		a.preloadRecall(ctx, conv, question)
+		a.preloadMemories(ctx, conv, question)
 	}
 
 	session, err := a.memory.ChatSession(ctx, conversationID)
@@ -220,13 +222,16 @@ func (a *Agent) preload(ctx context.Context, conv *llm.Conversation, conversatio
 	return session.ID, nil
 }
 
-// preloadRecall 用当前问题检索相关记忆，把 top-K 的标题+摘要拼成一条 system 消息注入。
+// preloadMemories 用当前问题从记忆库检索相关记忆，把 top-K 的标题+摘要拼成
+// 一条 system 消息注入。这是「记忆层」的预载：搜的是全库提炼过的 memory，
+// 不是本对话的 session。
 // 混合检索：让模型在不开工具的情况下也能答对「记得的事」。
+// 这些预取的记忆不进 citations——它们是「可能的背景」，真正的引用依据走工具链。
 // 检索失败只记日志，不让预取失败拦截掉这一次提问。
-func (a *Agent) preloadRecall(ctx context.Context, conv *llm.Conversation, question string) {
-	hits, err := a.memory.SearchMemories(ctx, question, "", preloadedRecallLimit)
+func (a *Agent) preloadMemories(ctx context.Context, conv *llm.Conversation, question string) {
+	hits, err := a.memory.SearchMemories(ctx, question, "", preloadedMemoriesLimit)
 	if err != nil {
-		slog.Warn("preload recall failed", "error", err)
+		slog.Warn("preload memories failed", "error", err)
 		return
 	}
 	if len(hits) == 0 {
