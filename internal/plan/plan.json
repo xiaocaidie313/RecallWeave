@@ -1,0 +1,22 @@
+{
+    "goal":"",
+    "steps":[
+        {
+            "step":"",
+            "tools":[ 
+                {
+                    "name":"",
+                    "description":"",
+                    "parameters":{
+                        "key":"value"
+                    }
+                }
+            ],
+            "status":"",
+            "result":"",
+            "confidence":0.0
+        }
+    ],
+    "conclusion":"",
+    "confidence":0.0
+}

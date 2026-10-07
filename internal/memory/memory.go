@@ -183,7 +183,7 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 	type scoredMemory struct {
 		memory store.Memory
 		score  float64
-	}
+	} 
 	scored := make([]scoredMemory, 0, len(memories))
 	now := time.Now()
 	for _, item := range memories {
@@ -198,6 +198,7 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 		score := sim * activationMultiplier(item.RecalledCount, item.LastAccessAt, now)
 		scored = append(scored, scoredMemory{memory: item, score: score})
 	}
+	// 按照score得分 排记忆
 	sort.Slice(scored, func(i, j int) bool {
 		return scored[i].score > scored[j].score
 	})
@@ -250,7 +251,7 @@ func activationMultiplier(recalled int, lastAccess time.Time, now time.Time) flo
 
 // bumpRecall 给命中的记忆记一次召回：次数 +1、刷新最近命中时间。
 // 在事务里批量更新，更新失败只记日志，不影响这次检索的结果。
-// 把命中的memory 整体搜索到集体处理 +1 
+// 把命中的memory 整体搜索到集体处理 +1
 func (m *MemoryManger) bumpRecall(ctx context.Context, hits []store.Memory) {
 	now := time.Now()
 	// 直接拼 SQL 比逐条 Save 省一次查询，命中一多就不想逐条开事务。
