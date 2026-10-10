@@ -24,6 +24,7 @@ var ErrNoModel = errors.New("ask: llm is not configured")
 const defaultConversationTitle = "新对话"
 const maxConversationTitle = 60
 const keepRecentMessages = 20
+
 // preloadedMemoriesLimit 混合检索预取的记忆条数。只放几条摘要进上下文，
 // 控制住 token 成本，细节让模型用工具自己挖。
 const preloadedMemoriesLimit = 4
@@ -87,24 +88,24 @@ type Answer struct {
 }
 
 type Agent struct {
-	responder llm.Responder
-	tools     *llm.ToolHandle
-	memory    *memory.MemoryManger
-	extracter *extract.ExtractExcuter
+	ChatGenerator llm.ChatGenerator
+	tools         *llm.ToolHandle
+	memory        *memory.MemoryManger
+	extracter     *extract.ExtractExcuter
 }
 
-// responder 为 nil 表示没配 api_key，这时问答直接报错。
+// ChatGenerator 为 nil 表示没配 api_key，这时问答直接报错。
 // 提炼有本地兜底，问答没有——没有模型就没法组织回答。
-func NewAgent(responder llm.Responder, tools *llm.ToolHandle, memoryManger *memory.MemoryManger, extracter *extract.ExtractExcuter) *Agent {
-	return &Agent{responder: responder, tools: tools, memory: memoryManger, extracter: extracter}
+func NewAgent(ChatGenerator llm.ChatGenerator, tools *llm.ToolHandle, memoryManger *memory.MemoryManger, extracter *extract.ExtractExcuter) *Agent {
+	return &Agent{ChatGenerator: ChatGenerator, tools: tools, memory: memoryManger, extracter: extracter}
 }
 
 func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (Answer, error) {
-	if a.responder == nil {
+	if a.ChatGenerator == nil {
 		return Answer{}, ErrNoModel
 	}
 
-	conversation := llm.NewConversation(systemPrompt, conversationID)
+	conversation := llm.NewConversation(systemPrompt, llm.WithConversationID(conversationID))
 	// 预载上下文：历史对话 + 简报 + 与问题相关的记忆（混合检索）
 	sessionID, err := a.preloadContext(ctx, conversation, conversationID, question)
 	if err != nil {
@@ -119,7 +120,7 @@ func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (
 	cited := make(map[uint]struct{})
 
 	for round := 1; round <= maxRounds; round++ {
-		turn, err := a.responder.Next(ctx, conversation, a.tools.Schemas())
+		turn, err := a.ChatGenerator.Next(ctx, conversation, a.tools.Schemas())
 		if err != nil {
 			return Answer{}, err
 		}
@@ -207,6 +208,7 @@ func citationsFrom(toolName, result string) []Citation {
 //  1. 记忆层：preloadMemories 从全库检索与问题相关的记忆（混合检索），
 //     模型开答前就知道用户过去的相关经历，不必先学会调工具。
 //  2. 对话层：本对话的历史消息 + 之前的简报，模型才知道「这次聊到哪了」。
+//
 // 记忆层和对话层是两套数据：记忆来自所有导入来源的提炼（微信、GPT、Cursor…），
 // 对话是本 conversation 专属的 chat session。别混在一起看。
 // 没有记忆库或没有 conversation 时跳过，测试可以不连数据库。
@@ -295,7 +297,7 @@ func (a *Agent) extractSession(ctx context.Context, sessionID uint) {
 // condenseWindow 在消息超过最近窗口时，把更早的原文收成摘要。
 // 最近的消息保持原文。失败只记日志。
 func (a *Agent) condenseWindow(ctx context.Context, conversationID, sessionID uint) {
-	if a.memory == nil || a.responder == nil || conversationID == 0 || sessionID == 0 {
+	if a.memory == nil || a.ChatGenerator == nil || conversationID == 0 || sessionID == 0 {
 		return
 	}
 
@@ -327,7 +329,7 @@ func (a *Agent) condenseWindow(ctx context.Context, conversationID, sessionID ui
 		return
 	}
 	// 压缩对话得到 简报
-	next, err := a.responder.NewOneTurnChat(ctx, briefPrompt, briefInput(brief, fresh))
+	next, err := a.ChatGenerator.NewOneTurnChat(ctx, briefPrompt, briefInput(brief, fresh))
 	if err != nil {
 		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
 		return
@@ -360,7 +362,7 @@ func briefInput(brief string, messages []store.Message) string {
 
 // generateTitle 只在标题还是默认值时，用第一问生成标题并写回 conversations。
 func (a *Agent) generateTitle(ctx context.Context, conversationID uint, question string) {
-	if a.memory == nil || a.responder == nil || conversationID == 0 {
+	if a.memory == nil || a.ChatGenerator == nil || conversationID == 0 {
 		return
 	}
 
@@ -373,7 +375,7 @@ func (a *Agent) generateTitle(ctx context.Context, conversationID uint, question
 		return
 	}
 
-	title, err := a.responder.NewOneTurnChat(ctx, titlePrompt, question)
+	title, err := a.ChatGenerator.NewOneTurnChat(ctx, titlePrompt, question)
 	if err != nil {
 		slog.Warn("generate title failed", "conversation_id", conversationID, "error", err)
 		return
