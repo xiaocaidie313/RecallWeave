@@ -61,17 +61,17 @@ func main() {
 	// client 为 nil 时不能直接赋给接口变量，否则接口不为 nil，下游判断会失效
 	var segmenter llm.Segmenter
 	var embedder llm.Embedder
-	var responder llm.Responder
+	var ChatGenerator llm.ChatGenerator
 	if client != nil {
 		segmenter = client
 		embedder = client
-		responder = client
+		ChatGenerator = client
 	}
 
 	// 组装依赖。HTTP 在 internal/http，这里只把业务对象传进去。
 	extracter := extract.NewExtractExcuter(database, segmenter, embedder)
 	memoryManger := memory.NewMemoryManger(database, embedder)
-	agent := ask.NewAgent(responder, ask.NewAskToolHandle(memoryManger), memoryManger, extracter)
+	agent := ask.NewAgent(ChatGenerator, ask.NewAskToolHandle(memoryManger), memoryManger, extracter)
 
 	r := apphttp.NewRouter(
 		apphttp.NewIngestHandler(ingest.NewService(database, extracter)),
