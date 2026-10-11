@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"fmt"
-	"time"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/param"
@@ -21,7 +20,7 @@ type ToolCall struct {
 // Turn 是模型一轮的输出：要么给出回答，要么要求调用工具。记录会话内容/ 工具调用情况
 type Turn struct {
 	Content   string
-	ToolCalls []ToolCall
+	ToolCalls []ToolCall // 想要调用的tool清单
 }
 
 // ChatGenerator 是 ask 循环依赖的能力，测试时可以塞假实现。

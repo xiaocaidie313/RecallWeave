@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 type ToolSchema struct {
@@ -33,6 +34,17 @@ func (s *ToolHandle) Register(tool Tool) {
 		s.order = append(s.order, tool.Schema.Name)
 	}
 	s.tools[tool.Schema.Name] = tool
+}
+
+// tool prompt
+func (s *ToolHandle) ToolPrompt() string {
+	var builder strings.Builder
+	builder.WriteString("你能用以下工具")
+	for index, tool := range s.tools {
+		builder.WriteString(fmt.Sprintf("%d:%s", index, tool.Schema.Name))
+		builder.WriteString("\n")
+	}
+	return builder.String()
 }
 
 // 返回所有工具的schema
