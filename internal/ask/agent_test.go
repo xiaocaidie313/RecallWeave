@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"recallweave/internal/agent/ability"
 	"recallweave/internal/llm"
 )
 
@@ -62,7 +63,7 @@ func TestAskReturnsAnswerWithoutTools(t *testing.T) {
 }
 
 func TestAskRunsToolThenAnswers(t *testing.T) {
-	hits := searchMemoriesResult{Memories: []memoryHit{{
+	hits := ability.SearchMemoriesResult{Memories: []ability.MemoryHit{{
 		MemoryID:  7,
 		SessionID: 3,
 		SeqStart:  1,
@@ -113,7 +114,7 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 }
 
 func TestAskDeduplicatesCitations(t *testing.T) {
-	hits := searchMemoriesResult{Memories: []memoryHit{
+	hits := ability.SearchMemoriesResult{Memories: []ability.MemoryHit{
 		{MemoryID: 4, SessionID: 1, SeqStart: 1, SeqEnd: 2, Title: "cmd 目录"},
 	}}
 	encoded, err := json.Marshal(hits)
