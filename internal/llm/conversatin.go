@@ -33,8 +33,6 @@ func WithConversationTitle(title string) ConvOption {
 // 开启新对话 注入system prompt
 func NewConversation(systemPrompt string, opts ...ConvOption) *Conversation {
 	conv := &Conversation{
-		ID:        999999,
-		Title:     "",
 		CreatedAt: time.Now(),
 		messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage(systemPrompt),

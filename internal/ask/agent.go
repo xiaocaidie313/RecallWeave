@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"recallweave/internal/agent/ability"
 	"recallweave/internal/extract"
 	"recallweave/internal/llm"
 	"recallweave/internal/memory"
@@ -181,8 +182,8 @@ func toolError(err error) string {
 func citationsFrom(toolName, result string) []Citation {
 
 	switch toolName {
-	case "search_memories":
-		var parsed searchMemoriesResult
+	case ability.SearchMemoriesToolName:
+		var parsed ability.SearchMemoriesResult
 		if err := json.Unmarshal([]byte(result), &parsed); err != nil {
 			return nil
 		}
