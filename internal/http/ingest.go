@@ -25,6 +25,7 @@ type importTextRequest struct {
 	Text      string `json:"text" binding:"required"`
 }
 
+// 导入外部文本
 func (h *IngestHandler) ImportText(c *gin.Context) {
 	var req importTextRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

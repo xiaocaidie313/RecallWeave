@@ -50,7 +50,7 @@ func (h *AskHandler) Ask(c *gin.Context) {
 		})
 		return
 	}
-
+	// 业务层直接调 agent ? 
 	answer, err := h.agent.Ask(c.Request.Context(), question, uint(conversationID))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
