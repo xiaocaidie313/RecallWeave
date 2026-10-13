@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"recallweave/internal/agent"
-	"recallweave/internal/llm"
 )
 
 func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
@@ -53,11 +52,7 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 
 	tools := a.Tools()
 	maxRounds := a.Rounds()
-
-	systemPrompt := strings.TrimSpace(a.Instructions() + "\n\n" + req.SystemPrompt)
-	conversation := llm.NewConversation(systemPrompt, llm.WithConversationID(req.ConversationID))
-	applyPreload(conversation, req.Preload)
-	conversation.AddUserMessage(req.Input)
+	conversation := buildConversation(a, req)
 
 	for round := 1; round <= maxRounds; round++ {
 		if err := ctx.Err(); err != nil {
