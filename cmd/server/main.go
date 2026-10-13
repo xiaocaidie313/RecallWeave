@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"recallweave/internal/agent"
+	"recallweave/internal/agent/ability"
 	"recallweave/internal/ask"
 	"recallweave/internal/config"
 	"recallweave/internal/db"
@@ -71,12 +73,15 @@ func main() {
 	// 组装依赖。HTTP 在 internal/http，这里只把业务对象传进去。
 	extracter := extract.NewExtractExcuter(database, segmenter, embedder)
 	memoryManger := memory.NewMemoryManger(database, embedder)
-	agent := ask.NewAgent(ChatGenerator, ask.NewAskToolHandle(memoryManger), memoryManger, extracter)
+	recall := agent.NewAgent(1, "recall", ChatGenerator, "RecallWeave 的助手", 3,
+		ability.NewMemoryAbility(memoryManger),
+	)
+	askService := ask.NewAgent(recall, memoryManger, extracter)
 
 	r := apphttp.NewRouter(
 		apphttp.NewIngestHandler(ingest.NewService(database, extracter)),
 		apphttp.NewExtractHandler(extracter),
-		apphttp.NewAskHandler(agent),
+		apphttp.NewAskHandler(askService),
 		apphttp.NewConversationHandler(memoryManger),
 	)
 

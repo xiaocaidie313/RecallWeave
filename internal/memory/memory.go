@@ -183,7 +183,7 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 	type scoredMemory struct {
 		memory store.Memory
 		score  float64
-	} 
+	}
 	scored := make([]scoredMemory, 0, len(memories))
 	now := time.Now()
 	for _, item := range memories {
@@ -315,7 +315,7 @@ func (m *MemoryManger) ChatSession(ctx context.Context, conversationID uint) (*s
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-
+	// 没找到就新建
 	session = store.Session{
 		ConversationID: &conversationID,
 		SourceTag:      store.SourceChat,
