@@ -102,7 +102,11 @@ func (m *MemoryManger) ListConversationsWithTitle(ctx context.Context) ([]struct
 		UpdatedAt time.Time `json:"updated_at"`
 	}{}
 
-	err := m.db.WithContext(ctx).Order("update_at DESC, id DESC").Find(&items).Error
+	err := m.db.WithContext(ctx).
+		Model(&store.Conversation{}).
+		Select("id", "title", "updated_at").
+		Order("updated_at DESC, id DESC").
+		Find(&items).Error
 	if err != nil {
 		return nil, err
 	}
@@ -371,6 +375,7 @@ func (m *MemoryManger) GetSessions(ctx context.Context, conversationID uint) ([]
 }
 
 // 根据conversationID 找 session 找 memmory 然后汇总
+// 目前只是找到涉及的sessioN 和 conversation
 func (m *MemoryManger) GetMemoryBrief(ctx context.Context, conversationID uint) (MemoryBriefParam, error) {
 	var relatedSessions []store.Session
 	if err := m.db.WithContext(ctx).Model(&store.Session{}).Where("conversation_id = ?", conversationID).Find(&relatedSessions).Error; err != nil {
