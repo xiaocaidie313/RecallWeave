@@ -7,8 +7,8 @@ import "time"
 // 消息通过 Message.SessionID 关联，不在这里再存一份 id 列表。
 type Session struct {
 	ID uint `gorm:"primaryKey" json:"id"`
-	// ConversationID 只在跟助手的聊天会话上有值。
-	// 导入的微信、ChatGPT 等记录不属于某一次助手对话，留空。
+	// ConversationID 挂在跟助手的聊天会话，以及明确导入到某次对话里的会话上。
+	// 挂上就是这次对话的 context。只作知识背景的导入留空。
 	ConversationID *uint     `gorm:"index" json:"conversation_id,omitempty"`
 	SourceTag      SourceTag `gorm:"size:32;index;not null" json:"source_tag"`
 	Name           string    `gorm:"size:191" json:"name"`

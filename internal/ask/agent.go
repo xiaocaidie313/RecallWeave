@@ -244,27 +244,3 @@ func (a *Agent) saveTurn(ctx context.Context, sessionID uint, question, answer s
 		{Role: "assistant", Content: answer},
 	})
 }
-
-// 预加载历史对话的总计清单，让模型不用每次根据全部历史重新生成，而是直接从清单里提取记忆。
-// 下面几段还没写完，先留着，不参与编译。
-//
-// type MemoryBrief struct {
-// 	ConversationID uint   `json:"conversation_id"`
-// 	SessionID      []uint `json:"session_id"`
-// 	Brief          string `json:"brief"`
-// 	// raw ? 如果太多 ?
-// }
-//
-// // 加载同一对话下的长期记忆
-// func InjectPostMemory(ctx context.Context, conversationID uint) {
-// 	// @todo 区分在同一轮对话下的不同 session 的记忆
-// 	memoryBrief, err := GenerateMemoryBrief(ctx, conversationID)
-// }
-//
-// func GenerateMemoryBrief(ctx context.Context, conversationID uint) (MemoryBrief, error) {
-// 	// 根据 conversationID 找 session，找 memory，然后汇总
-// 	// warn：可能很粗糙，准确性不高
-// }
-//
-// // 应该在生成记忆的时候再让模型处理一轮，评估优先级和一些 tag（分类）
-// // @todo 后期做 multi-agent 的时候，应该分出一个 executor 专门执行，参数由发任务的 agent 给的单子带上，会带上 user 期望的
