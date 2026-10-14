@@ -28,14 +28,6 @@ type MemoryManger struct {
 	db       *gorm.DB
 }
 
-// 预加载历史对话的 总计的清单 让llm 不重新 根据全部历史记录 重新生成 而是 直接从清单里 提取 记忆
-type MemoryBriefParam struct {
-	ConversationID uint   `json:"conversation_id"`
-	SessionID      []uint `json:"session_id"`
-	// Brief string `json:"brief"`
-	// raw ? 如果太多 ?
-}
-
 func NewMemoryManger(db *gorm.DB, embedder llm.Embedder) *MemoryManger {
 	return &MemoryManger{db: db, embedder: embedder}
 }
@@ -372,23 +364,6 @@ func (m *MemoryManger) GetSessions(ctx context.Context, conversationID uint) ([]
 		return nil, err
 	}
 	return sessions, nil
-}
-
-// 根据conversationID 找 session 找 memmory 然后汇总
-// 目前只是找到涉及的sessioN 和 conversation
-func (m *MemoryManger) GetMemoryBrief(ctx context.Context, conversationID uint) (MemoryBriefParam, error) {
-	var relatedSessions []store.Session
-	if err := m.db.WithContext(ctx).Model(&store.Session{}).Where("conversation_id = ?", conversationID).Find(&relatedSessions).Error; err != nil {
-		return MemoryBriefParam{}, err
-	}
-	var sessionIDs []uint
-	for _, session := range relatedSessions {
-		sessionIDs = append(sessionIDs, session.ID)
-	}
-	return MemoryBriefParam{
-		ConversationID: conversationID,
-		SessionID:      sessionIDs,
-	}, nil
 }
 
 func CalculateSimilarity(a, b []float64) float64 {

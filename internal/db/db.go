@@ -43,5 +43,12 @@ func AutoMigrate(db *gorm.DB) error {
 		}
 	}
 	// 导入会话的 conversation_id 需要能留空。已有的非空列要改成可空。
-	return db.Migrator().AlterColumn(&store.Session{}, "ConversationID")
+	if err := db.Migrator().AlterColumn(&store.Session{}, "ConversationID"); err != nil {
+		return err
+	}
+	// attach 曾用来区分 context / continue，绑定本身就是 context，这一列去掉。
+	if db.Migrator().HasColumn(&store.Session{}, "attach") {
+		return db.Migrator().DropColumn(&store.Session{}, "attach")
+	}
+	return nil
 }

@@ -31,6 +31,8 @@ func NewRouter(
 		ConversationGroup.GET("/list", conversationHandler.List)
 		ConversationGroup.POST("/create", conversationHandler.Create)
 		ConversationGroup.GET("/list/with_title", conversationHandler.ListWithTitle)
+		ConversationGroup.POST("/:conversation_id/imports", ingestHandler.ImportConversation)
+		ConversationGroup.POST("/:conversation_id/imports/file", ingestHandler.ImportConversationFile)
 	}
 
 	return router
