@@ -118,8 +118,8 @@ func (e *ExtractExcuter) embedMemory(ctx context.Context, title, content string)
 		slog.Warn("embed memory failed", "error", err)
 		return nil
 	}
-	if len(vector) != store.EmbeddingDim {
-		slog.Warn("unexpected embedding dimension", "got", len(vector), "want", store.EmbeddingDim)
+	if len(vector) != store.ModelEmbeddingDim && len(vector) != store.EmbeddingDim {
+		slog.Warn("unexpected embedding dimension", "got", len(vector), "want", store.ModelEmbeddingDim)
 		return nil
 	}
 	return vector
