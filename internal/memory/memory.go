@@ -13,11 +13,15 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
 	defaultSearchLimit = 5
 	maxSearchLimit     = 20
+	// vectorCandidateFactor 是数据库按距离先取出的候选倍数。
+	// 活跃度加权在这批结果上重排，不再把整表读进内存。
+	vectorCandidateFactor = 5
 
 	// recallHalfLifeDays 是活跃度的半衰期。超过这个时长没被命中的记忆，权重按时间折半衰减。
 	recallHalfLifeDays = 7
@@ -112,17 +116,18 @@ func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag s
 	if limit > maxSearchLimit {
 		limit = maxSearchLimit
 	}
-
+	// 关键词检索
 	keywordHits, err := m.keywordSearch(ctx, keyword, tag, limit)
 	if err != nil {
 		return nil, err
 	}
-
+	// 向量检索
 	vectorHits, err := m.vectorSearch(ctx, keyword, tag, limit)
 	if err != nil {
 		slog.Warn("vector search failed", "error", err)
 		vectorHits = nil
 	}
+	// 合并检索结果
 	merged := mergeMemories(vectorHits, keywordHits, limit)
 
 	// 命中一次就记录一次：次数 +1、刷新最近命中时间。异步做，不阻塞响应。
@@ -154,7 +159,7 @@ func (m *MemoryManger) keywordSearch(ctx context.Context, keyword string, tag st
 	return memories, nil
 }
 
-// vectorSearch 把检索词变成向量，和每条已有向量的记忆比相似度，取得分最高的几条。
+// vectorSearch 把检索词变成向量，让数据库按余弦距离取出一小批候选，再按活跃度重排。
 func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag store.MemoryTag, limit int) ([]store.Memory, error) {
 	if m.embedder == nil || strings.TrimSpace(keyword) == "" {
 		return nil, nil
@@ -164,15 +169,21 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 	if err != nil {
 		return nil, err
 	}
+	queryEmbedding := store.NewEmbedding(queryVector)
+	if len(store.EmbeddingValues(queryEmbedding)) == 0 {
+		return nil, nil
+	}
 
-	query := m.db.WithContext(ctx).Model(&store.Memory{})
+	query := m.db.WithContext(ctx).Model(&store.Memory{}).Where("embedding IS NOT NULL")
 	if tag != "" {
 		query = query.Where("tag = ?", tag)
 	}
 
-	// 很直白啊  搜索所有的记忆  这样肯定是不行的
 	var memories []store.Memory
-	if err := query.Find(&memories).Error; err != nil {
+	err = query.Clauses(clause.OrderBy{
+		Expression: clause.Expr{SQL: "embedding <=> ?", Vars: []any{queryEmbedding}},
+	}).Limit(limit * vectorCandidateFactor).Find(&memories).Error
+	if err != nil {
 		return nil, err
 	}
 
@@ -183,10 +194,11 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 	scored := make([]scoredMemory, 0, len(memories))
 	now := time.Now()
 	for _, item := range memories {
-		if len(item.Embedding) == 0 {
+		values := store.EmbeddingValues(item.Embedding)
+		if len(values) == 0 {
 			continue
 		}
-		sim := CalculateSimilarity(queryVector, item.Embedding)
+		sim := CalculateSimilarity(queryVector, values)
 		if sim <= 0 {
 			continue
 		}

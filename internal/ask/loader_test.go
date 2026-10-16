@@ -29,7 +29,7 @@ func TestFormatImportedBackground(t *testing.T) {
 		session:  store.Session{ID: 3, SourceTag: store.SourceWX},
 		memories: []store.Memory{{ID: 1, Title: "一条", Tag: store.TagLife, SeqStart: 1, SeqEnd: 2}},
 	}})
-	if !strings.Contains(unnamed, "会话 3（wx）") || strings.Contains(unnamed, "「wx」") {
+	if !strings.Contains(unnamed, "会话 3「未命名」（wx）") || strings.Contains(unnamed, "「wx」") {
 		t.Fatalf("empty name should not reuse the source tag as a title, got %q", unnamed)
 	}
 }
@@ -40,12 +40,12 @@ func TestClipMemories(t *testing.T) {
 		memories = append(memories, store.Memory{ID: uint(i), Title: "一条"})
 	}
 
-	taken, left, truncated := clipMemories(memories, maxCatalogTotal)
+	taken, left, truncated := truncateMemories(memories, maxCatalogTotal)
 	if len(taken) != maxCatalogPerSession || left != maxCatalogTotal-maxCatalogPerSession || !truncated {
 		t.Fatalf("per-session cap: taken=%d left=%d truncated=%v", len(taken), left, truncated)
 	}
 
-	taken, left, truncated = clipMemories(memories[:3], 2)
+	taken, left, truncated = truncateMemories(memories[:3], 2)
 	if len(taken) != 2 || left != 0 || !truncated {
 		t.Fatalf("total cap: taken=%d left=%d truncated=%v", len(taken), left, truncated)
 	}

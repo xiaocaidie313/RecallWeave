@@ -169,6 +169,7 @@ func (c *Client) Embed(ctx context.Context, text string) ([]float64, error) {
 		return nil, fmt.Errorf("llm: embedding model is not configured")
 	}
 
+	// 调用嵌入模型
 	response, err := c.sdk.Embeddings.New(ctx, openai.EmbeddingNewParams{
 		Model: c.embeddingModel,
 		Input: openai.EmbeddingNewParamsInputUnion{

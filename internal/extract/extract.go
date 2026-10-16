@@ -101,7 +101,7 @@ func (e *ExtractExcuter) memoriesFrom(ctx context.Context, sessionID uint, messa
 			Title:     truncateTitle(segment.Title),
 			Content:   segment.Summary,
 			Tag:       store.NormalizeMemoryTag(segment.Tag),
-			Embedding: e.embedMemory(ctx, segment.Title, segment.Summary),
+			Embedding: store.NewEmbedding(e.embedMemory(ctx, segment.Title, segment.Summary)),
 		})
 	}
 	return memories
@@ -116,6 +116,10 @@ func (e *ExtractExcuter) embedMemory(ctx context.Context, title, content string)
 	vector, err := e.embedder.Embed(ctx, title+"\n"+content)
 	if err != nil {
 		slog.Warn("embed memory failed", "error", err)
+		return nil
+	}
+	if len(vector) != store.EmbeddingDim {
+		slog.Warn("unexpected embedding dimension", "got", len(vector), "want", store.EmbeddingDim)
 		return nil
 	}
 	return vector

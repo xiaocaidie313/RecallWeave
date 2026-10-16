@@ -12,7 +12,7 @@ type Session struct {
 	ConversationID *uint     `gorm:"index" json:"conversation_id,omitempty"`
 	SourceTag      SourceTag `gorm:"size:32;index;not null" json:"source_tag"`
 	Name           string    `gorm:"size:191" json:"name"`
-	RawText        string    `gorm:"type:longtext" json:"raw_text"`
+	RawText        string    `gorm:"type:text" json:"raw_text"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
