@@ -49,7 +49,35 @@ func AutoMigrate(db *gorm.DB) error {
 	}
 	// attach 曾用来区分 context / continue，绑定本身就是 context，这一列去掉。
 	if db.Migrator().HasColumn(&store.Session{}, "attach") {
-		return db.Migrator().DropColumn(&store.Session{}, "attach")
+		if err := db.Migrator().DropColumn(&store.Session{}, "attach"); err != nil {
+			return err
+		}
 	}
-	return nil
+	return ensureEmbeddingIndex(db)
+}
+
+// ensureEmbeddingIndex 把向量列收成可建 HNSW 的宽度，再按余弦距离建索引。
+// 查询用的是 <=>，运算符类必须是 vector_cosine_ops。
+func ensureEmbeddingIndex(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&store.Memory{}) {
+		return nil
+	}
+
+	var width int
+	if err := db.Raw(`SELECT atttypmod FROM pg_attribute WHERE attrelid = 'memories'::regclass AND attname = 'embedding'`).Scan(&width).Error; err != nil {
+		return err
+	}
+	if width != store.EmbeddingDim {
+		var stored int64
+		if err := db.Model(&store.Memory{}).Where("embedding IS NOT NULL").Count(&stored).Error; err != nil {
+			return err
+		}
+		if stored > 0 {
+			return fmt.Errorf("db: %d memories use vector(%d); re-embed them before narrowing to vector(%d)", stored, width, store.EmbeddingDim)
+		}
+		if err := db.Exec(fmt.Sprintf(`ALTER TABLE memories ALTER COLUMN embedding TYPE vector(%d)`, store.EmbeddingDim)).Error; err != nil {
+			return err
+		}
+	}
+	return db.Exec(`CREATE INDEX IF NOT EXISTS idx_memories_embedding_hnsw ON memories USING hnsw (embedding vector_cosine_ops)`).Error
 }

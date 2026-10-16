@@ -11,7 +11,7 @@ import (
 // 这里不存原文副本，需要时按 (SessionID, Seq 区间) 查 Message。
 type Memory struct {
 	ID        uint            `gorm:"primaryKey" json:"id"`
-	Embedding pgvector.Vector `gorm:"type:vector(4096)" json:"embedding"` //向量类型
+	Embedding pgvector.Vector `gorm:"type:vector(1536)" json:"embedding"`
 	SessionID uint            `gorm:"index;not null" json:"session_id"`
 	SeqStart  int             `gorm:"not null" json:"seq_start"`
 	SeqEnd    int             `gorm:"not null" json:"seq_end"`

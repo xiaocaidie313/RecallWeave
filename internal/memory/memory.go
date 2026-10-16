@@ -182,11 +182,12 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 	var memories []store.Memory
 	err = query.Clauses(clause.OrderBy{
 		Expression: clause.Expr{SQL: "embedding <=> ?", Vars: []any{queryEmbedding}},
+		// limit * vectorCandidateFactor 是为了 多召回候选，然后按活跃度重排  池子大点
 	}).Limit(limit * vectorCandidateFactor).Find(&memories).Error
 	if err != nil {
 		return nil, err
 	}
-
+	//@todo  抽离函数
 	type scoredMemory struct {
 		memory store.Memory
 		score  float64
