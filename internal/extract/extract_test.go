@@ -116,6 +116,92 @@ func TestSegmentFallsBackWithoutSegmenter(t *testing.T) {
 	}
 }
 
+func numberedMessages(n int) []store.Message {
+	messages := make([]store.Message, 0, n)
+	for i := 1; i <= n; i++ {
+		messages = append(messages, store.Message{
+			SessionID: 1,
+			Seq:       i,
+			Role:      "user",
+			Content:   "消息内容",
+		})
+	}
+	return messages
+}
+
+type recordingSegmenter struct {
+	calls [][]llm.Message
+	errOn int
+}
+
+func (r *recordingSegmenter) Segment(_ context.Context, messages []llm.Message, _ []string) ([]llm.Segment, error) {
+	copied := append([]llm.Message(nil), messages...)
+	r.calls = append(r.calls, copied)
+	if r.errOn > 0 && len(r.calls) == r.errOn {
+		return nil, errors.New("boom")
+	}
+	return []llm.Segment{{
+		SeqStart: messages[0].Seq,
+		SeqEnd:   messages[len(messages)-1].Seq,
+		Title:    "批",
+		Summary:  "摘要",
+		Tag:      "tech",
+	}}, nil
+}
+
+func TestSegmentSplitsLongSessions(t *testing.T) {
+	recorder := &recordingSegmenter{}
+	excuter := NewExtractExcuter(nil, recorder, nil)
+
+	got := excuter.segment(context.Background(), numberedMessages(40))
+	if len(recorder.calls) < 2 {
+		t.Fatalf("expected multiple batches, got %d calls", len(recorder.calls))
+	}
+	if len(recorder.calls[0]) > segmentBatchMaxMessages {
+		t.Fatalf("first batch too large: %d", len(recorder.calls[0]))
+	}
+	if len(got) != len(recorder.calls) {
+		t.Fatalf("expected one segment per batch, got %d segments from %d batches", len(got), len(recorder.calls))
+	}
+
+	firstEnd := recorder.calls[0][len(recorder.calls[0])-1].Seq
+	secondStart := recorder.calls[1][0].Seq
+	if firstEnd-secondStart+1 != segmentBatchOverlap {
+		t.Fatalf("expected overlap of %d, firstEnd=%d secondStart=%d", segmentBatchOverlap, firstEnd, secondStart)
+	}
+	for _, segment := range got {
+		if segment.SeqStart < 1 || segment.SeqEnd > 40 {
+			t.Fatalf("segment out of range: %+v", segment)
+		}
+	}
+}
+
+func TestSegmentFallsBackPerBatch(t *testing.T) {
+	recorder := &recordingSegmenter{errOn: 2}
+	excuter := NewExtractExcuter(nil, recorder, nil)
+
+	got := excuter.segment(context.Background(), numberedMessages(40))
+	if len(got) < 2 {
+		t.Fatalf("expected remaining batches after one failure, got %d", len(got))
+	}
+
+	var fallback llm.Segment
+	found := false
+	for _, segment := range got {
+		if segment.Tag == string(store.TagOther) {
+			fallback = segment
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected one batch fallback, got %+v", got)
+	}
+	if fallback.SeqStart == 1 && fallback.SeqEnd == 40 {
+		t.Fatal("a single failed batch should not cover the whole session")
+	}
+}
+
 func TestNormalizeMemoryTagRejectsUnknown(t *testing.T) {
 	if got := store.NormalizeMemoryTag("after-sales"); got != store.TagOther {
 		t.Fatalf("expected unknown tag to become other, got %q", got)

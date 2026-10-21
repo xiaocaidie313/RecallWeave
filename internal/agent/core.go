@@ -9,7 +9,7 @@ import (
 	"recallweave/internal/llm"
 )
 
-const defaultMaxRounds = 3
+const defaultMaxRounds = 6
 
 type Agent struct {
 	ID        int64

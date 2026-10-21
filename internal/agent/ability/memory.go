@@ -12,6 +12,7 @@ import (
 )
 
 const SearchMemoriesToolName = "search_memories"
+const GetMessagesToolName = "get_messages"
 
 const memoryInstructions = `涉及用户过去的经历时，先引用系统消息里预载的记忆摘要。
 摘要不够用或需要核实原文时：
@@ -126,7 +127,7 @@ func searchMemoriesTool(manager *memory.MemoryManger) llm.Tool {
 func getMessagesTool(manager *memory.MemoryManger) llm.Tool {
 	return llm.Tool{
 		Schema: llm.ToolSchema{
-			Name:        "get_messages",
+			Name:        GetMessagesToolName,
 			Description: "按会话和 seq 区间取出原始消息，用来核对某条记忆的依据。",
 			Parameters: map[string]any{
 				"type": "object",

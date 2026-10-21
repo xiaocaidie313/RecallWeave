@@ -185,8 +185,9 @@ func writeImportResults(c *gin.Context, results []ingest.ImportResult) {
 	sessions := make([]gin.H, 0, len(results))
 	for _, result := range results {
 		sessions = append(sessions, gin.H{
-			"session_id":    result.SessionID,
-			"message_count": result.MessageCount,
+			"session_id":     result.SessionID,
+			"message_count":  result.MessageCount,
+			"extract_status": result.ExtractStatus,
 		})
 	}
 	c.JSON(http.StatusCreated, gin.H{"sessions": sessions})

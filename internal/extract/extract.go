@@ -2,8 +2,11 @@ package extract
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"recallweave/internal/llm"
@@ -15,13 +18,19 @@ import (
 // Title 字段是 varchar(191)，这里留出余量，按字符数而不是字节数截断。
 const maxTitleLength = 60
 
+const (
+	segmentBatchMaxMessages = 20
+	segmentBatchMaxChars    = 8000
+	segmentBatchOverlap     = 2
+)
+
 type ExtractExcuter struct {
 	db        *gorm.DB
 	segmenter llm.Segmenter
 	embedder  llm.Embedder
 }
 
-// segmenter 传 nil 时退回本地兜底：整个会话算一段，标题取第一条消息的第一行。
+// segmenter 传 nil 时退回本地兜底：每一批消息合成一段，标题取该批第一条的第一行。
 func NewExtractExcuter(db *gorm.DB, segmenter llm.Segmenter, embedder llm.Embedder) *ExtractExcuter {
 	return &ExtractExcuter{db: db, segmenter: segmenter, embedder: embedder}
 }
@@ -29,6 +38,12 @@ func NewExtractExcuter(db *gorm.DB, segmenter llm.Segmenter, embedder llm.Embedd
 // ExtractSession 把一个会话提炼成若干条记忆，返回生成的条数。
 // 重复提炼同一个会话是幂等的：先删掉旧记忆，再写新的。
 func (e *ExtractExcuter) ExtractSessionToMemory(ctx context.Context, sessionID uint) (int, error) {
+	count, err := e.extractSessionToMemory(ctx, sessionID)
+	e.markExtract(ctx, sessionID, err)
+	return count, err
+}
+
+func (e *ExtractExcuter) extractSessionToMemory(ctx context.Context, sessionID uint) (int, error) {
 	messages, err := e.GetMessages(ctx, sessionID)
 	if err != nil {
 		return 0, err
@@ -50,6 +65,12 @@ func (e *ExtractExcuter) ExtractSessionToMemory(ctx context.Context, sessionID u
 // 手动的 ExtractSession 仍会删掉旧记忆再整段重写。
 // 摘要失败做降级 ----> llm 自动重新提炼信息
 func (e *ExtractExcuter) ExtractNewToMemory(ctx context.Context, sessionID uint) (int, error) {
+	count, err := e.extractNewToMemory(ctx, sessionID)
+	e.markExtract(ctx, sessionID, err)
+	return count, err
+}
+
+func (e *ExtractExcuter) extractNewToMemory(ctx context.Context, sessionID uint) (int, error) {
 	messages, err := e.GetMessages(ctx, sessionID)
 	if err != nil {
 		return 0, err
@@ -77,6 +98,26 @@ func (e *ExtractExcuter) ExtractNewToMemory(ctx context.Context, sessionID uint)
 		return 0, err
 	}
 	return len(memories), nil
+}
+
+func (e *ExtractExcuter) markExtract(ctx context.Context, sessionID uint, extractErr error) {
+	if e.db == nil {
+		return
+	}
+	updates := map[string]any{
+		"extract_error": "",
+	}
+	if extractErr != nil {
+		updates["extract_status"] = store.ExtractFailed
+		updates["extract_error"] = extractErr.Error()
+	} else {
+		now := time.Now()
+		updates["extract_status"] = store.ExtractDone
+		updates["extracted_at"] = now
+	}
+	if err := e.db.WithContext(ctx).Model(&store.Session{}).Where("id = ?", sessionID).Updates(updates).Error; err != nil {
+		slog.Warn("mark extract status failed", "session_id", sessionID, "error", err)
+	}
 }
 
 func (e *ExtractExcuter) coveredSeq(ctx context.Context, sessionID uint) (int, error) {
@@ -135,11 +176,21 @@ func (e *ExtractExcuter) GetMessages(ctx context.Context, sessionID uint) ([]sto
 	return messages, nil
 }
 
-// #2 切段。模型不可用或者返回不可信时，退回整段兜底，保证链路不断。
+// #2 切段。长会话按批交给模型，单批失败只降级该批。
 func (e *ExtractExcuter) segment(ctx context.Context, messages []store.Message) []llm.Segment {
-	fallback := []llm.Segment{wholeSessionSegment(messages)}
+	if len(messages) == 0 {
+		return nil
+	}
 
-	// 模型失效
+	var segments []llm.Segment
+	for _, batch := range splitMessageBatches(messages) {
+		segments = append(segments, e.segmentBatch(ctx, batch)...)
+	}
+	return mergeBatchSegments(segments)
+}
+
+func (e *ExtractExcuter) segmentBatch(ctx context.Context, messages []store.Message) []llm.Segment {
+	fallback := []llm.Segment{wholeSessionSegment(messages)}
 	if e.segmenter == nil {
 		return fallback
 	}
@@ -155,8 +206,10 @@ func (e *ExtractExcuter) segment(ctx context.Context, messages []store.Message) 
 
 	segments, err := e.segmenter.Segment(ctx, input, allowedTags())
 	if err != nil {
-		slog.Warn("segment session failed, falling back to whole session",
+		slog.Warn("segment batch failed, falling back to this batch",
 			"session_id", messages[0].SessionID,
+			"seq_start", messages[0].Seq,
+			"seq_end", messages[len(messages)-1].Seq,
 			"error", err,
 		)
 		return fallback
@@ -164,13 +217,70 @@ func (e *ExtractExcuter) segment(ctx context.Context, messages []store.Message) 
 
 	valid := keepValidSegments(segments, messages)
 	if len(valid) == 0 {
-		slog.Warn("model returned no usable segment, falling back to whole session",
+		slog.Warn("model returned no usable segment, falling back to this batch",
 			"session_id", messages[0].SessionID,
+			"seq_start", messages[0].Seq,
+			"seq_end", messages[len(messages)-1].Seq,
 		)
 		return fallback
 	}
-
 	return valid
+}
+
+func splitMessageBatches(messages []store.Message) [][]store.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	var batches [][]store.Message
+	start := 0
+	for start < len(messages) {
+		end := start
+		chars := 0
+		for end < len(messages) {
+			nextChars := chars + utf8.RuneCountInString(messages[end].Content)
+			nextCount := end - start + 1
+			if nextCount > 1 && (nextCount > segmentBatchMaxMessages || nextChars > segmentBatchMaxChars) {
+				break
+			}
+			chars = nextChars
+			end++
+		}
+		if end == start {
+			end = start + 1
+		}
+		batches = append(batches, messages[start:end])
+		if end >= len(messages) {
+			break
+		}
+		// 重叠2部分
+		nextStart := end - segmentBatchOverlap
+		if nextStart <= start {
+			nextStart = start + 1
+		}
+		start = nextStart
+	}
+	return batches
+}
+
+func mergeBatchSegments(segments []llm.Segment) []llm.Segment {
+	seen := make(map[string]struct{}, len(segments))
+	merged := make([]llm.Segment, 0, len(segments))
+	for _, segment := range segments {
+		key := fmt.Sprintf("%d:%d", segment.SeqStart, segment.SeqEnd)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, segment)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].SeqStart != merged[j].SeqStart {
+			return merged[i].SeqStart < merged[j].SeqStart
+		}
+		return merged[i].SeqEnd < merged[j].SeqEnd
+	})
+	return merged
 }
 
 // #3 写入记忆
@@ -262,6 +372,3 @@ func truncateTitle(title string) string {
 
 	return string([]rune(title)[:maxTitleLength])
 }
-
-//@todo 记忆存储分层----- L1 L2 L3  类似于缓存机制
-//@todo 长会话要分批交给模型，现在是一次全塞进去

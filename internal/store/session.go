@@ -2,6 +2,13 @@ package store
 
 import "time"
 
+const (
+	ExtractPending = "pending"
+	ExtractDone    = "done"
+	ExtractFailed  = "failed"
+	ExtractSkipped = "skipped"
+)
+
 // Session 是一段会话，也是一次导入的单位。
 // SourceTag 说明它来自哪个平台，RawText 留着，方便以后换切分方式时重来。
 // 消息通过 Message.SessionID 关联，不在这里再存一份 id 列表。
@@ -13,8 +20,12 @@ type Session struct {
 	SourceTag      SourceTag `gorm:"size:32;index;not null" json:"source_tag"`
 	Name           string    `gorm:"size:191" json:"name"`
 	RawText        string    `gorm:"type:text" json:"raw_text"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	// ExtractStatus 是这段会话的提炼进度。导入后先 pending，结束时变成 done / failed。
+	ExtractStatus string     `gorm:"size:16;index" json:"extract_status"`
+	ExtractError  string     `gorm:"type:text" json:"extract_error,omitempty"`
+	ExtractedAt   *time.Time `json:"extracted_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // Message 是会话里的单条消息。(SessionID, Seq) 唯一，既防重复导入，

@@ -38,7 +38,9 @@ func recordingTool(name, response string, gotArguments *string) llm.Tool {
 	return llm.Tool{
 		Schema: llm.ToolSchema{Name: name, Description: name},
 		Run: func(_ context.Context, arguments string) (string, error) {
-			*gotArguments = arguments
+			if gotArguments != nil {
+				*gotArguments = arguments
+			}
 			return response, nil
 		},
 	}
@@ -80,12 +82,18 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 	var gotArguments string
 	memory := agent.NewAbility("memory", "检索记忆", "", agent.ToolBox{
 		recordingTool(ability.SearchMemoriesToolName, string(encoded), &gotArguments),
+		recordingTool(ability.GetMessagesToolName, `{"session_id":3}`, nil),
 	})
 	model := &fakeChatGenerator{turns: []llm.Turn{
 		{ToolCalls: []llm.ToolCall{{
 			ID:        "call_1",
 			Name:      ability.SearchMemoriesToolName,
 			Arguments: `{"keyword":"cmd","limit":3}`,
+		}}},
+		{ToolCalls: []llm.ToolCall{{
+			ID:        "call_2",
+			Name:      ability.GetMessagesToolName,
+			Arguments: `{"session_id":3,"seq_start":1,"seq_end":2}`,
 		}}},
 		{Content: "你说过 cmd 是可执行入口。"},
 	}}
@@ -98,8 +106,8 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 	if gotArguments != `{"keyword":"cmd","limit":3}` {
 		t.Fatalf("tool received unexpected arguments: %q", gotArguments)
 	}
-	if answer.Rounds != 2 {
-		t.Fatalf("expected 2 rounds, got %d", answer.Rounds)
+	if answer.Rounds != 3 {
+		t.Fatalf("expected 3 rounds, got %d", answer.Rounds)
 	}
 	if len(answer.Citations) != 1 {
 		t.Fatalf("expected 1 citation, got %d", len(answer.Citations))
@@ -107,7 +115,14 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 	if answer.Citations[0].SessionID != 3 || answer.Citations[0].SeqStart != 1 {
 		t.Fatalf("unexpected citation: %+v", answer.Citations[0])
 	}
-	if len(model.lastTool) != 1 || model.lastTool[0].Name != ability.SearchMemoriesToolName {
+	if len(model.lastTool) != 2 {
+		t.Fatalf("unexpected tool schemas: %+v", model.lastTool)
+	}
+	gotNames := map[string]bool{
+		model.lastTool[0].Name: true,
+		model.lastTool[1].Name: true,
+	}
+	if !gotNames[ability.SearchMemoriesToolName] || !gotNames[ability.GetMessagesToolName] {
 		t.Fatalf("unexpected tool schemas: %+v", model.lastTool)
 	}
 }

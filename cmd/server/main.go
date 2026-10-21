@@ -16,6 +16,7 @@ import (
 	"recallweave/internal/ingest"
 	"recallweave/internal/llm"
 	"recallweave/internal/memory"
+	"recallweave/internal/retrieval"
 )
 
 const defaultConfigPath = "config/config.yaml"
@@ -63,17 +64,19 @@ func main() {
 	// client 为 nil 时不能直接赋给接口变量，否则接口不为 nil，下游判断会失效
 	var segmenter llm.Segmenter
 	var embedder llm.Embedder
+	var vectorEmbedder retrieval.Embedder
 	var ChatGenerator llm.ChatGenerator
 	if client != nil {
 		segmenter = client
 		embedder = client
+		vectorEmbedder = client
 		ChatGenerator = client
 	}
 
 	// 组装依赖。HTTP 在 internal/http，这里只把业务对象传进去。
 	extracter := extract.NewExtractExcuter(database, segmenter, embedder)
-	memoryManger := memory.NewMemoryManger(database, embedder)
-	recall := agent.NewAgent(1, "recall", ChatGenerator, "RecallWeave 的助手", 3,
+	memoryManger := memory.NewMemoryManger(database, retrieval.New(database, vectorEmbedder))
+	recall := agent.NewAgent(1, "recall", ChatGenerator, "RecallWeave 的助手", 6,
 		ability.NewMemoryAbility(memoryManger),
 	)
 	askService := ask.NewAgent(recall, memoryManger, extracter)
