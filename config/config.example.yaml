@@ -1,23 +1,16 @@
 server:
   port: 8008
 
-# database:
-#   host: localhost
-#   port: 3306
-#   user_name: root
-#   password: your-password
-#   db_name: recallweave
-
 database:
   host: localhost
   port: 5434
   user_name: postgres
-  password: 123456
+  password: "your-password"
   db_name: Recall_Vector
 
 llm:
   base_url: https://api.siliconflow.cn/v1
-  api_key: "sk-jrmfpovtlgpwyjojjgicsxqaslbhqhpswlnfqdvlyhpjtfqv"
+  api_key: ""
   model: deepseek-ai/DeepSeek-V4-Flash
   embedding_model: Qwen/Qwen3-VL-Embedding-8B
   timeout_seconds: 30

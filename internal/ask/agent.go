@@ -86,7 +86,7 @@ func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (
 	if err := a.saveTurn(ctx, sessionID, question, result.Content); err != nil {
 		return Answer{}, err
 	}
-	a.extractSession(ctx, sessionID)
+	go a.extractSession(context.WithoutCancel(ctx), sessionID)
 	a.condenseWindow(ctx, conversationID, sessionID)
 
 	return Answer{

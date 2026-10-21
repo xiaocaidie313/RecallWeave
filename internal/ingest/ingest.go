@@ -31,8 +31,9 @@ func NewService(db *gorm.DB, extractExcuter *extract.ExtractExcuter) *Service {
 }
 
 type ImportResult struct {
-	SessionID    uint
-	MessageCount int
+	SessionID     uint
+	MessageCount  int
+	ExtractStatus string
 }
 
 type importBind struct {
@@ -88,13 +89,15 @@ func (s *Service) importText(ctx context.Context, sourceTag store.SourceTag, nam
 				Name:           sessionName,
 				RawText:        text,
 				ConversationID: bind.conversationID,
+				ExtractStatus:  store.ExtractPending,
 			}
 			if err := insertSession(tx, session, conv.Messages); err != nil {
 				return err
 			}
 			results = append(results, ImportResult{
-				SessionID:    session.ID,
-				MessageCount: len(conv.Messages),
+				SessionID:     session.ID,
+				MessageCount:  len(conv.Messages),
+				ExtractStatus: store.ExtractPending,
 			})
 		}
 		return nil
@@ -105,6 +108,14 @@ func (s *Service) importText(ctx context.Context, sourceTag store.SourceTag, nam
 	// 说明写入Session成功了 ---》 自动做摘要
 	// 没配 LLM（extractExcuter 为 nil）时不提炼，只入库。
 	if s.extractExcuter == nil {
+		for i := range results {
+			results[i].ExtractStatus = store.ExtractSkipped
+			if err := s.db.WithContext(ctx).Model(&store.Session{}).
+				Where("id = ?", results[i].SessionID).
+				Update("extract_status", store.ExtractSkipped).Error; err != nil {
+				slog.Warn("mark extract skipped failed", "session_id", results[i].SessionID, "error", err)
+			}
+		}
 		return results, nil
 	}
 	go func() {

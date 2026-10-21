@@ -84,7 +84,7 @@ func (a *Agent) relatedMemories(ctx context.Context, question string) string {
 	if question == "" {
 		return ""
 	}
-	hits, err := a.memory.SearchMemories(ctx, question, "", preloadedMemoriesLimit)
+	hits, err := a.memory.FindMemories(ctx, question, "", preloadedMemoriesLimit)
 	if err != nil {
 		slog.Warn("preload memories failed", "error", err)
 		return ""
