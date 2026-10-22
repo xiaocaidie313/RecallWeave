@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"recallweave/internal/agent"
+	"recallweave/internal/llm"
+	"recallweave/internal/watch/useage"
 )
 
 func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
@@ -60,7 +62,17 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 		}
 		state.CurrentRound = round
 
+		started := time.Now()
 		turn, err := a.Model.Next(ctx, conversation, tools.Schemas())
+		call := useage.ModelCallStats{
+			RunID:     state.RunID,
+			Model:     modelName(a.Model),
+			Round:     round,
+			Usage:     useage.FromLLM(turn.Usage),
+			LatencyMs: time.Since(started).Milliseconds(),
+		}
+		state.Calls = append(state.Calls, call)
+		useage.Record(call)
 		if err != nil {
 			wrapped := fmt.Errorf("runtime: chat generation failed at round %d: %w", round, err)
 			status := RunFailed
@@ -114,6 +126,13 @@ func newRunID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(id[:]), nil
+}
+
+func modelName(model llm.ChatGenerator) string {
+	if named, ok := model.(interface{ ModelName() string }); ok {
+		return named.ModelName()
+	}
+	return ""
 }
 
 func encodeToolError(err error) string {

@@ -114,6 +114,41 @@ func TestRunStopsAfterMaxRounds(t *testing.T) {
 	}
 }
 
+func TestRunRecordsModelCalls(t *testing.T) {
+	model := &namedModel{
+		scriptedModel: &scriptedModel{turns: []llm.Turn{{
+			Content: "你好",
+			Usage:   llm.Usage{PromptTokens: 11, CompletionTokens: 3, CachedTokens: 2},
+		}}},
+		name: "test-model",
+	}
+
+	result, err := Run(context.Background(), agent.NewAgent(1, "test", model, "", 3), Request{Input: "hi"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.State.Calls) != 1 {
+		t.Fatalf("expected 1 model call, got %d", len(result.State.Calls))
+	}
+	call := result.State.Calls[0]
+	if call.Round != 1 || call.Model != "test-model" {
+		t.Fatalf("unexpected call: %+v", call)
+	}
+	if call.Usage.PromptTokens != 11 || call.Usage.CompletionTokens != 3 || call.Usage.CachedTokens != 2 {
+		t.Fatalf("unexpected usage: %+v", call.Usage)
+	}
+	if call.RunID != result.State.RunID {
+		t.Fatalf("call run id %q != state %q", call.RunID, result.State.RunID)
+	}
+}
+
+type namedModel struct {
+	*scriptedModel
+	name string
+}
+
+func (m namedModel) ModelName() string { return m.name }
+
 func TestRunWithoutModel(t *testing.T) {
 	if _, err := Run(context.Background(), agent.NewAgent(1, "test", nil, "", 3), Request{Input: "hi"}); err == nil {
 		t.Fatal("expected error for nil model")

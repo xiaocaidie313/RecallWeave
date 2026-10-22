@@ -391,6 +391,29 @@ func (m *MemoryManger) SessionOverview(ctx context.Context, sessionID uint) (Ses
 	}, nil
 }
 
+func (m *MemoryManger) SaveAgentRun(ctx context.Context, run store.AgentRun) error {
+	if m == nil || m.db == nil || run.RunID == "" {
+		return nil
+	}
+	return m.db.WithContext(ctx).Create(&run).Error
+}
+
+func (m *MemoryManger) GetAgentRun(ctx context.Context, runID string) (store.AgentRun, error) {
+	var run store.AgentRun
+	err := m.db.WithContext(ctx).Where("run_id = ?", runID).First(&run).Error
+	return run, err
+}
+
+func (m *MemoryManger) ListAgentRuns(ctx context.Context, conversationID uint) ([]store.AgentRun, error) {
+	var runs []store.AgentRun
+	err := m.db.WithContext(ctx).
+		Where("conversation_id = ?", conversationID).
+		Order("id DESC").
+		Limit(20).
+		Find(&runs).Error
+	return runs, err
+}
+
 func (m *MemoryManger) FindChatSession(ctx context.Context, conversationID uint) (*store.Session, error) {
 	var session store.Session
 	err := m.db.WithContext(ctx).

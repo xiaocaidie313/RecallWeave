@@ -2,6 +2,7 @@ package ask
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"recallweave/internal/llm"
 	"recallweave/internal/memory"
 	"recallweave/internal/store"
+	"recallweave/internal/watch/useage"
 )
 
 var ErrNoModel = errors.New("ask: llm is not configured")
@@ -37,6 +39,17 @@ type Answer struct {
 	Text      string     `json:"answer"`
 	Citations []Citation `json:"citations"`
 	Rounds    int        `json:"rounds"`
+	RunID     string     `json:"run_id,omitempty"`
+	Usage     Usage      `json:"usage"`
+}
+
+type Usage struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	ReasoningTokens  int64 `json:"reasoning_tokens"`
+	CachedTokens     int64 `json:"cached_tokens"`
+	LatencyMs        int64 `json:"latency_ms"`
+	Calls            int   `json:"calls"`
 }
 
 // Agent 是问答服务：准备上下文 → 交给 core 跑 → 保存、提炼、压缩、起标题。
@@ -79,6 +92,7 @@ func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (
 		Preload:        preload,
 	})
 	logToolErrors(result.State)
+	a.saveRun(context.WithoutCancel(ctx), result)
 	if err != nil {
 		return Answer{}, err
 	}
@@ -89,11 +103,51 @@ func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (
 	go a.extractSession(context.WithoutCancel(ctx), sessionID)
 	a.condenseWindow(ctx, conversationID, sessionID)
 
+	return answerFromResult(result), nil
+}
+
+func answerFromResult(result runtime.RunResult) Answer {
+	total := useage.Sum(result.State.Calls)
 	return Answer{
 		Text:      result.Content,
 		Citations: citationsFromSteps(result.State.Steps),
 		Rounds:    result.State.CurrentRound,
-	}, nil
+		RunID:     result.State.RunID,
+		Usage: Usage{
+			PromptTokens:     total.Usage.PromptTokens,
+			CompletionTokens: total.Usage.CompletionTokens,
+			ReasoningTokens:  total.Usage.ReasoningTokens,
+			CachedTokens:     total.Usage.CachedTokens,
+			LatencyMs:        total.LatencyMs,
+			Calls:            len(result.State.Calls),
+		},
+	}
+}
+
+func (a *Agent) saveRun(ctx context.Context, result runtime.RunResult) {
+	if a.memory == nil || result.State.RunID == "" {
+		return
+	}
+	encoded, err := json.Marshal(result.State)
+	if err != nil {
+		slog.Warn("encode run state failed", "run_id", result.State.RunID, "error", err)
+		return
+	}
+	total := useage.Sum(result.State.Calls)
+	if err := a.memory.SaveAgentRun(ctx, store.AgentRun{
+		RunID:            result.State.RunID,
+		ConversationID:   result.State.ConversationID,
+		Status:           string(result.State.Status),
+		Input:            result.State.Input,
+		Content:          result.Content,
+		State:            encoded,
+		PromptTokens:     total.Usage.PromptTokens,
+		CompletionTokens: total.Usage.CompletionTokens,
+		LatencyMs:        total.LatencyMs,
+		Rounds:           result.State.CurrentRound,
+	}); err != nil {
+		slog.Warn("save run failed", "run_id", result.State.RunID, "error", err)
+	}
 }
 
 // logToolErrors 把运行中可恢复的工具失败记下来。这些失败已经回灌给模型，不影响回答。
