@@ -1,6 +1,10 @@
 package runtime
 
-import "time"
+import (
+	"time"
+
+	"recallweave/internal/watch/useage"
+)
 
 type RunStatus string
 
@@ -13,16 +17,17 @@ const (
 
 // RunState 是一次 Run 的可变状态，每次 Run 独立一份，不能放在共享的 Agent 上。
 type RunState struct {
-	RunID          string     `json:"run_id"`
-	AgentID        int64      `json:"agent_id"`
-	ConversationID uint       `json:"conversation_id"`
-	Input          string     `json:"input"`
-	Status         RunStatus  `json:"status"`
-	CurrentRound   int        `json:"current_round"`
-	Steps          []RunStep  `json:"steps"`
-	Errors         []RunError `json:"errors"`
-	StartedAt      time.Time  `json:"started_at"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	RunID          string                  `json:"run_id"`
+	AgentID        int64                   `json:"agent_id"`
+	ConversationID uint                    `json:"conversation_id"`
+	Input          string                  `json:"input"`
+	Status         RunStatus               `json:"status"`
+	CurrentRound   int                     `json:"current_round"`
+	Steps          []RunStep               `json:"steps"`
+	Errors         []RunError              `json:"errors"`
+	Calls          []useage.ModelCallStats `json:"calls,omitempty"`
+	StartedAt      time.Time               `json:"started_at"`
+	FinishedAt     *time.Time              `json:"finished_at,omitempty"`
 }
 
 type RunStep struct {

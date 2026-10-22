@@ -64,6 +64,9 @@ func TestAskReturnsAnswerWithoutTools(t *testing.T) {
 	if answer.Rounds != 1 {
 		t.Fatalf("expected 1 round, got %d", answer.Rounds)
 	}
+	if answer.RunID == "" || answer.Usage.Calls != 1 {
+		t.Fatalf("expected run usage, got run_id=%q usage=%+v", answer.RunID, answer.Usage)
+	}
 }
 
 func TestAskRunsToolThenAnswers(t *testing.T) {

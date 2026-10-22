@@ -28,6 +28,7 @@ func NewRouter(
 	router.GET("/api/sessions/:session_id/messages", conversationHandler.ListSessionMessages)
 	router.POST("/api/sessions/:session_id/extract", extractHandler.ExtractSession)
 	router.POST("/api/ask/:conversation_id", askHandler.Ask)
+	router.GET("/api/runs/:run_id", conversationHandler.GetRun)
 
 	ConversationGroup := router.Group("/api/conversations")
 	{
@@ -35,6 +36,7 @@ func NewRouter(
 		ConversationGroup.POST("/create", conversationHandler.Create)
 		ConversationGroup.GET("/list/with_title", conversationHandler.ListWithTitle)
 		ConversationGroup.GET("/:conversation_id/messages", conversationHandler.ListConversationMessages)
+		ConversationGroup.GET("/:conversation_id/runs", conversationHandler.ListRuns)
 		ConversationGroup.POST("/:conversation_id/imports", ingestHandler.ImportConversation)
 		ConversationGroup.POST("/:conversation_id/imports/file", ingestHandler.ImportConversationFile)
 	}

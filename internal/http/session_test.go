@@ -18,6 +18,18 @@ func TestGetSessionRejectsBadID(t *testing.T) {
 	}
 }
 
+func TestGetRunRejectsEmptyID(t *testing.T) {
+	router := NewRouter(NewIngestHandler(nil), nil, nil, NewConversationHandler(nil))
+	request := httptest.NewRequest(http.MethodGet, "/api/runs/", nil)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("empty run id should not succeed, got %d", recorder.Code)
+	}
+}
+
 func TestListConversationMessagesRejectsBadID(t *testing.T) {
 	router := NewRouter(NewIngestHandler(nil), nil, nil, NewConversationHandler(nil))
 	request := httptest.NewRequest(http.MethodGet, "/api/conversations/abc/messages", nil)
