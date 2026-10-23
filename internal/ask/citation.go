@@ -2,6 +2,7 @@ package ask
 
 import (
 	"encoding/json"
+	"sort"
 
 	"recallweave/internal/agent/ability"
 	"recallweave/internal/agent/runtime"
@@ -16,16 +17,10 @@ type Citation struct {
 	Title     string `json:"title"`
 }
 
-type messageSpan struct {
-	SessionID uint
-	SeqStart  int
-	SeqEnd    int
-}
-
 // citationsFromSteps 只收被 get_messages 核对过的记忆。
-// 检索命中只是候选，模型真正打开过原文的才算依据。
+// 引用范围只包含工具实际返回的消息，不使用模型请求的范围推断原文。
 func citationsFromSteps(steps []runtime.RunStep) []Citation {
-	verified := verifiedSpans(steps)
+	verified := verifiedMessages(steps)
 	if len(verified) == 0 {
 		return nil
 	}
@@ -44,56 +39,71 @@ func citationsFromSteps(steps []runtime.RunStep) []Citation {
 			if _, seen := cited[hit.MemoryID]; seen {
 				continue
 			}
-			if !spanOverlaps(verified, hit.SessionID, hit.SeqStart, hit.SeqEnd) {
+			// 定位真实的原文位置 真实区间  不会拓展
+			spans := citedSpans(verified[hit.SessionID], hit.SeqStart, hit.SeqEnd)
+			if len(spans) == 0 {
 				continue
 			}
 			cited[hit.MemoryID] = struct{}{}
-			citations = append(citations, Citation{
-				MemoryID:  hit.MemoryID,
-				SessionID: hit.SessionID,
-				SeqStart:  hit.SeqStart,
-				SeqEnd:    hit.SeqEnd,
-				Title:     hit.Title,
-			})
+			for _, span := range spans {
+				citations = append(citations, Citation{
+					MemoryID: hit.MemoryID, SessionID: hit.SessionID,
+					SeqStart: span[0], SeqEnd: span[1], Title: hit.Title,
+				})
+			}
 		}
 	}
 	return citations
 }
 
-func verifiedSpans(steps []runtime.RunStep) []messageSpan {
-	var spans []messageSpan
+func verifiedMessages(steps []runtime.RunStep) map[uint]map[int]struct{} {
+	verified := make(map[uint]map[int]struct{})
 	for _, step := range steps {
 		if step.ToolName != ability.GetMessagesToolName || step.Error != "" {
 			continue
 		}
-		var args struct {
+		// 解析res的数据
+		var result struct {
 			SessionID uint `json:"session_id"`
-			SeqStart  int  `json:"seq_start"`
-			SeqEnd    int  `json:"seq_end"`
+			Messages  []struct {
+				Seq     int    `json:"seq"`
+				Content string `json:"content"`
+			} `json:"messages"`
 		}
-		if err := json.Unmarshal([]byte(step.Arguments), &args); err != nil {
+		if err := json.Unmarshal([]byte(step.Result), &result); err != nil || result.SessionID == 0 {
 			continue
 		}
-		if args.SessionID == 0 {
-			continue
+		for _, msg := range result.Messages {
+			if msg.Seq <= 0 || msg.Content == "" {
+				continue
+			}
+			if verified[result.SessionID] == nil {
+				verified[result.SessionID] = make(map[int]struct{})
+			}
+			verified[result.SessionID][msg.Seq] = struct{}{}
 		}
-		spans = append(spans, messageSpan{
-			SessionID: args.SessionID,
-			SeqStart:  args.SeqStart,
-			SeqEnd:    args.SeqEnd,
-		})
 	}
-	return spans
+	return verified
 }
 
-func spanOverlaps(spans []messageSpan, sessionID uint, seqStart, seqEnd int) bool {
-	for _, span := range spans {
-		if span.SessionID != sessionID {
-			continue
-		}
-		if span.SeqStart <= seqEnd && span.SeqEnd >= seqStart {
-			return true
+func citedSpans(messages map[int]struct{}, start, end int) [][2]int {
+	var seqs []int
+	for seq := range messages {
+		if seq >= start && seq <= end {
+			seqs = append(seqs, seq)
 		}
 	}
-	return false
+	sort.Ints(seqs)
+	var spans [][2]int
+	for _, seq := range seqs {
+		// 大于前一个区间的右边界+1，则新增一个区间
+		if len(spans) == 0 || seq > spans[len(spans)-1][1]+1 {
+
+			spans = append(spans, [2]int{seq, seq})
+		} else {
+			// 拓展右边区间 刚好是当前最后seq的下一个
+			spans[len(spans)-1][1] = seq
+		}
+	}
+	return spans
 }

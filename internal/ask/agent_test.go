@@ -85,7 +85,7 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 	var gotArguments string
 	memory := agent.NewAbility("memory", "检索记忆", "", agent.ToolBox{
 		recordingTool(ability.SearchMemoriesToolName, string(encoded), &gotArguments),
-		recordingTool(ability.GetMessagesToolName, `{"session_id":3}`, nil),
+		recordingTool(ability.GetMessagesToolName, `{"session_id":3,"messages":[{"seq":1,"role":"user","content":"cmd 是可执行入口"}]}`, nil),
 	})
 	model := &fakeChatGenerator{turns: []llm.Turn{
 		{ToolCalls: []llm.ToolCall{{
