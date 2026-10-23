@@ -97,7 +97,9 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 				Arguments: call.Arguments,
 			}
 
+			toolStarted := time.Now()
 			output, err := tools.Run(ctx, call.Name, call.Arguments)
+			step.LatencyMs = time.Since(toolStarted).Milliseconds()
 			if err != nil {
 				// 工具失败不中断，把原因回灌给模型，让它换个问法或换个工具。
 				step.Error = err.Error()
