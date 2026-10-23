@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"recallweave/internal/agent"
@@ -41,6 +42,16 @@ type Answer struct {
 	Rounds    int        `json:"rounds"`
 	RunID     string     `json:"run_id,omitempty"`
 	Usage     Usage      `json:"usage"`
+	Timings   Timings    `json:"timings"`
+}
+
+// Timings 记录请求关键路径；后台标题和提炼不计入 TotalMs。
+type Timings struct {
+	TotalMs       int64 `json:"total_ms"`
+	LoadContextMs int64 `json:"load_context_ms"`
+	AgentMs       int64 `json:"agent_ms"`
+	SaveTurnMs    int64 `json:"save_turn_ms"`
+	CondenseMs    int64 `json:"condense_ms"`
 }
 
 type Usage struct {
@@ -74,36 +85,52 @@ func (a *Agent) model() llm.ChatGenerator {
 }
 
 func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (Answer, error) {
+	requestStarted := time.Now()
+	var timings Timings
 	if a.model() == nil {
 		return Answer{}, ErrNoModel
 	}
 
+	stageStarted := time.Now()
 	preload, sessionID, err := a.loadContext(ctx, conversationID, question)
+	timings.LoadContextMs = time.Since(stageStarted).Milliseconds()
 	if err != nil {
 		return Answer{}, err
 	}
 	// 请求结束后上下文会被取消，标题生成改用不会跟着取消的上下文，并写回数据库。
 	go a.generateTitle(context.WithoutCancel(ctx), conversationID, question)
 
+	stageStarted = time.Now()
 	result, err := runtime.Run(ctx, a.core, runtime.Request{
 		Input:          question,
 		ConversationID: conversationID,
 		SystemPrompt:   systemPrompt,
 		Preload:        preload,
 	})
+	timings.AgentMs = time.Since(stageStarted).Milliseconds()
 	logToolErrors(result.State)
 	a.saveRun(context.WithoutCancel(ctx), result)
 	if err != nil {
 		return Answer{}, err
 	}
 
+	stageStarted = time.Now()
 	if err := a.saveTurn(ctx, sessionID, question, result.Content); err != nil {
 		return Answer{}, err
 	}
+	timings.SaveTurnMs = time.Since(stageStarted).Milliseconds()
 	go a.extractSession(context.WithoutCancel(ctx), sessionID)
+	stageStarted = time.Now()
 	a.condenseWindow(ctx, conversationID, sessionID)
+	timings.CondenseMs = time.Since(stageStarted).Milliseconds()
+	timings.TotalMs = time.Since(requestStarted).Milliseconds()
+	slog.Info("ask timing", "run_id", result.State.RunID, "total_ms", timings.TotalMs,
+		"load_context_ms", timings.LoadContextMs, "agent_ms", timings.AgentMs,
+		"save_turn_ms", timings.SaveTurnMs, "condense_ms", timings.CondenseMs)
 
-	return answerFromResult(result), nil
+	answer := answerFromResult(result)
+	answer.Timings = timings
+	return answer, nil
 }
 
 func answerFromResult(result runtime.RunResult) Answer {

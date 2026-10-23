@@ -36,6 +36,7 @@ type RunStep struct {
 	Arguments string `json:"arguments"`
 	Result    string `json:"result,omitempty"`
 	Error     string `json:"error,omitempty"`
+	LatencyMs int64  `json:"latency_ms"`
 }
 
 type RunError struct {
