@@ -15,6 +15,7 @@ import (
 	apphttp "recallweave/internal/http"
 	"recallweave/internal/ingest"
 	"recallweave/internal/llm"
+	appmcp "recallweave/internal/mcp"
 	"recallweave/internal/memory"
 	"recallweave/internal/retrieval"
 )
@@ -87,6 +88,13 @@ func main() {
 		apphttp.NewAskHandler(askService),
 		apphttp.NewConversationHandler(memoryManger),
 	)
+	// if token := os.Getenv("RECALLWEAVE_MCP_TOKEN"); token != "" {
+	// 	apphttp.MountMCP(r, appmcp.NewMcpServer(memoryManger), token)
+	// 	logger.Info("MCP Streamable HTTP enabled", "path", "/mcp")
+	// } else {
+	// 	logger.Info("MCP Streamable HTTP disabled; set RECALLWEAVE_MCP_TOKEN to enable it")
+	// }
+	apphttp.MountMCP(r, appmcp.NewMcpServer(memoryManger), os.Getenv("RECALLWEAVE_MCP_TOKEN"))
 
 	address := fmt.Sprintf(":%d", cfg.Server.Port)
 	logger.Info("RecallWeave API started", "address", address)
