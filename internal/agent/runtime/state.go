@@ -3,6 +3,7 @@ package runtime
 import (
 	"time"
 
+	"recallweave/internal/plan"
 	"recallweave/internal/watch/useage"
 )
 
@@ -11,6 +12,7 @@ type RunStatus string
 const (
 	RunRunning   RunStatus = "running"
 	RunCompleted RunStatus = "completed"
+	RunPartial   RunStatus = "partial"
 	RunFailed    RunStatus = "failed"
 	RunCancelled RunStatus = "cancelled"
 )
@@ -26,12 +28,14 @@ type RunState struct {
 	Steps          []RunStep               `json:"steps"`
 	Errors         []RunError              `json:"errors"`
 	Calls          []useage.ModelCallStats `json:"calls,omitempty"`
+	Plan           *plan.Plan              `json:"plan,omitempty"`
 	StartedAt      time.Time               `json:"started_at"`
 	FinishedAt     *time.Time              `json:"finished_at,omitempty"`
 }
 
 type RunStep struct {
 	Round     int    `json:"round"`
+	PlanStep  string `json:"plan_step,omitempty"`
 	ToolName  string `json:"tool_name"`
 	Arguments string `json:"arguments"`
 	Result    string `json:"result,omitempty"`
