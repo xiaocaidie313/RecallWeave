@@ -11,6 +11,7 @@ type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
 	LLM      LLMConfig      `yaml:"llm"`
+	Skills   SkillsConfig   `yaml:"skills"`
 }
 
 type ServerConfig struct {
@@ -32,6 +33,22 @@ type LLMConfig struct {
 	Model          string `yaml:"model"`
 	EmbeddingModel string `yaml:"embedding_model"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
+}
+
+// SkillsConfig points at the local Skill catalog. Empty Dir means "skills".
+type SkillsConfig struct {
+	Dir string `yaml:"dir"`
+}
+
+// SkillDir returns the Skill root: env override, then config, then "skills".
+func (c *Config) SkillDir() string {
+	if dir := os.Getenv("RECALLWEAVE_SKILLS_DIR"); dir != "" {
+		return dir
+	}
+	if c != nil && c.Skills.Dir != "" {
+		return c.Skills.Dir
+	}
+	return "skills"
 }
 
 // 自定义  通过加载配置文件
@@ -59,6 +76,7 @@ func LoadDefaultConfig() (*Config, error) {
 			Password: "123456",
 			DBName:   "recallweave",
 		},
+		Skills: SkillsConfig{Dir: "skills"},
 	}
 	return cfg, nil
 }

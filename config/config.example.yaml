@@ -14,3 +14,7 @@ llm:
   model: deepseek-ai/DeepSeek-V4-Flash
   embedding_model: Qwen/Qwen3-VL-Embedding-8B
   timeout_seconds: 30
+
+# 仓库内技能目录；也可用环境变量 RECALLWEAVE_SKILLS_DIR 覆盖。
+skills:
+  dir: skills

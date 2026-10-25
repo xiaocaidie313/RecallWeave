@@ -55,7 +55,9 @@ func (a *Agent) Tools() *llm.ToolHandle {
 		}
 	}
 	if a.Skills != nil && len(a.Skills.List()) > 0 {
-		tools.Register(skillLoadTool(a.Skills))
+		for _, tool := range skillTools(a.Skills) {
+			tools.Register(tool)
+		}
 	}
 	return tools
 }
@@ -79,7 +81,7 @@ func (a *Agent) Instructions() string {
 	if a.Skills != nil {
 		items := a.Skills.List()
 		if len(items) > 0 {
-			b.WriteString("\n可用 Skill 如下。只有用户任务匹配某个描述时才调用 load_skill，读取完整说明后再按说明处理；不要假装已执行未提供的工具或脚本。\n")
+			b.WriteString("\n可用 Skill 如下。只有用户任务匹配某个描述时才调用 load_skill，读取完整说明后再按说明处理。若说明引用 references/ 文件且确实需要，再调用 read_skill_reference；不要假装已执行未提供的工具或脚本。\n")
 			for _, item := range items {
 				fmt.Fprintf(&b, "- %s: %s\n", item.Name, item.Description)
 			}
