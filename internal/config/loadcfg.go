@@ -8,10 +8,19 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	LLM      LLMConfig      `yaml:"llm"`
-	Skills   SkillsConfig   `yaml:"skills"`
+	Server      ServerConfig      `yaml:"server"`
+	Database    DatabaseConfig    `yaml:"database"`
+	LLM         LLMConfig         `yaml:"llm"`
+	Skills      SkillsConfig      `yaml:"skills"`
+	ExternalMCP ExternalMCPConfig `yaml:"external_mcp"`
+}
+
+// ExternalMCPConfig enables one remote Streamable HTTP MCP server. Empty URL
+// disables it; Tools is an explicit allowlist of remote tool names.
+type ExternalMCPConfig struct {
+	URL      string   `yaml:"url"`
+	TokenEnv string   `yaml:"token_env"`
+	Tools    []string `yaml:"tools"`
 }
 
 type ServerConfig struct {

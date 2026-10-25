@@ -18,3 +18,11 @@ llm:
 # 仓库内技能目录；也可用环境变量 RECALLWEAVE_SKILLS_DIR 覆盖。
 skills:
   dir: skills
+
+# 可选：让 Agent 使用外部 Streamable HTTP MCP 工具。只暴露 tools 白名单中的工具。
+# token_env 填环境变量名，不要把实际 token 写进配置文件。
+# external_mcp:
+#   url: https://example.com/mcp
+#   token_env: RECALLWEAVE_EXTERNAL_MCP_TOKEN
+#   tools:
+#     - search

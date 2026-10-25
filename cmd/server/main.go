@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -88,6 +89,30 @@ func main() {
 	recall := agent.NewAgent(1, "recall", ChatGenerator, "RecallWeave 的助手", 6,
 		ability.NewMemoryAbility(memoryManger),
 	).WithSkills(catalog)
+	if cfg.ExternalMCP.URL != "" {
+		if cfg.ExternalMCP.TokenEnv != "" && os.Getenv(cfg.ExternalMCP.TokenEnv) == "" {
+			logger.Error("external MCP token environment variable is empty", "name", cfg.ExternalMCP.TokenEnv)
+			os.Exit(1)
+		}
+		remoteClient, err := appmcp.ConnectHTTP(context.Background(), cfg.ExternalMCP.URL, os.Getenv(cfg.ExternalMCP.TokenEnv))
+		if err != nil {
+			logger.Error("failed to connect external MCP", "error", err)
+			os.Exit(1)
+		}
+		defer remoteClient.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		remoteTools, err := remoteClient.AgentTools(ctx, cfg.ExternalMCP.Tools)
+		cancel()
+		if err != nil {
+			logger.Error("failed to load external MCP tools", "error", err)
+			os.Exit(1)
+		}
+		if err := recall.WithExternalTools(remoteTools); err != nil {
+			logger.Error("failed to register external MCP tools", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("external MCP tools registered", "count", len(remoteTools))
+	}
 	askService := ask.NewAgent(recall, memoryManger, extracter)
 
 	r := apphttp.NewRouter(
