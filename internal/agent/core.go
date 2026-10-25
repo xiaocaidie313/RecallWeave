@@ -13,13 +13,31 @@ import (
 const defaultMaxRounds = 6
 
 type Agent struct {
-	ID        int64
-	Name      string
-	Role      string
-	Model     llm.ChatGenerator
-	MaxRounds int
-	Abilities []*Ability
-	Skills    *skill.Catalog
+	ID            int64
+	Name          string
+	Role          string
+	Model         llm.ChatGenerator
+	MaxRounds     int
+	Abilities     []*Ability
+	Skills        *skill.Catalog
+	ExternalTools []llm.Tool
+}
+
+// WithExternalTools attaches selected MCP tools without turning them into an
+// Ability or Skill. Names must not shadow existing tools.
+func (a *Agent) WithExternalTools(external []llm.Tool) error {
+	existing := make(map[string]bool)
+	for _, schema := range a.Tools().Schemas() {
+		existing[schema.Name] = true
+	}
+	for _, tool := range external {
+		if tool.Schema.Name == "" || existing[tool.Schema.Name] {
+			return fmt.Errorf("duplicate or empty external tool name %q", tool.Schema.Name)
+		}
+		existing[tool.Schema.Name] = true
+	}
+	a.ExternalTools = append([]llm.Tool(nil), external...)
+	return nil
 }
 
 // WithSkills attaches task instructions separately from business abilities.
@@ -58,6 +76,9 @@ func (a *Agent) Tools() *llm.ToolHandle {
 		for _, tool := range skillTools(a.Skills) {
 			tools.Register(tool)
 		}
+	}
+	for _, tool := range a.ExternalTools {
+		tools.Register(tool)
 	}
 	return tools
 }
