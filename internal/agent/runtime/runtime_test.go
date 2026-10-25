@@ -49,6 +49,9 @@ func TestRunAnswersWithoutTools(t *testing.T) {
 	if result.State.AgentID != 7 || result.State.CurrentRound != 1 || result.State.FinishedAt == nil {
 		t.Fatalf("unexpected state: %+v", result.State)
 	}
+	if result.State.Plan != nil {
+		t.Fatalf("a direct answer should not create a plan: %+v", result.State.Plan)
+	}
 }
 
 func TestRunExecutesToolThenAnswers(t *testing.T) {

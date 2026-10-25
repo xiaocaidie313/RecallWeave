@@ -13,6 +13,7 @@ import (
 
 	"recallweave/internal/agent"
 	"recallweave/internal/llm"
+	"recallweave/internal/plan"
 	"recallweave/internal/watch/useage"
 )
 
@@ -53,6 +54,12 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 	}
 
 	tools := a.Tools()
+	for _, schema := range tools.Schemas() {
+		if schema.Name == plan.ToolName {
+			return fail(0, fmt.Errorf("runtime: tool name %q is reserved for runtime planning", plan.ToolName), RunFailed)
+		}
+	}
+	tools.Register(planTool(&state))
 	maxRounds := a.Rounds()
 	conversation := buildConversation(a, req)
 
@@ -86,7 +93,18 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 			if strings.TrimSpace(turn.Content) == "" {
 				return fail(round, errors.New("runtime: model returned empty response"), RunFailed)
 			}
-			finish(RunCompleted)
+			if state.Plan != nil && state.Plan.HasOpenSteps() {
+				if round == maxRounds {
+					return fail(round, errors.New("runtime: cannot finish with pending or in_progress plan steps"), RunFailed)
+				}
+				conversation.AddSystemMessage("计划仍有 pending 或 in_progress 步骤。继续执行并更新计划；若无法继续，将对应步骤标为 blocked/skipped 并填写原因，然后给出包含未完成部分的回答。")
+				continue
+			}
+			status := RunCompleted
+			if state.Plan != nil && state.Plan.HasUncompletedSteps() {
+				status = RunPartial
+			}
+			finish(status)
 			return RunResult{Content: turn.Content, State: state}, nil
 		}
 
@@ -95,6 +113,9 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 				Round:     round,
 				ToolName:  call.Name,
 				Arguments: call.Arguments,
+			}
+			if state.Plan != nil && call.Name != plan.ToolName {
+				step.PlanStep = state.Plan.ActiveStep()
 			}
 
 			toolStarted := time.Now()

@@ -16,7 +16,7 @@ type Preload struct {
 // buildConversation 按固定顺序组装对话：
 // Agent 说明 + 本次 SystemPrompt → 背景 → 历史 → 本次输入。
 func buildConversation(a *agent.Agent, req Request) *llm.Conversation {
-	systemPrompt := strings.TrimSpace(a.Instructions() + "\n\n" + req.SystemPrompt)
+	systemPrompt := strings.TrimSpace(a.Instructions() + "\n\n" + req.SystemPrompt + "\n\n" + planningInstructions)
 	conv := llm.NewConversation(systemPrompt, llm.WithConversationID(req.ConversationID))
 
 	for _, text := range req.Preload.Background {

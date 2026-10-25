@@ -9,6 +9,7 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/agent/ability"
 	"recallweave/internal/llm"
+	"recallweave/internal/plan"
 )
 
 type fakeChatGenerator struct {
@@ -118,14 +119,14 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 	if answer.Citations[0].SessionID != 3 || answer.Citations[0].SeqStart != 1 {
 		t.Fatalf("unexpected citation: %+v", answer.Citations[0])
 	}
-	if len(model.lastTool) != 2 {
+	if len(model.lastTool) != 3 {
 		t.Fatalf("unexpected tool schemas: %+v", model.lastTool)
 	}
-	gotNames := map[string]bool{
-		model.lastTool[0].Name: true,
-		model.lastTool[1].Name: true,
+	gotNames := map[string]bool{}
+	for _, tool := range model.lastTool {
+		gotNames[tool.Name] = true
 	}
-	if !gotNames[ability.SearchMemoriesToolName] || !gotNames[ability.GetMessagesToolName] {
+	if !gotNames[ability.SearchMemoriesToolName] || !gotNames[ability.GetMessagesToolName] || !gotNames[plan.ToolName] {
 		t.Fatalf("unexpected tool schemas: %+v", model.lastTool)
 	}
 }

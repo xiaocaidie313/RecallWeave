@@ -30,11 +30,7 @@ const briefPrompt = `把对话压缩成一份可供后续继续聊天使用的�
 
 // systemPrompt 是问答场景的通用规则。身份由 Agent 的 Role 给出，
 // 记忆工具的用法由 memory ability 的 Instructions 给出，这里不再重复。
-const systemPrompt = `普通问题直接回答，不要为了检索而检索。
-
-当问题需要多步才能回答（对比多个事件、跨多次检索、汇总一段经历）时，
-先简要说出你的计划（一两句话），再按计划执行，最后下结论。
-简单问题不要规划，直接回答，别为了规划而规划。`
+const systemPrompt = `普通问题直接回答，不要为了检索而检索。`
 
 type Answer struct {
 	Text      string     `json:"answer"`
