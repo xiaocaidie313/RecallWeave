@@ -1,0 +1,61 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"recallweave/internal/skill"
+)
+
+func TestSkillsAreSeparateFromAbilities(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "memory-audit")
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "SKILL.md"), []byte("---\nname: memory-audit\ndescription: Check a memory against the source\n---\nDetailed audit instructions"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := skill.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memory := NewAbility("memory", "检索记忆", "先用 search_memories", nil)
+	agent := NewAgent(1, "recall", nil, "记忆助手", 3, memory).WithSkills(catalog)
+	if len(agent.Abilities) != 1 || agent.Abilities[0] != memory {
+		t.Fatalf("skills must not become abilities: %+v", agent.Abilities)
+	}
+	prompt := agent.Instructions()
+	if !strings.Contains(prompt, "memory-audit: Check a memory against the source") || strings.Contains(prompt, "Detailed audit instructions") {
+		t.Fatalf("skill metadata/body disclosure is wrong: %q", prompt)
+	}
+	schemas := agent.Tools().Schemas()
+	if len(schemas) != 1 || schemas[0].Name != "load_skill" {
+		t.Fatalf("unexpected built-in tools: %+v", schemas)
+	}
+	result, err := agent.Tools().Run(context.Background(), "load_skill", `{"name":"memory-audit"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var loaded struct {
+		Name         string `json:"name"`
+		Instructions string `json:"instructions"`
+	}
+	if err := json.Unmarshal([]byte(result), &loaded); err != nil || loaded.Name != "memory-audit" || loaded.Instructions != "Detailed audit instructions" {
+		t.Fatalf("unexpected load result: %+v err=%v", loaded, err)
+	}
+	if _, err := agent.Tools().Run(context.Background(), "load_skill", `{"name":"../other"}`); err == nil {
+		t.Fatal("unknown skill must not load")
+	}
+}
+
+func TestNoSkillsDoesNotExposeLoader(t *testing.T) {
+	agent := NewAgent(1, "recall", nil, "", 3)
+	if len(agent.Tools().Schemas()) != 0 || strings.Contains(agent.Instructions(), "load_skill") {
+		t.Fatal("agent without skills must not expose skill infrastructure")
+	}
+}

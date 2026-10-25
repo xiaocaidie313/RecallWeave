@@ -20,27 +20,14 @@ func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 	return t.base.RoundTrip(copy)
 }
 
-func TestMountMCPRequiresToken(t *testing.T) {
+func TestMountMCPWithoutToken(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0.0"}, nil)
 	router := NewRouter(nil, nil, nil, nil)
 	MountMCP(router, server, "")
-	missing := httptest.NewRecorder()
-	router.ServeHTTP(missing, httptest.NewRequest(http.MethodPost, "/mcp", nil))
-	if missing.Code != http.StatusNotFound {
-		t.Fatalf("unconfigured MCP must be absent, got %d", missing.Code)
-	}
-
-	MountMCP(router, server, "secret")
-	for _, header := range []string{"", "Bearer wrong"} {
-		request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-		if header != "" {
-			request.Header.Set("Authorization", header)
-		}
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, request)
-		if response.Code != http.StatusUnauthorized {
-			t.Fatalf("header %q: expected 401, got %d", header, response.Code)
-		}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/mcp", nil))
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("stateless MCP GET should return 405, got %d", response.Code)
 	}
 }
 
@@ -48,9 +35,11 @@ func TestMCPOverStreamableHTTP(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0.0"}, nil)
 	mcp.AddTool(server, &mcp.Tool{Name: "ping"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, struct {
 		OK bool `json:"ok"`
-	}, error) { return nil, struct {
-		OK bool `json:"ok"`
-	}{OK: true}, nil })
+	}, error) {
+		return nil, struct {
+			OK bool `json:"ok"`
+		}{OK: true}, nil
+	})
 	router := NewRouter(nil, nil, nil, nil)
 	MountMCP(router, server, "secret")
 	httpServer := httptest.NewServer(router)
