@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"recallweave/internal/llm"
+	"recallweave/internal/skill"
 )
 
 const defaultMaxRounds = 6
@@ -18,6 +19,13 @@ type Agent struct {
 	Model     llm.ChatGenerator
 	MaxRounds int
 	Abilities []*Ability
+	Skills    *skill.Catalog
+}
+
+// WithSkills attaches task instructions separately from business abilities.
+func (a *Agent) WithSkills(catalog *skill.Catalog) *Agent {
+	a.Skills = catalog
+	return a
 }
 
 func NewAgent(id int64, name string, model llm.ChatGenerator, role string, maxRounds int, abilities ...*Ability) *Agent {
@@ -38,7 +46,7 @@ func (a *Agent) Rounds() int {
 	return a.MaxRounds
 }
 
-// Tools 把所有 Ability 的工具注册到一个 ToolHandle。同名工具后注册的会覆盖先注册的。
+// Tools registers business abilities and the built-in Skill loader separately.
 func (a *Agent) Tools() *llm.ToolHandle {
 	tools := llm.NewToolHandle()
 	for _, ability := range a.Abilities {
@@ -46,25 +54,35 @@ func (a *Agent) Tools() *llm.ToolHandle {
 			tools.Register(tool)
 		}
 	}
+	if a.Skills != nil && len(a.Skills.List()) > 0 {
+		tools.Register(skillLoadTool(a.Skills))
+	}
 	return tools
 }
 
-// Instructions 是 Agent 自身的 system prompt：角色 + 每个 Ability 的用法说明。
+// Instructions includes the role, ability guidance, and Skill metadata only.
 func (a *Agent) Instructions() string {
 	var b strings.Builder
 	if a.Role != "" {
 		fmt.Fprintf(&b, "你的角色是 %s。\n\n", a.Role)
 	}
-	if len(a.Abilities) == 0 {
-		return b.String()
+	if len(a.Abilities) > 0 {
+		b.WriteString("你的能力如下：\n")
+		for _, ability := range a.Abilities {
+			fmt.Fprintf(&b, "- %s: %s\n", ability.Name, ability.Description)
+			if ability.Instructions != "" {
+				b.WriteString(ability.Instructions)
+				b.WriteString("\n")
+			}
+		}
 	}
-
-	b.WriteString("你的能力如下：\n")
-	for _, ability := range a.Abilities {
-		fmt.Fprintf(&b, "- %s: %s\n", ability.Name, ability.Description)
-		if ability.Instructions != "" {
-			b.WriteString(ability.Instructions)
-			b.WriteString("\n")
+	if a.Skills != nil {
+		items := a.Skills.List()
+		if len(items) > 0 {
+			b.WriteString("\n可用 Skill 如下。只有用户任务匹配某个描述时才调用 load_skill，读取完整说明后再按说明处理；不要假装已执行未提供的工具或脚本。\n")
+			for _, item := range items {
+				fmt.Fprintf(&b, "- %s: %s\n", item.Name, item.Description)
+			}
 		}
 	}
 	return b.String()

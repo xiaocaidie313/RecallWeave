@@ -1,0 +1,61 @@
+{
+  "title": "工程备忘",
+  "current_node": "m10",
+  "mapping": {
+    "root": {
+      "parent": null,
+      "children": ["m1"],
+      "message": {"author": {"role": "system"}, "content": {"parts": ["系统"]}}
+    },
+    "m1": {
+      "parent": "root",
+      "children": ["m2"],
+      "message": {"author": {"role": "user"}, "content": {"parts": ["我的后端框架选定 gin，不用 echo"]}}
+    },
+    "m2": {
+      "parent": "m1",
+      "children": ["m3"],
+      "message": {"author": {"role": "assistant"}, "content": {"parts": ["记下了，后端用 gin"]}}
+    },
+    "m3": {
+      "parent": "m2",
+      "children": ["m4"],
+      "message": {"author": {"role": "user"}, "content": {"parts": ["数据库从 MySQL 迁到 PostgreSQL，端口 5434"]}}
+    },
+    "m4": {
+      "parent": "m3",
+      "children": ["m5"],
+      "message": {"author": {"role": "assistant"}, "content": {"parts": ["PostgreSQL 和 pgvector 一起上"]}}
+    },
+    "m5": {
+      "parent": "m4",
+      "children": ["m6"],
+      "message": {"author": {"role": "user"}, "content": {"parts": ["我住在杭州，下周去北京开会"]}}
+    },
+    "m6": {
+      "parent": "m5",
+      "children": ["m7"],
+      "message": {"author": {"role": "assistant"}, "content": {"parts": ["行程记下了，人在杭州"]}}
+    },
+    "m7": {
+      "parent": "m6",
+      "children": ["m8"],
+      "message": {"author": {"role": "user"}, "content": {"parts": ["cmd 目录是服务入口，不要往里面塞业务"]}}
+    },
+    "m8": {
+      "parent": "m7",
+      "children": ["m9"],
+      "message": {"author": {"role": "assistant"}, "content": {"parts": ["好的，cmd 只放入口"]}}
+    },
+    "m9": {
+      "parent": "m8",
+      "children": ["m10"],
+      "message": {"author": {"role": "user"}, "content": {"parts": ["问答工具轮次上限是六轮"]}}
+    },
+    "m10": {
+      "parent": "m9",
+      "children": [],
+      "message": {"author": {"role": "assistant"}, "content": {"parts": ["工具轮次按六轮来"]}}
+    }
+  }
+}
