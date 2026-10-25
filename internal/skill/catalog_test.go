@@ -72,3 +72,63 @@ func TestSkillFileSizeLimit(t *testing.T) {
 		t.Fatal("oversized skill must be rejected")
 	}
 }
+
+func TestReadReferencePathAndContent(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "memory-audit", "---\nname: memory-audit\ndescription: Check original messages\n---\nRead references/checklist.md")
+	references := filepath.Join(root, "memory-audit", "references")
+	if err := os.Mkdir(references, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(references, "checklist.md"), []byte("核对原文"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := catalog.ReadReference("memory-audit", "references/checklist.md")
+	if err != nil || content != "核对原文" {
+		t.Fatalf("unexpected reference=%q err=%v", content, err)
+	}
+	for _, path := range []string{"SKILL.md", "../other", "references/../SKILL.md", "references/./checklist.md", "references/missing.md"} {
+		if _, err := catalog.ReadReference("memory-audit", path); err == nil {
+			t.Errorf("expected path %q to be rejected", path)
+		}
+	}
+	if _, err := catalog.ReadReference("unknown", "references/checklist.md"); err == nil {
+		t.Fatal("unknown skill must be rejected")
+	}
+}
+
+func TestReadReferenceRejectsInvalidFiles(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "memory-audit", "---\nname: memory-audit\ndescription: Check original messages\n---\nbody")
+	references := filepath.Join(root, "memory-audit", "references")
+	if err := os.Mkdir(references, 0700); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string][]byte{
+		"invalid.md": {0xff},
+		"large.md":   []byte(strings.Repeat("x", maxReferenceFileBytes+1)),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(references, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	catalog, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range files {
+		if _, err := catalog.ReadReference("memory-audit", "references/"+name); err == nil {
+			t.Errorf("expected %q to be rejected", name)
+		}
+	}
+	if err := os.Symlink(filepath.Join(root, "memory-audit", "SKILL.md"), filepath.Join(references, "linked.md")); err == nil {
+		if _, err := catalog.ReadReference("memory-audit", "references/linked.md"); err == nil {
+			t.Fatal("symlink must be rejected")
+		}
+	}
+}

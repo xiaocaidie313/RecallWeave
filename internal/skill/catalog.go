@@ -13,6 +13,7 @@ import (
 )
 
 const maxSkillFileBytes = 128 << 10
+const maxReferenceFileBytes = 64 << 10
 
 var validName = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
@@ -82,6 +83,60 @@ func (c *Catalog) Load(name string) (string, error) {
 		return "", fmt.Errorf("skill %q changed its name", name)
 	}
 	return body, nil
+}
+
+// ReadReference reads one text resource from a discovered Skill's references
+// directory. It never accepts an absolute path, traversal, or symlink.
+func (c *Catalog) ReadReference(name, path string) (string, error) {
+	if _, ok := c.skills[name]; !ok {
+		return "", fmt.Errorf("unknown skill %q", name)
+	}
+	path = filepath.FromSlash(path)
+	if !filepath.IsLocal(path) {
+		return "", fmt.Errorf("invalid reference path %q", path)
+	}
+	parts := strings.Split(path, string(filepath.Separator))
+	if len(parts) < 2 || parts[0] != "references" {
+		return "", fmt.Errorf("reference must be inside references/")
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("invalid reference path %q", path)
+		}
+	}
+
+	current := filepath.Join(c.root, name)
+	skillInfo, err := os.Lstat(current)
+	if err != nil {
+		return "", err
+	}
+	if !skillInfo.IsDir() || skillInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("skill directory must not be a symlink: %q", current)
+	}
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return "", err
+		}
+		if i < len(parts)-1 {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return "", fmt.Errorf("reference directory must not be a symlink: %q", current)
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() || info.Size() > maxReferenceFileBytes {
+			return "", fmt.Errorf("reference must be a regular file of at most %d bytes", maxReferenceFileBytes)
+		}
+	}
+	data, err := os.ReadFile(current)
+	if err != nil {
+		return "", err
+	}
+	if len(data) > maxReferenceFileBytes || !utf8.Valid(data) {
+		return "", fmt.Errorf("reference must be UTF-8 text of at most %d bytes", maxReferenceFileBytes)
+	}
+	return string(data), nil
 }
 
 func readSkill(path string) (Metadata, string, error) {

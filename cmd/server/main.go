@@ -78,15 +78,13 @@ func main() {
 	// 组装依赖。HTTP 在 internal/http，这里只把业务对象传进去。
 	extracter := extract.NewExtractExcuter(database, segmenter, embedder)
 	memoryManger := memory.NewMemoryManger(database, retrieval.New(database, vectorEmbedder))
-	skillDir := os.Getenv("RECALLWEAVE_SKILLS_DIR")
-	if skillDir == "" {
-		skillDir = "skills"
-	}
+	skillDir := cfg.SkillDir()
 	catalog, err := skill.Open(skillDir)
 	if err != nil {
 		logger.Error("failed to load skills", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("skills catalog loaded", "dir", skillDir, "count", len(catalog.List()))
 	recall := agent.NewAgent(1, "recall", ChatGenerator, "RecallWeave 的助手", 6,
 		ability.NewMemoryAbility(memoryManger),
 	).WithSkills(catalog)
