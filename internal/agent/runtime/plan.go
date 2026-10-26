@@ -54,6 +54,7 @@ func planTool(state *RunState) llm.Tool {
 			if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 				return "", fmt.Errorf("plan: invalid arguments: %w", err)
 			}
+			// 创建解析 下一个plan 
 			next := plan.Plan{Goal: strings.TrimSpace(args.Goal), Steps: make([]plan.Step, len(args.Steps))}
 			for i, step := range args.Steps {
 				next.Steps[i] = plan.Step{Step: strings.TrimSpace(step.Step), Status: step.Status, Result: strings.TrimSpace(step.Result)}

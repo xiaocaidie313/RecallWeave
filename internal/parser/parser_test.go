@@ -1,10 +1,38 @@
 package parser
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"recallweave/internal/store"
 )
+
+func TestProjectDecisionFixturePreservesAttribution(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "testdata", "project-decisions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversations, err := Parse(string(data), store.SourceChatGPT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoles := [][]string{{"user", "assistant", "user"}, {"assistant", "user", "assistant"}, {"user", "assistant", "user"}}
+	if len(conversations) != len(wantRoles) {
+		t.Fatalf("expected %d source sessions, got %d", len(wantRoles), len(conversations))
+	}
+	for i, roles := range wantRoles {
+		messages := conversations[i].Messages
+		if len(messages) != len(roles) {
+			t.Fatalf("session %d: unexpected message count %d", i, len(messages))
+		}
+		for j, role := range roles {
+			if messages[j].Role != role || messages[j].Seq != j+1 || messages[j].Content == "" {
+				t.Fatalf("session %d message %d: attribution lost: %+v", i, j, messages[j])
+			}
+		}
+	}
+}
 
 func TestParseChatGPTKeepsRoles(t *testing.T) {
 	raw := `{
