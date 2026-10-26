@@ -74,6 +74,7 @@ func planTool(state *RunState) llm.Tool {
 	}
 }
 
+// plan 发生改变
 func arrangementChanged(previous, next plan.Plan) bool {
 	if previous.Goal != next.Goal || len(previous.Steps) != len(next.Steps) {
 		return true

@@ -10,7 +10,7 @@ import (
 	"recallweave/internal/skill"
 )
 
-const defaultMaxRounds = 6
+const defaultMaxRounds = 10
 
 type Agent struct {
 	ID            int64

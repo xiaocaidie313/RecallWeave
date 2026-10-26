@@ -132,26 +132,28 @@ func writeSessionError(c *gin.Context, err error) {
 }
 
 type memoryView struct {
-	ID        uint            `json:"id"`
-	SessionID uint            `json:"session_id"`
-	SeqStart  int             `json:"seq_start"`
-	SeqEnd    int             `json:"seq_end"`
-	Title     string          `json:"title"`
-	Content   string          `json:"content"`
-	Tag       store.MemoryTag `json:"tag"`
+	ID          uint              `json:"id"`
+	SessionID   uint              `json:"session_id"`
+	SeqStart    int               `json:"seq_start"`
+	SeqEnd      int               `json:"seq_end"`
+	Title       string            `json:"title"`
+	Content     string            `json:"content"`
+	Tag         store.MemoryTag   `json:"tag"`
+	ContentType store.ContentType `json:"content_type"`
 }
 
 func memoryViews(memories []store.Memory) []memoryView {
 	views := make([]memoryView, 0, len(memories))
 	for _, item := range memories {
 		views = append(views, memoryView{
-			ID:        item.ID,
-			SessionID: item.SessionID,
-			SeqStart:  item.SeqStart,
-			SeqEnd:    item.SeqEnd,
-			Title:     item.Title,
-			Content:   item.Content,
-			Tag:       item.Tag,
+			ID:          item.ID,
+			SessionID:   item.SessionID,
+			SeqStart:    item.SeqStart,
+			SeqEnd:      item.SeqEnd,
+			Title:       item.Title,
+			Content:     item.Content,
+			Tag:         item.Tag,
+			ContentType: store.NormalizeContentType(string(item.ContentType)),
 		})
 	}
 	return views

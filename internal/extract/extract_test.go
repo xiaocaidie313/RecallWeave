@@ -32,7 +32,7 @@ type fakeSegmenter struct {
 	err      error
 }
 
-func (f fakeSegmenter) Segment(context.Context, []llm.Message, []string) ([]llm.Segment, error) {
+func (f fakeSegmenter) Segment(context.Context, []llm.Message, []string, []string) ([]llm.Segment, error) {
 	return f.segments, f.err
 }
 
@@ -134,7 +134,7 @@ type recordingSegmenter struct {
 	errOn int
 }
 
-func (r *recordingSegmenter) Segment(_ context.Context, messages []llm.Message, _ []string) ([]llm.Segment, error) {
+func (r *recordingSegmenter) Segment(_ context.Context, messages []llm.Message, _, _ []string) ([]llm.Segment, error) {
 	copied := append([]llm.Message(nil), messages...)
 	r.calls = append(r.calls, copied)
 	if r.errOn > 0 && len(r.calls) == r.errOn {
@@ -208,5 +208,53 @@ func TestNormalizeMemoryTagRejectsUnknown(t *testing.T) {
 	}
 	if got := store.NormalizeMemoryTag("tech"); got != store.TagTech {
 		t.Fatalf("expected tech to be kept, got %q", got)
+	}
+}
+
+func TestMemoriesFromPreservesContentTypeAndOriginalRange(t *testing.T) {
+	executer := NewExtractExcuter(nil, fakeSegmenter{segments: []llm.Segment{
+		{SeqStart: 1, SeqEnd: 2, Title: "暂缓", Summary: "先暂缓 multi-agent", Tag: "tech", ContentType: "decision"},
+		{SeqStart: 3, SeqEnd: 3, Title: "开始", Summary: "决定开始做 multi-agent", Tag: "tech", ContentType: "decision"},
+	}}, nil)
+	got := executer.memoriesFrom(context.Background(), 7, testMessages())
+	if len(got) != 2 || got[0].ContentType != store.ContentDecision || got[1].ContentType != store.ContentDecision {
+		t.Fatalf("decisions should remain separate typed memories: %+v", got)
+	}
+	if got[0].SessionID != 7 || got[0].SeqStart != 1 || got[0].SeqEnd != 2 || got[1].SeqStart != 3 {
+		t.Fatalf("source ranges changed: %+v", got)
+	}
+}
+
+func TestMemoriesFromNormalizesContentTypes(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want store.ContentType
+	}{
+		{"fact", store.ContentFact},
+		{"preference", store.ContentPreference},
+		{"decision", store.ContentDecision},
+		{"task", store.ContentTask},
+		{"question", store.ContentQuestion},
+		{"", store.ContentOther},
+		{"unsupported", store.ContentOther},
+	} {
+		t.Run(tc.raw, func(t *testing.T) {
+			executer := NewExtractExcuter(nil, fakeSegmenter{segments: []llm.Segment{{
+				SeqStart: 1, SeqEnd: 3, Title: "记忆", Summary: "摘要", ContentType: tc.raw,
+			}}}, nil)
+			got := executer.memoriesFrom(context.Background(), 1, testMessages())
+			if len(got) != 1 || got[0].ContentType != tc.want {
+				t.Fatalf("content_type %q: %+v", tc.raw, got)
+			}
+		})
+	}
+}
+
+func TestMemoriesFromFallbackHasUnknownContentType(t *testing.T) {
+	for _, segmenter := range []llm.Segmenter{nil, fakeSegmenter{err: errors.New("unavailable")}} {
+		got := NewExtractExcuter(nil, segmenter, nil).memoriesFrom(context.Background(), 1, testMessages())
+		if len(got) != 1 || got[0].ContentType != store.ContentOther {
+			t.Fatalf("fallback must not invent a classification: %+v", got)
+		}
 	}
 }

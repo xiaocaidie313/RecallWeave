@@ -17,13 +17,14 @@ type searchInput struct {
 }
 
 type memoryHit struct {
-	MemoryID  uint   `json:"memory_id"`
-	SessionID uint   `json:"session_id"`
-	SeqStart  int    `json:"seq_start"`
-	SeqEnd    int    `json:"seq_end"`
-	Tag       string `json:"tag"`
-	Title     string `json:"title"`
-	Content   string `json:"content"`
+	MemoryID    uint   `json:"memory_id"`
+	SessionID   uint   `json:"session_id"`
+	SeqStart    int    `json:"seq_start"`
+	SeqEnd      int    `json:"seq_end"`
+	Tag         string `json:"tag"`
+	Title       string `json:"title"`
+	Content     string `json:"content"`
+	ContentType string `json:"content_type"`
 }
 
 type searchOutput struct {
@@ -103,6 +104,7 @@ func RegisteTools(server *mcp.Server, reader memoryReader) {
 				MemoryID: item.ID, SessionID: item.SessionID,
 				SeqStart: item.SeqStart, SeqEnd: item.SeqEnd,
 				Tag: string(item.Tag), Title: item.Title, Content: item.Content,
+				ContentType: string(store.NormalizeContentType(string(item.ContentType))),
 			})
 		}
 		return nil, out, nil
