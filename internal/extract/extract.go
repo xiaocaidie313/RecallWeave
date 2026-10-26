@@ -13,6 +13,7 @@ import (
 	"recallweave/internal/store"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Title 字段是 varchar(191)，这里留出余量，按字符数而不是字节数截断。
@@ -37,6 +38,7 @@ func NewExtractExcuter(db *gorm.DB, segmenter llm.Segmenter, embedder llm.Embedd
 
 // ExtractSession 把一个会话提炼成若干条记忆，返回生成的条数。
 // 重复提炼同一个会话是幂等的：先删掉旧记忆，再写新的。
+// 包含停用记忆的会话禁止整体重写，以免重新激活旧内容；仍可增量提炼。
 func (e *ExtractExcuter) ExtractSessionToMemory(ctx context.Context, sessionID uint) (int, error) {
 	count, err := e.extractSessionToMemory(ctx, sessionID)
 	e.markExtract(ctx, sessionID, err)
@@ -53,7 +55,7 @@ func (e *ExtractExcuter) extractSessionToMemory(ctx context.Context, sessionID u
 		return 0, nil
 	}
 
-	memories := e.memoriesFrom(ctx, sessionID, messages)
+	memories := e.generateMemoryFromMessage(ctx, sessionID, messages)
 	if err := e.replaceMemories(ctx, sessionID, memories); err != nil {
 		return 0, err
 	}
@@ -93,7 +95,7 @@ func (e *ExtractExcuter) extractNewToMemory(ctx context.Context, sessionID uint)
 		return 0, nil
 	}
 
-	memories := e.memoriesFrom(ctx, sessionID, fresh)
+	memories := e.generateMemoryFromMessage(ctx, sessionID, fresh)
 	if err := e.db.WithContext(ctx).Create(&memories).Error; err != nil {
 		return 0, err
 	}
@@ -131,7 +133,7 @@ func (e *ExtractExcuter) coveredSeq(ctx context.Context, sessionID uint) (int, e
 	return row.Seq, err
 }
 
-func (e *ExtractExcuter) memoriesFrom(ctx context.Context, sessionID uint, messages []store.Message) []store.Memory {
+func (e *ExtractExcuter) generateMemoryFromMessage(ctx context.Context, sessionID uint, messages []store.Message) []store.Memory {
 	segments := e.segment(ctx, messages)
 	memories := make([]store.Memory, 0, len(segments))
 	for _, segment := range segments {
@@ -287,6 +289,15 @@ func mergeBatchSegments(segments []llm.Segment) []llm.Segment {
 // #3 写入记忆
 func (e *ExtractExcuter) replaceMemories(ctx context.Context, sessionID uint, memories []store.Memory) error {
 	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing []store.Memory
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ?", sessionID).Order("id").Find(&existing).Error; err != nil {
+			return err
+		}
+		for _, item := range existing {
+			if item.Status != "" && item.Status != store.MemoryActive {
+				return store.ErrMemoryHistoryProtected
+			}
+		}
 		if err := tx.Where("session_id = ?", sessionID).Delete(&store.Memory{}).Error; err != nil {
 			return err
 		}

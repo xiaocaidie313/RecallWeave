@@ -11,20 +11,22 @@ import (
 )
 
 type searchInput struct {
-	Keyword string `json:"keyword" jsonschema:"Words or question to search in past memories"`
-	Tag     string `json:"tag,omitempty" jsonschema:"Optional memory tag: work, study, tech, product, decision, people, life, or other"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"Maximum results, from 1 to 20; defaults to 5"`
+	Keyword         string `json:"keyword" jsonschema:"Words or question to search in past memories"`
+	Tag             string `json:"tag,omitempty" jsonschema:"Optional memory tag: work, study, tech, product, decision, people, life, or other"`
+	Limit           int    `json:"limit,omitempty" jsonschema:"Maximum results, from 1 to 20; defaults to 5"`
+	IncludeInactive bool   `json:"include_inactive,omitempty" jsonschema:"Only true when reviewing history; default excludes inactive memories"`
 }
 
 type memoryHit struct {
-	MemoryID    uint   `json:"memory_id"`
-	SessionID   uint   `json:"session_id"`
-	SeqStart    int    `json:"seq_start"`
-	SeqEnd      int    `json:"seq_end"`
-	Tag         string `json:"tag"`
-	Title       string `json:"title"`
-	Content     string `json:"content"`
-	ContentType string `json:"content_type"`
+	MemoryID    uint               `json:"memory_id"`
+	SessionID   uint               `json:"session_id"`
+	SeqStart    int                `json:"seq_start"`
+	SeqEnd      int                `json:"seq_end"`
+	Tag         string             `json:"tag"`
+	Title       string             `json:"title"`
+	Content     string             `json:"content"`
+	ContentType string             `json:"content_type"`
+	Status      store.MemoryStatus `json:"status"`
 }
 
 type searchOutput struct {
@@ -49,7 +51,7 @@ type getMessagesOutput struct {
 }
 
 type memoryReader interface {
-	FindMemories(context.Context, string, store.MemoryTag, int) ([]store.Memory, error)
+	FindMemories(context.Context, string, store.MemoryTag, int, ...bool) ([]store.Memory, error)
 	GetMessages(context.Context, uint, int, int) ([]store.Message, error)
 }
 
@@ -94,7 +96,7 @@ func RegisteTools(server *mcp.Server, reader memoryReader) {
 				return nil, searchOutput{}, fmt.Errorf("unknown memory tag %q", input.Tag)
 			}
 		}
-		items, err := reader.FindMemories(ctx, keyword, tag, input.Limit)
+		items, err := reader.FindMemories(ctx, keyword, tag, input.Limit, input.IncludeInactive)
 		if err != nil {
 			return nil, searchOutput{}, err
 		}
@@ -105,6 +107,7 @@ func RegisteTools(server *mcp.Server, reader memoryReader) {
 				SeqStart: item.SeqStart, SeqEnd: item.SeqEnd,
 				Tag: string(item.Tag), Title: item.Title, Content: item.Content,
 				ContentType: string(store.NormalizeContentType(string(item.ContentType))),
+				Status:      item.Status,
 			})
 		}
 		return nil, out, nil
