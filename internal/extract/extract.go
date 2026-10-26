@@ -136,13 +136,14 @@ func (e *ExtractExcuter) memoriesFrom(ctx context.Context, sessionID uint, messa
 	memories := make([]store.Memory, 0, len(segments))
 	for _, segment := range segments {
 		memories = append(memories, store.Memory{
-			SessionID: sessionID,
-			SeqStart:  segment.SeqStart,
-			SeqEnd:    segment.SeqEnd,
-			Title:     truncateTitle(segment.Title),
-			Content:   segment.Summary,
-			Tag:       store.NormalizeMemoryTag(segment.Tag),
-			Embedding: store.NewEmbedding(e.embedMemory(ctx, segment.Title, segment.Summary)),
+			SessionID:   sessionID,
+			SeqStart:    segment.SeqStart,
+			SeqEnd:      segment.SeqEnd,
+			Title:       truncateTitle(segment.Title),
+			Content:     segment.Summary,
+			Tag:         store.NormalizeMemoryTag(segment.Tag),
+			ContentType: store.NormalizeContentType(segment.ContentType),
+			Embedding:   store.NewEmbedding(e.embedMemory(ctx, segment.Title, segment.Summary)),
 		})
 	}
 	return memories
@@ -204,7 +205,7 @@ func (e *ExtractExcuter) segmentBatch(ctx context.Context, messages []store.Mess
 		})
 	}
 
-	segments, err := e.segmenter.Segment(ctx, input, allowedTags())
+	segments, err := e.segmenter.Segment(ctx, input, allowedTags(), allowedContentTypes())
 	if err != nil {
 		slog.Warn("segment batch failed, falling back to this batch",
 			"session_id", messages[0].SessionID,
@@ -324,6 +325,7 @@ func keepValidSegments(segments []llm.Segment, messages []store.Message) []llm.S
 		if strings.TrimSpace(segment.Summary) == "" {
 			segment.Summary = bySeq[segment.SeqStart].Content
 		}
+		segment.ContentType = string(store.NormalizeContentType(segment.ContentType))
 
 		valid = append(valid, segment)
 	}
@@ -340,11 +342,12 @@ func wholeSessionSegment(messages []store.Message) llm.Segment {
 	}
 
 	return llm.Segment{
-		SeqStart: first.Seq,
-		SeqEnd:   last.Seq,
-		Title:    firstLine(first.Content),
-		Summary:  strings.Join(contents, "\n"),
-		Tag:      string(store.TagOther),
+		SeqStart:    first.Seq,
+		SeqEnd:      last.Seq,
+		Title:       firstLine(first.Content),
+		Summary:     strings.Join(contents, "\n"),
+		Tag:         string(store.TagOther),
+		ContentType: string(store.ContentOther),
 	}
 }
 
@@ -354,6 +357,14 @@ func allowedTags() []string {
 		tags = append(tags, string(tag))
 	}
 	return tags
+}
+
+func allowedContentTypes() []string {
+	types := make([]string, 0, len(store.ContentTypes))
+	for _, contentType := range store.ContentTypes {
+		types = append(types, string(contentType))
+	}
+	return types
 }
 
 func firstLine(content string) string {

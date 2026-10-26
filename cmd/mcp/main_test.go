@@ -21,7 +21,7 @@ type fakeFinder struct {
 
 func (f *fakeFinder) FindMemories(_ context.Context, keyword string, _ store.MemoryTag, limit int) ([]store.Memory, error) {
 	f.keyword, f.limit = keyword, limit
-	return []store.Memory{{ID: 7, SessionID: 3, SeqStart: 4, SeqEnd: 5, Title: "数据库决定", Content: "使用 PostgreSQL"}}, nil
+	return []store.Memory{{ID: 7, SessionID: 3, SeqStart: 4, SeqEnd: 5, Title: "数据库决定", Content: "使用 PostgreSQL", ContentType: store.ContentDecision}}, nil
 }
 
 func (f *fakeFinder) GetMessages(_ context.Context, sessionID uint, seqStart, seqEnd int) ([]store.Message, error) {
@@ -72,6 +72,9 @@ func TestSearchMemoriesOverMCP(t *testing.T) {
 	hit, ok := items[0].(map[string]any)
 	if !ok || hit["session_id"] != float64(3) || hit["title"] != "数据库决定" {
 		t.Fatalf("unexpected memory: %+v", items[0])
+	}
+	if hit["content_type"] != "decision" {
+		t.Fatalf("content type missing from MCP output: %+v", hit)
 	}
 	if _, leaked := hit["embedding"]; leaked {
 		t.Fatal("embedding must not be exposed by MCP")

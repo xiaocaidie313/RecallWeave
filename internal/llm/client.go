@@ -26,17 +26,18 @@ type Message struct {
 // Segment 是模型切出来的一个话题段。SeqStart 到 SeqEnd 指回消息编号，
 // 记忆靠它追溯原文。
 type Segment struct {
-	SeqStart int    `json:"seq_start"`
-	SeqEnd   int    `json:"seq_end"`
-	Title    string `json:"title"`
-	Summary  string `json:"summary"`
-	Tag      string `json:"tag"`
+	SeqStart    int    `json:"seq_start"`
+	SeqEnd      int    `json:"seq_end"`
+	Title       string `json:"title"`
+	Summary     string `json:"summary"`
+	Tag         string `json:"tag"`
+	ContentType string `json:"content_type"`
 }
 
 // Segmenter 是 extract 唯一需要的能力。定成接口，测试时可以塞假实现，
 // 不用真发网络请求。
 type Segmenter interface {
-	Segment(ctx context.Context, messages []Message, allowedTags []string) ([]Segment, error)
+	Segment(ctx context.Context, messages []Message, allowedTags, allowedContentTypes []string) ([]Segment, error)
 }
 
 type Embedder interface {
@@ -92,17 +93,20 @@ const segmentPromptTemplate = `你是一个记忆提炼助手。下面是同一�
 - 同一段里的消息应该在讨论同一件事，段与段之间不要重叠
 - title 不超过 20 字，summary 两句以内
 - tag 只能从这个列表里选：%s。选不出来就用 other
+- content_type 只能从这个列表里选：%s。fact 是原文陈述的事实，preference 是个人偏好，decision 是已做出的决定，task 是待办或计划，question 是提问或核查请求，other 是其他或无法判断
+- 根据原文主要内容分类：用户只是提问、助手按常识作答时，不要把助手回答当成用户已确认的事实或决定；事实类也不代表内容已获外部验证
+- 同一话题中明确不同的决定或偏好应分别提炼，保留各自的原文区间，不要合并成一个当前结论
 - 只输出 JSON，不要解释，不要代码块
 
 输出格式：
-{"segments":[{"seq_start":1,"seq_end":3,"title":"标题","summary":"摘要","tag":"work"}]}`
+{"segments":[{"seq_start":1,"seq_end":3,"title":"标题","summary":"摘要","tag":"work","content_type":"other"}]}`
 
 type segmentResponse struct {
 	Segments []Segment `json:"segments"`
 }
 
 // Segment 把整段会话交给模型按话题切分。
-func (c *Client) Segment(ctx context.Context, messages []Message, allowedTags []string) ([]Segment, error) {
+func (c *Client) Segment(ctx context.Context, messages []Message, allowedTags, allowedContentTypes []string) ([]Segment, error) {
 	if len(messages) == 0 {
 		return nil, nil
 	}
@@ -119,7 +123,7 @@ func (c *Client) Segment(ctx context.Context, messages []Message, allowedTags []
 		fmt.Fprintf(&builder, "%d: (%s) %s\n", msg.Seq, msg.Role, msg.Content)
 	}
 
-	prompt := fmt.Sprintf(segmentPromptTemplate, minSeq, maxSeq, strings.Join(allowedTags, ", "))
+	prompt := fmt.Sprintf(segmentPromptTemplate, minSeq, maxSeq, strings.Join(allowedTags, ", "), strings.Join(allowedContentTypes, ", "))
 
 	raw, err := c.completeJSON(ctx, prompt, builder.String())
 	if err != nil {

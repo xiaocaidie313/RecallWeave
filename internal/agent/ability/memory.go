@@ -23,13 +23,14 @@ const memoryInstructions = `涉及用户过去的经历时，先引用系统消�
 // MemoryHit 是回灌给模型的一条记忆。带上 session_id 和 seq 区间，
 // 模型才能引用来源，也才能接着调 get_messages 看原文。  命中的记忆
 type MemoryHit struct {
-	MemoryID  uint   `json:"memory_id"`
-	SessionID uint   `json:"session_id"`
-	SeqStart  int    `json:"seq_start"`
-	SeqEnd    int    `json:"seq_end"`
-	Tag       string `json:"tag"`
-	Title     string `json:"title"`
-	Content   string `json:"content"`
+	MemoryID    uint   `json:"memory_id"`
+	SessionID   uint   `json:"session_id"`
+	SeqStart    int    `json:"seq_start"`
+	SeqEnd      int    `json:"seq_end"`
+	Tag         string `json:"tag"`
+	Title       string `json:"title"`
+	Content     string `json:"content"`
+	ContentType string `json:"content_type"`
 }
 
 type SearchMemoriesResult struct {
@@ -109,13 +110,14 @@ func searchMemoriesTool(manager *memory.MemoryManger) llm.Tool {
 			result := SearchMemoriesResult{Memories: make([]MemoryHit, 0, len(memories))}
 			for _, item := range memories {
 				result.Memories = append(result.Memories, MemoryHit{
-					MemoryID:  item.ID,
-					SessionID: item.SessionID,
-					SeqStart:  item.SeqStart,
-					SeqEnd:    item.SeqEnd,
-					Tag:       string(item.Tag),
-					Title:     item.Title,
-					Content:   item.Content,
+					MemoryID:    item.ID,
+					SessionID:   item.SessionID,
+					SeqStart:    item.SeqStart,
+					SeqEnd:      item.SeqEnd,
+					Tag:         string(item.Tag),
+					Title:       item.Title,
+					Content:     item.Content,
+					ContentType: string(store.NormalizeContentType(string(item.ContentType))),
 				})
 			}
 
