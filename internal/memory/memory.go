@@ -109,7 +109,8 @@ func (m *MemoryManger) ListConversationsWithTitle(ctx context.Context) ([]struct
 }
 
 // FindMemories 混合检索，不改活跃度。预取背景用这个，避免每次提问都给 Top-K 加分。
-func (m *MemoryManger) FindMemories(ctx context.Context, keyword string, tag store.MemoryTag, limit int) ([]store.Memory, error) {
+func (m *MemoryManger) FindMemories(ctx context.Context, keyword string, tag store.MemoryTag, limit int, includeInactive ...bool) ([]store.Memory, error) {
+	history := len(includeInactive) > 0 && includeInactive[0]
 	if limit <= 0 {
 		limit = defaultSearchLimit
 	}
@@ -117,12 +118,12 @@ func (m *MemoryManger) FindMemories(ctx context.Context, keyword string, tag sto
 		limit = maxSearchLimit
 	}
 	// 关键词检索
-	keywordHits, err := m.keywordSearch(ctx, keyword, tag, limit)
+	keywordHits, err := m.keywordSearch(ctx, keyword, tag, limit, history)
 	if err != nil {
 		return nil, err
 	}
 	// 向量检索
-	vectorHits, err := m.vectorSearch(ctx, keyword, tag, limit)
+	vectorHits, err := m.vectorSearch(ctx, keyword, tag, limit, history)
 	if err != nil {
 		slog.Warn("vector search failed", "error", err)
 		vectorHits = nil
@@ -131,8 +132,8 @@ func (m *MemoryManger) FindMemories(ctx context.Context, keyword string, tag sto
 }
 
 // SearchMemories 给模型工具用：检索后再记一次召回。
-func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag store.MemoryTag, limit int) ([]store.Memory, error) {
-	merged, err := m.FindMemories(ctx, keyword, tag, limit)
+func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag store.MemoryTag, limit int, includeInactive ...bool) ([]store.Memory, error) {
+	merged, err := m.FindMemories(ctx, keyword, tag, limit, includeInactive...)
 	if err != nil {
 		return nil, err
 	}
@@ -142,8 +143,11 @@ func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag s
 	return merged, nil
 }
 
-func (m *MemoryManger) keywordSearch(ctx context.Context, keyword string, tag store.MemoryTag, limit int) ([]store.Memory, error) {
+func (m *MemoryManger) keywordSearch(ctx context.Context, keyword string, tag store.MemoryTag, limit int, includeInactive bool) ([]store.Memory, error) {
 	query := m.db.WithContext(ctx).Model(&store.Memory{})
+	if !includeInactive {
+		query = query.Where("status = ?", store.MemoryActive)
+	}
 	if tokens := strings.Fields(keyword); len(tokens) > 0 {
 		conditions := m.db.Session(&gorm.Session{NewDB: true})
 		for _, token := range tokens {
@@ -164,13 +168,13 @@ func (m *MemoryManger) keywordSearch(ctx context.Context, keyword string, tag st
 }
 
 // vectorSearch 取一批向量近邻，再按活跃度重排。近邻本身在 retrieval。
-func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag store.MemoryTag, limit int) ([]store.Memory, error) {
+func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag store.MemoryTag, limit int, includeInactive bool) ([]store.Memory, error) {
 	if m.retriever == nil {
 		return nil, nil
 	}
 
 	// 多取几条再重排，避免活跃度加权只在最终的几条里打转。
-	hits, err := m.retriever.Search(ctx, keyword, tag, limit*vectorCandidateFactor)
+	hits, err := m.retriever.Search(ctx, keyword, tag, limit*vectorCandidateFactor, includeInactive)
 	if err != nil {
 		return nil, err
 	}
@@ -259,10 +263,13 @@ func (m *MemoryManger) bumpRecall(ctx context.Context, hits []store.Memory) {
 }
 
 // ListBySession 返回一个会话下的记忆，按它在原文里的起始位置排序。
-func (m *MemoryManger) ListBySession(ctx context.Context, sessionID uint) ([]store.Memory, error) {
+func (m *MemoryManger) ListBySession(ctx context.Context, sessionID uint, includeInactive ...bool) ([]store.Memory, error) {
 	var memories []store.Memory
-	if err := m.db.WithContext(ctx).
-		Where("session_id = ?", sessionID).
+	query := m.db.WithContext(ctx).Where("session_id = ?", sessionID)
+	if len(includeInactive) == 0 || !includeInactive[0] {
+		query = query.Where("status = ?", store.MemoryActive)
+	}
+	if err := query.
 		Order("seq_start").
 		Find(&memories).Error; err != nil {
 		return nil, err

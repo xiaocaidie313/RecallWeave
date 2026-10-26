@@ -32,7 +32,7 @@ func New(db *gorm.DB, embedder Embedder) *Retriever {
 // Search 返回按余弦相似度从高到低排列的候选。
 // limit 是数据库取出的条数。调用方若还要按活跃度重排，应传入比最终条数更大的值。
 // 没配嵌入模型、查询为空、或向量长度对不上时返回空结果，不视为错误。
-func (r *Retriever) Search(ctx context.Context, query string, tag store.MemoryTag, limit int) ([]Hit, error) {
+func (r *Retriever) Search(ctx context.Context, query string, tag store.MemoryTag, limit int, includeInactive ...bool) ([]Hit, error) {
 	if r == nil || r.embedder == nil || r.db == nil || strings.TrimSpace(query) == "" || limit <= 0 {
 		return nil, nil
 	}
@@ -49,6 +49,9 @@ func (r *Retriever) Search(ctx context.Context, query string, tag store.MemoryTa
 	}
 
 	dbQuery := r.db.WithContext(ctx).Model(&store.Memory{}).Where("embedding IS NOT NULL")
+	if len(includeInactive) == 0 || !includeInactive[0] {
+		dbQuery = dbQuery.Where("status = ?", store.MemoryActive)
+	}
 	if tag != "" {
 		dbQuery = dbQuery.Where("tag = ?", tag)
 	}

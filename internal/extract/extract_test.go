@@ -216,7 +216,7 @@ func TestMemoriesFromPreservesContentTypeAndOriginalRange(t *testing.T) {
 		{SeqStart: 1, SeqEnd: 2, Title: "暂缓", Summary: "先暂缓 multi-agent", Tag: "tech", ContentType: "decision"},
 		{SeqStart: 3, SeqEnd: 3, Title: "开始", Summary: "决定开始做 multi-agent", Tag: "tech", ContentType: "decision"},
 	}}, nil)
-	got := executer.memoriesFrom(context.Background(), 7, testMessages())
+	got := executer.generateMemoryFromMessage(context.Background(), 7, testMessages())
 	if len(got) != 2 || got[0].ContentType != store.ContentDecision || got[1].ContentType != store.ContentDecision {
 		t.Fatalf("decisions should remain separate typed memories: %+v", got)
 	}
@@ -242,7 +242,7 @@ func TestMemoriesFromNormalizesContentTypes(t *testing.T) {
 			executer := NewExtractExcuter(nil, fakeSegmenter{segments: []llm.Segment{{
 				SeqStart: 1, SeqEnd: 3, Title: "记忆", Summary: "摘要", ContentType: tc.raw,
 			}}}, nil)
-			got := executer.memoriesFrom(context.Background(), 1, testMessages())
+			got := executer.generateMemoryFromMessage(context.Background(), 1, testMessages())
 			if len(got) != 1 || got[0].ContentType != tc.want {
 				t.Fatalf("content_type %q: %+v", tc.raw, got)
 			}
@@ -252,7 +252,7 @@ func TestMemoriesFromNormalizesContentTypes(t *testing.T) {
 
 func TestMemoriesFromFallbackHasUnknownContentType(t *testing.T) {
 	for _, segmenter := range []llm.Segmenter{nil, fakeSegmenter{err: errors.New("unavailable")}} {
-		got := NewExtractExcuter(nil, segmenter, nil).memoriesFrom(context.Background(), 1, testMessages())
+		got := NewExtractExcuter(nil, segmenter, nil).generateMemoryFromMessage(context.Background(), 1, testMessages())
 		if len(got) != 1 || got[0].ContentType != store.ContentOther {
 			t.Fatalf("fallback must not invent a classification: %+v", got)
 		}

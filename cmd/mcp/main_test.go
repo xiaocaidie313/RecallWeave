@@ -11,16 +11,18 @@ import (
 )
 
 type fakeFinder struct {
-	keyword   string
-	limit     int
-	sessionID uint
-	seqStart  int
-	seqEnd    int
-	messages  []store.Message
+	keyword         string
+	limit           int
+	sessionID       uint
+	seqStart        int
+	seqEnd          int
+	messages        []store.Message
+	includeInactive bool
 }
 
-func (f *fakeFinder) FindMemories(_ context.Context, keyword string, _ store.MemoryTag, limit int) ([]store.Memory, error) {
+func (f *fakeFinder) FindMemories(_ context.Context, keyword string, _ store.MemoryTag, limit int, includeInactive ...bool) ([]store.Memory, error) {
 	f.keyword, f.limit = keyword, limit
+	f.includeInactive = len(includeInactive) > 0 && includeInactive[0]
 	return []store.Memory{{ID: 7, SessionID: 3, SeqStart: 4, SeqEnd: 5, Title: "数据库决定", Content: "使用 PostgreSQL", ContentType: store.ContentDecision}}, nil
 }
 
@@ -78,6 +80,13 @@ func TestSearchMemoriesOverMCP(t *testing.T) {
 	}
 	if _, leaked := hit["embedding"]; leaked {
 		t.Fatal("embedding must not be exposed by MCP")
+	}
+	if finder.includeInactive {
+		t.Fatal("default MCP search included inactive memories")
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "search_memories", Arguments: map[string]any{"keyword": "PostgreSQL", "include_inactive": true}})
+	if err != nil || result.IsError || !finder.includeInactive {
+		t.Fatalf("history option was not forwarded: %+v %v", result, err)
 	}
 }
 

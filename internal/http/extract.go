@@ -1,10 +1,12 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"recallweave/internal/extract"
+	"recallweave/internal/store"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,6 +30,10 @@ func (h *ExtractHandler) ExtractSession(c *gin.Context) {
 	}
 
 	count, err := h.excuter.ExtractSessionToMemory(c.Request.Context(), uint(sessionID))
+	if errors.Is(err, store.ErrMemoryHistoryProtected) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
