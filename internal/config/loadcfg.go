@@ -12,6 +12,7 @@ type Config struct {
 	Database    DatabaseConfig    `yaml:"database"`
 	LLM         LLMConfig         `yaml:"llm"`
 	Skills      SkillsConfig      `yaml:"skills"`
+	Artifacts   ArtifactsConfig   `yaml:"artifacts"`
 	ExternalMCP ExternalMCPConfig `yaml:"external_mcp"`
 }
 
@@ -47,6 +48,21 @@ type LLMConfig struct {
 // SkillsConfig points at the local Skill catalog. Empty Dir means "skills".
 type SkillsConfig struct {
 	Dir string `yaml:"dir"`
+}
+
+type ArtifactsConfig struct {
+	Dir string `yaml:"dir"`
+}
+
+// ArtifactDir follows the same environment/config/default precedence as skills.
+func (c *Config) ArtifactDir() string {
+	if dir := os.Getenv("RECALLWEAVE_ARTIFACTS_DIR"); dir != "" {
+		return dir
+	}
+	if c != nil && c.Artifacts.Dir != "" {
+		return c.Artifacts.Dir
+	}
+	return "data/artifacts"
 }
 
 // SkillDir returns the Skill root: env override, then config, then "skills".
