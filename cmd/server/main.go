@@ -9,6 +9,7 @@ import (
 
 	"recallweave/internal/agent"
 	"recallweave/internal/agent/ability"
+	"recallweave/internal/artifact"
 	"recallweave/internal/ask"
 	"recallweave/internal/config"
 	"recallweave/internal/db"
@@ -86,8 +87,15 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("skills catalog loaded", "dir", skillDir, "count", len(catalog.List()))
+	artifacts, err := artifact.Open(cfg.ArtifactDir())
+	if err != nil {
+		logger.Error("failed to open artifact directory", "error", err)
+		os.Exit(1)
+	}
+	defer artifacts.Close()
 	recall := agent.NewAgent(1, "recall", ChatGenerator, "RecallWeave 的助手", 6,
 		ability.NewMemoryAbility(memoryManger),
+		ability.NewArtifactAbility(artifacts),
 	).WithSkills(catalog)
 	if cfg.ExternalMCP.URL != "" {
 		if cfg.ExternalMCP.TokenEnv != "" && os.Getenv(cfg.ExternalMCP.TokenEnv) == "" {
