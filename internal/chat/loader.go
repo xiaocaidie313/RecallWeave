@@ -1,4 +1,4 @@
-package ask
+package chat
 
 import (
 	"context"
@@ -29,52 +29,65 @@ const (
 //
 // 只作知识背景的导入不挂 conversation，不会出现在导入层，仍走第 1 层。
 // 没有记忆库或没有 conversation 时跳过，测试可以不连数据库。
-func (a *Agent) loadContext(ctx context.Context, conversationID uint, question string) (runtime.Preload, uint, error) {
+func (a *Agent) loadContext(ctx context.Context, conversationID uint, question string) (runtime.Preload, uint, *store.Conversation, []store.ContextMessage, error) {
 	var preload runtime.Preload
 	if a.memory == nil || conversationID == 0 {
-		return preload, 0, nil
+		return preload, 0, nil, nil, nil
 	}
-
-	if background := a.relatedMemories(ctx, question); background != "" {
-		preload.Background = append(preload.Background, background)
-	}
-
-	imported, err := a.importedBackground(ctx, conversationID)
+	conversation, err := a.memory.GetConversation(ctx, conversationID)
 	if err != nil {
-		return preload, 0, err
+		return preload, 0, nil, nil, err
 	}
-	if imported != "" {
-		preload.Background = append(preload.Background, imported)
+	if !conversation.IsBranch() {
+		if background := a.relatedMemories(ctx, question); background != "" {
+			preload.Background = append(preload.Background, background)
+		}
+		imported, err := a.importedBackground(ctx, conversationID)
+		if err != nil {
+			return preload, 0, nil, nil, err
+		}
+		if imported != "" {
+			preload.Background = append(preload.Background, imported)
+		}
 	}
 
 	session, err := a.memory.ChatSession(ctx, conversationID)
 	if err != nil {
-		return preload, 0, err
+		return preload, 0, nil, nil, err
 	}
-
-	brief, untilSeq, err := a.memory.ConversationBrief(ctx, conversationID)
+	visible, err := conversation.InheritedMessages()
 	if err != nil {
-		return preload, 0, err
+		return preload, 0, nil, nil, fmt.Errorf("invalid fork snapshot: %w", err)
 	}
+	for _, message := range visible {
+		preload.History = append(preload.History, llm.Message{Seq: message.Seq, Role: message.Role,
+			Content: fmt.Sprintf("【继承原文：会话 %d，消息 %d】\n%s", message.SessionID, message.Seq, message.Content)})
+	}
+	brief, untilSeq := conversation.Brief, conversation.BriefUntilSeq
 	if brief != "" {
 		preload.Background = append(preload.Background, "此前对话摘要：\n"+brief)
 	}
 
 	messages, err := a.memory.ListMessages(ctx, session.ID)
 	if err != nil {
-		return preload, 0, err
+		return preload, 0, nil, nil, err
 	}
 	for _, msg := range messages {
+		visible = append(visible, store.ContextMessage{SessionID: session.ID, Seq: msg.Seq, Role: msg.Role, Content: msg.Content})
 		if untilSeq > 0 && msg.Seq <= untilSeq {
 			continue
+		}
+		content := msg.Content
+		if conversation.IsBranch() {
+			content = fmt.Sprintf("【分支原文：会话 %d，消息 %d】\n%s", session.ID, msg.Seq, msg.Content)
 		}
 		preload.History = append(preload.History, llm.Message{
 			Seq:     msg.Seq,
 			Role:    msg.Role,
-			Content: msg.Content,
+			Content: content,
 		})
 	}
-	return preload, session.ID, nil
+	return preload, session.ID, &conversation, visible, nil
 }
 
 // relatedMemories 用当前问题从记忆库检索相关记忆，把 top-K 的标题+摘要拼成一段背景。

@@ -331,6 +331,7 @@ func (m *MemoryManger) GetMessages(ctx context.Context, sessionID uint, seqStart
 	var messages []store.Message
 	if err := m.db.WithContext(ctx).
 		Where("session_id = ? AND seq >= ? AND seq <= ?", sessionID, seqStart, seqEnd).
+		Where("NOT EXISTS (SELECT 1 FROM sessions AS private_session JOIN conversations AS private_conversation ON private_conversation.id = private_session.conversation_id WHERE private_session.id = messages.session_id AND private_conversation.parent_conversation_id IS NOT NULL)").
 		Order("seq").
 		Find(&messages).Error; err != nil {
 		return nil, err
@@ -409,7 +410,8 @@ func (m *MemoryManger) AppendMessages(ctx context.Context, sessionID uint, messa
 
 func (m *MemoryManger) GetSessions(ctx context.Context, conversationID uint) ([]store.Session, error) {
 	var sessions []store.Session
-	if err := m.db.WithContext(ctx).Model(&store.Session{}).Where("conversation_id = ?", conversationID).Find(&sessions).Error; err != nil {
+	if err := m.db.WithContext(ctx).Model(&store.Session{}).Where("conversation_id = ?", conversationID).
+		Where("NOT EXISTS (SELECT 1 FROM conversations AS private_conversation WHERE private_conversation.id = sessions.conversation_id AND private_conversation.parent_conversation_id IS NOT NULL)").Find(&sessions).Error; err != nil {
 		return nil, err
 	}
 	return sessions, nil

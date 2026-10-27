@@ -1,4 +1,4 @@
-package ask
+package chat
 
 import (
 	"strings"

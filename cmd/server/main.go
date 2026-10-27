@@ -10,7 +10,7 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/agent/ability"
 	"recallweave/internal/artifact"
-	"recallweave/internal/ask"
+	"recallweave/internal/chat"
 	"recallweave/internal/config"
 	"recallweave/internal/db"
 	"recallweave/internal/extract"
@@ -50,7 +50,7 @@ func main() {
 	// 没配 api_key 时提炼退回整段兜底，问答直接不可用
 	var client *llm.Client
 	if cfg.LLM.APIKey == "" {
-		logger.Info("llm api key is empty, extraction falls back to whole session and ask is disabled")
+		logger.Info("llm api key is empty, extraction falls back to whole session and chat is disabled")
 	} else {
 		client, err = llm.NewClient(llm.Config{
 			BaseURL:        cfg.LLM.BaseURL,
@@ -121,12 +121,12 @@ func main() {
 		}
 		logger.Info("external MCP tools registered", "count", len(remoteTools))
 	}
-	askService := ask.NewAgent(recall, memoryManger, extracter)
+	chatService := chat.NewAgent(recall, memoryManger, extracter)
 
 	r := apphttp.NewRouter(
 		apphttp.NewIngestHandler(ingest.NewService(database, extracter)),
 		apphttp.NewExtractHandler(extracter),
-		apphttp.NewAskHandler(askService),
+		apphttp.NewChatHandler(chatService),
 		apphttp.NewConversationHandler(memoryManger),
 	)
 	// if token := os.Getenv("RECALLWEAVE_MCP_TOKEN"); token != "" {

@@ -2,6 +2,7 @@ package extract
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -40,6 +41,10 @@ func NewExtractExcuter(db *gorm.DB, segmenter llm.Segmenter, embedder llm.Embedd
 // 重复提炼同一个会话是幂等的：先删掉旧记忆，再写新的。
 // 包含停用记忆的会话禁止整体重写，以免重新激活旧内容；仍可增量提炼。
 func (e *ExtractExcuter) ExtractSessionToMemory(ctx context.Context, sessionID uint) (int, error) {
+	if err := e.checkGlobalExtraction(ctx, sessionID); err != nil {
+		e.markExtract(ctx, sessionID, err)
+		return 0, err
+	}
 	count, err := e.extractSessionToMemory(ctx, sessionID)
 	e.markExtract(ctx, sessionID, err)
 	return count, err
@@ -67,6 +72,10 @@ func (e *ExtractExcuter) extractSessionToMemory(ctx context.Context, sessionID u
 // 手动的 ExtractSession 仍会删掉旧记忆再整段重写。
 // 摘要失败做降级 ----> llm 自动重新提炼信息
 func (e *ExtractExcuter) ExtractNewToMemory(ctx context.Context, sessionID uint) (int, error) {
+	if err := e.checkGlobalExtraction(ctx, sessionID); err != nil {
+		e.markExtract(ctx, sessionID, err)
+		return 0, err
+	}
 	count, err := e.extractNewToMemory(ctx, sessionID)
 	e.markExtract(ctx, sessionID, err)
 	return count, err
@@ -109,7 +118,9 @@ func (e *ExtractExcuter) markExtract(ctx context.Context, sessionID uint, extrac
 	updates := map[string]any{
 		"extract_error": "",
 	}
-	if extractErr != nil {
+	if errors.Is(extractErr, store.ErrBranchMemoryPrivate) {
+		updates["extract_status"] = store.ExtractSkipped
+	} else if extractErr != nil {
 		updates["extract_status"] = store.ExtractFailed
 		updates["extract_error"] = extractErr.Error()
 	} else {

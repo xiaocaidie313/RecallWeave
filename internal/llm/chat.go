@@ -32,7 +32,7 @@ type Turn struct {
 	Usage     Usage
 }
 
-// ChatGenerator 是 ask 循环依赖的能力，测试时可以塞假实现。
+// ChatGenerator 是 chat 循环依赖的能力，测试时可以塞假实现。
 type ChatGenerator interface {
 	Next(ctx context.Context, conv *Conversation, tools []ToolSchema) (Turn, error)
 	NewOneTurnChat(ctx context.Context, systemPrompt, userPrompt string) (string, error)

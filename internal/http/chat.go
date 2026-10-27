@@ -6,27 +6,27 @@ import (
 	"strconv"
 	"strings"
 
-	"recallweave/internal/ask"
+	"recallweave/internal/chat"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-type AskHandler struct {
-	agent *ask.Agent
+type ChatHandler struct {
+	agent *chat.Agent
 }
 
-func NewAskHandler(agent *ask.Agent) *AskHandler {
-	return &AskHandler{agent: agent}
+func NewChatHandler(agent *chat.Agent) *ChatHandler {
+	return &ChatHandler{agent: agent}
 }
 
-type askRequest struct {
+type chatRequest struct {
 	Question string `json:"question" binding:"required"`
 }
 
-// Ask 是用户问答的入口。handler 只做 JSON 绑定和状态码，
+// Chat 是用户问答的入口。handler 只做 JSON 绑定和状态码，
 // 往下传的是普通字符串，agent 不认识 gin。
-func (h *AskHandler) Ask(c *gin.Context) {
+func (h *ChatHandler) Chat(c *gin.Context) {
 	conversationID, err := strconv.ParseUint(c.Param("conversation_id"), 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -35,7 +35,7 @@ func (h *AskHandler) Ask(c *gin.Context) {
 		return
 	}
 
-	var req askRequest
+	var req chatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
@@ -50,14 +50,14 @@ func (h *AskHandler) Ask(c *gin.Context) {
 		})
 		return
 	}
-	// 业务层直接调 agent ? 
-	answer, err := h.agent.Ask(c.Request.Context(), question, uint(conversationID))
+	// 业务层直接调 agent ?
+	answer, err := h.agent.Chat(c.Request.Context(), question, uint(conversationID))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
 			return
 		}
-		if errors.Is(err, ask.ErrNoModel) {
+		if errors.Is(err, chat.ErrNoModel) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error": err.Error(),
 			})

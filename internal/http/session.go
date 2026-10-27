@@ -84,13 +84,18 @@ func (h *ConversationHandler) ListConversationMessages(c *gin.Context) {
 		return
 	}
 
-	exists, err := h.memory.ConversationExists(c.Request.Context(), conversationID)
+	conversation, err := h.memory.GetConversation(c.Request.Context(), conversationID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load conversation"})
 		return
 	}
-	if !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
+	inherited, err := conversation.InheritedMessages()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid fork snapshot"})
 		return
 	}
 
@@ -100,7 +105,7 @@ func (h *ConversationHandler) ListConversationMessages(c *gin.Context) {
 		return
 	}
 	if session == nil {
-		c.JSON(http.StatusOK, gin.H{"messages": []any{}})
+		c.JSON(http.StatusOK, gin.H{"messages": []any{}, "inherited_messages": inherited})
 		return
 	}
 
@@ -110,8 +115,9 @@ func (h *ConversationHandler) ListConversationMessages(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"session_id": session.ID,
-		"messages":   messageViews(messages),
+		"session_id":         session.ID,
+		"messages":           messageViews(messages),
+		"inherited_messages": inherited,
 	})
 }
 
