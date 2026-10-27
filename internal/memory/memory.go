@@ -18,9 +18,10 @@ import (
 const (
 	defaultSearchLimit = 5
 	maxSearchLimit     = 20
-	// vectorCandidateFactor 是数据库按距离先取出的候选倍数。
-	// 活跃度加权在这批结果上重排，不再把整表读进内存。
-	vectorCandidateFactor = 5
+	// recallCandidateFactor 为两路分别保留候选，融合后才截取最终 Top-K。
+	// 向量路仍只查询这一批，不重复放大候选数量。
+	recallCandidateFactor = 5
+	rrfRankConstant       = 60
 
 	// recallHalfLifeDays 是活跃度的半衰期。超过这个时长没被命中的记忆，权重按时间折半衰减。
 	recallHalfLifeDays = 7
@@ -117,13 +118,14 @@ func (m *MemoryManger) FindMemories(ctx context.Context, keyword string, tag sto
 	if limit > maxSearchLimit {
 		limit = maxSearchLimit
 	}
-	// 关键词检索
-	keywordHits, err := m.keywordSearch(ctx, keyword, tag, limit, history)
+	candidateLimit := limit * recallCandidateFactor
+	// 两路各自召回候选，不能提前裁到最终 Top-K。
+	keywordHits, err := m.keywordSearch(ctx, keyword, tag, candidateLimit, history)
 	if err != nil {
 		return nil, err
 	}
 	// 向量检索
-	vectorHits, err := m.vectorSearch(ctx, keyword, tag, limit, history)
+	vectorHits, err := m.vectorSearch(ctx, keyword, tag, candidateLimit, history)
 	if err != nil {
 		slog.Warn("vector search failed", "error", err)
 		vectorHits = nil
@@ -173,8 +175,8 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 		return nil, nil
 	}
 
-	// 多取几条再重排，避免活跃度加权只在最终的几条里打转。
-	hits, err := m.retriever.Search(ctx, keyword, tag, limit*vectorCandidateFactor, includeInactive)
+	// limit 已是候选窗口；调用方会在两路融合后裁到最终数量。
+	hits, err := m.retriever.Search(ctx, keyword, tag, limit, includeInactive)
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +194,9 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 	}
 	// 按照score得分 排记忆
 	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].score == scored[j].score {
+			return scored[i].memory.ID > scored[j].memory.ID
+		}
 		return scored[i].score > scored[j].score
 	})
 	if len(scored) > limit {
@@ -205,20 +210,64 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 	return ranked, nil
 }
 
-func mergeMemories(primary, extra []store.Memory, limit int) []store.Memory {
-	merged := make([]store.Memory, 0, limit)
-	seen := make(map[uint]struct{})
-	for _, group := range [][]store.Memory{primary, extra} {
-		for _, item := range group {
-			if _, ok := seen[item.ID]; ok {
+// mergeMemories uses equal-weight reciprocal rank fusion: sum(1/(60+rank)).
+// An item contributes at most once per route; rank starts at 1. This combines
+// positions rather than incomparable keyword/vector scores. Zero rank means
+// that the route did not return the item.
+func mergeMemories(vector, keyword []store.Memory, limit int) []store.Memory {
+	if limit <= 0 {
+		return nil
+	}
+	type candidate struct {
+		memory store.Memory
+		ranks  [2]int
+		score  float64
+		best   int
+	}
+	byID := make(map[uint]*candidate, len(vector)+len(keyword))
+	for route, group := range [][]store.Memory{vector, keyword} {
+		for i, item := range group {
+			entry := byID[item.ID]
+			if entry == nil {
+				entry = &candidate{memory: item, best: i + 1}
+				byID[item.ID] = entry
+			}
+			if entry.ranks[route] != 0 {
 				continue
 			}
-			seen[item.ID] = struct{}{}
-			merged = append(merged, item)
-			if len(merged) == limit {
-				return merged
+			rank := i + 1
+			entry.ranks[route] = rank
+			entry.score += 1 / float64(rrfRankConstant+rank)
+			if rank < entry.best {
+				entry.best = rank
 			}
 		}
+	}
+	ranked := make([]*candidate, 0, len(byID))
+	for _, entry := range byID {
+		ranked = append(ranked, entry)
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		// 优先用分数排
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		// 分数相同  再按照历史最佳排
+		if ranked[i].best != ranked[j].best {
+			return ranked[i].best < ranked[j].best
+		}
+		// 都相同按照
+		// 按照ID排
+		return ranked[i].memory.ID > ranked[j].memory.ID
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	merged := make([]store.Memory, 0, len(ranked))
+	for _, entry := range ranked {
+		merged = append(merged, entry.memory)
+		slog.Debug("memory recall fusion", "memory_id", entry.memory.ID,
+			"vector_rank", entry.ranks[0], "keyword_rank", entry.ranks[1], "rrf_score", entry.score)
 	}
 	return merged
 }
