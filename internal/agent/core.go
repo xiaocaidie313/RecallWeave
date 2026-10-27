@@ -99,6 +99,9 @@ func (a *Agent) Instructions() string {
 			}
 		}
 	}
+	if len(a.ExternalTools) > 0 {
+		b.WriteString("\n" + externalToolInstructions + "\n")
+	}
 	if a.Skills != nil {
 		items := a.Skills.List()
 		if len(items) > 0 {
