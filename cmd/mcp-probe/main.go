@@ -15,6 +15,7 @@ import (
 
 func main() {
 	endpoint := flag.String("url", "", "external MCP Streamable HTTP endpoint")
+	tokenEnv := flag.String("token-env", "RECALLWEAVE_EXTERNAL_MCP_TOKEN", "environment variable containing the optional bearer token")
 	flag.Parse()
 	if *endpoint == "" {
 		fmt.Fprintln(os.Stderr, "usage: go run ./cmd/mcp-probe -url https://example.com/mcp")
@@ -22,7 +23,10 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	client, err := mcp.ConnectHTTP(ctx, *endpoint, os.Getenv("RECALLWEAVE_EXTERNAL_MCP_TOKEN"))
+	if *tokenEnv != "" && os.Getenv(*tokenEnv) == "" {
+		fmt.Fprintf(os.Stderr, "warning: token environment variable %s is empty\n", *tokenEnv)
+	}
+	client, err := mcp.ConnectHTTP(ctx, *endpoint, os.Getenv(*tokenEnv))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

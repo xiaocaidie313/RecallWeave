@@ -106,14 +106,14 @@ func TestDeactivateMemoryRejectsInvalidArguments(t *testing.T) {
 func TestKeywordSearchVisibility(t *testing.T) {
 	manager, mock := lifecycleTestManager(t)
 	mock.ExpectQuery(`SELECT .* FROM "memories" WHERE status = \$1.*LIMIT \$4`).
-		WithArgs(store.MemoryActive, "%方案%", "%方案%", 5).
+		WithArgs(store.MemoryActive, "%方案%", "%方案%", 25).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(2, "active"))
 	items, err := manager.FindMemories(context.Background(), "方案", "", 5)
 	if err != nil || len(items) != 1 || items[0].ID != 2 {
 		t.Fatalf("default search: %+v %v", items, err)
 	}
 	mock.ExpectQuery(`SELECT .* FROM "memories" WHERE .*LIMIT \$3`).
-		WithArgs("%方案%", "%方案%", 5).
+		WithArgs("%方案%", "%方案%", 25).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(1, "inactive").AddRow(2, "active"))
 	items, err = manager.FindMemories(context.Background(), "方案", "", 5, true)
 	if err != nil || len(items) != 2 {

@@ -27,11 +27,17 @@ func TestExternalToolsAreSeparateAndCannotShadowLocalTools(t *testing.T) {
 	local := llm.Tool{Schema: llm.ToolSchema{Name: "search_memories"}, Run: func(context.Context, string) (string, error) { return "local", nil }}
 	remote := llm.Tool{Schema: llm.ToolSchema{Name: "mcp_ping"}, Run: func(context.Context, string) (string, error) { return "remote", nil }}
 	a := NewAgent(1, "recall", nil, "", 3, NewAbility("memory", "", "", ToolBox{local}))
+	if strings.Contains(a.Instructions(), externalToolInstructions) {
+		t.Fatal("external policy must not be injected when no external tools are configured")
+	}
 	if err := a.WithExternalTools([]llm.Tool{remote}); err != nil {
 		t.Fatal(err)
 	}
 	if len(a.Abilities) != 1 || len(a.ExternalTools) != 1 {
 		t.Fatalf("external MCP tools must not become abilities: %+v", a)
+	}
+	if !strings.Contains(a.Instructions(), externalToolInstructions) {
+		t.Fatal("external tools need explicit source, privacy and untrusted-content guidance")
 	}
 	result, err := a.Tools().Run(context.Background(), "mcp_ping", `{}`)
 	if err != nil || result != "remote" {
