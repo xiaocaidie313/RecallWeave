@@ -1,4 +1,4 @@
-package ask
+package chat
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	"recallweave/internal/watch/useage"
 )
 
-var ErrNoModel = errors.New("ask: llm is not configured")
+var ErrNoModel = errors.New("chat: llm is not configured")
 
 const defaultConversationTitle = "新对话"
 const maxConversationTitle = 60
@@ -80,7 +80,7 @@ func (a *Agent) model() llm.ChatGenerator {
 	return a.core.Model
 }
 
-func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (Answer, error) {
+func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) (Answer, error) {
 	requestStarted := time.Now()
 	var timings Timings
 	if a.model() == nil {
@@ -88,16 +88,20 @@ func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (
 	}
 
 	stageStarted := time.Now()
-	preload, sessionID, err := a.loadContext(ctx, conversationID, question)
+	preload, sessionID, conversation, visible, err := a.loadContext(ctx, conversationID, question)
 	timings.LoadContextMs = time.Since(stageStarted).Milliseconds()
 	if err != nil {
 		return Answer{}, err
 	}
 	// 请求结束后上下文会被取消，标题生成改用不会跟着取消的上下文，并写回数据库。
 	go a.generateTitle(context.WithoutCancel(ctx), conversationID, question)
+	core := a.core
+	if conversation != nil && conversation.IsBranch() {
+		core = branchCore(a.core, visible)
+	}
 
 	stageStarted = time.Now()
-	result, err := runtime.Run(ctx, a.core, runtime.Request{
+	result, err := runtime.Run(ctx, core, runtime.Request{
 		Input:          question,
 		ConversationID: conversationID,
 		SystemPrompt:   systemPrompt,
@@ -115,12 +119,14 @@ func (a *Agent) Ask(ctx context.Context, question string, conversationID uint) (
 		return Answer{}, err
 	}
 	timings.SaveTurnMs = time.Since(stageStarted).Milliseconds()
-	go a.extractSession(context.WithoutCancel(ctx), sessionID)
+	if conversation == nil || !conversation.IsBranch() {
+		go a.extractSession(context.WithoutCancel(ctx), sessionID)
+	}
 	stageStarted = time.Now()
 	a.condenseWindow(ctx, conversationID, sessionID)
 	timings.CondenseMs = time.Since(stageStarted).Milliseconds()
 	timings.TotalMs = time.Since(requestStarted).Milliseconds()
-	slog.Info("ask timing", "run_id", result.State.RunID, "total_ms", timings.TotalMs,
+	slog.Info("chat timing", "run_id", result.State.RunID, "total_ms", timings.TotalMs,
 		"load_context_ms", timings.LoadContextMs, "agent_ms", timings.AgentMs,
 		"save_turn_ms", timings.SaveTurnMs, "condense_ms", timings.CondenseMs)
 

@@ -1,4 +1,4 @@
-package ask
+package chat
 
 import (
 	"context"
@@ -47,15 +47,15 @@ func recordingTool(name, response string, gotArguments *string) llm.Tool {
 	}
 }
 
-func newAskService(model llm.ChatGenerator, abilities ...*agent.Ability) *Agent {
+func newChatService(model llm.ChatGenerator, abilities ...*agent.Ability) *Agent {
 	return NewAgent(agent.NewAgent(1, "recall", model, "test", 3, abilities...), nil, nil)
 }
 
-func TestAskReturnsAnswerWithoutTools(t *testing.T) {
+func TestChatReturnsAnswerWithoutTools(t *testing.T) {
 	model := &fakeChatGenerator{turns: []llm.Turn{{Content: "没有相关记录。"}}}
-	service := newAskService(model)
+	service := newChatService(model)
 
-	answer, err := service.Ask(context.Background(), "我上次怎么说的", 0)
+	answer, err := service.Chat(context.Background(), "我上次怎么说的", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestAskReturnsAnswerWithoutTools(t *testing.T) {
 	}
 }
 
-func TestAskRunsToolThenAnswers(t *testing.T) {
+func TestChatRunsToolThenAnswers(t *testing.T) {
 	hits := ability.SearchMemoriesResult{Memories: []ability.MemoryHit{{
 		MemoryID:  7,
 		SessionID: 3,
@@ -102,7 +102,7 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 		{Content: "你说过 cmd 是可执行入口。"},
 	}}
 
-	answer, err := newAskService(model, memory).Ask(context.Background(), "cmd 目录是干什么的", 0)
+	answer, err := newChatService(model, memory).Chat(context.Background(), "cmd 目录是干什么的", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,8 +131,8 @@ func TestAskRunsToolThenAnswers(t *testing.T) {
 	}
 }
 
-func TestAskWithoutModel(t *testing.T) {
-	if _, err := newAskService(nil).Ask(context.Background(), "问题", 0); !errors.Is(err, ErrNoModel) {
+func TestChatWithoutModel(t *testing.T) {
+	if _, err := newChatService(nil).Chat(context.Background(), "问题", 0); !errors.Is(err, ErrNoModel) {
 		t.Fatalf("expected ErrNoModel, got %v", err)
 	}
 }

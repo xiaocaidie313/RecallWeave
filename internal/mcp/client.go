@@ -11,7 +11,8 @@ import (
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// McpClient owns one connection to an external Streamable HTTP MCP server.
+// McpClient owns connections to external Streamable HTTP MCP servers.
+// Client/Session are the first successful connection; others holds the rest.
 type McpClient struct {
 	Client  *gomcp.Client
 	Session *gomcp.ClientSession

@@ -30,7 +30,7 @@ func (h *ExtractHandler) ExtractSession(c *gin.Context) {
 	}
 
 	count, err := h.excuter.ExtractSessionToMemory(c.Request.Context(), uint(sessionID))
-	if errors.Is(err, store.ErrMemoryHistoryProtected) {
+	if errors.Is(err, store.ErrMemoryHistoryProtected) || errors.Is(err, store.ErrBranchMemoryPrivate) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
