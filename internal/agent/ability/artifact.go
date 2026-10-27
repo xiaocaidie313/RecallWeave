@@ -47,6 +47,7 @@ func NewArtifactAbility(store artifactBackend) *agent.Ability {
 			if err := decoder.Decode(&args); err != nil {
 				return "", fmt.Errorf("save_artifact: invalid arguments: %w", err)
 			}
+			// 检查是否读完了 只有一个json文件
 			if err := decoder.Decode(new(any)); err != io.EOF {
 				return "", fmt.Errorf("save_artifact: expected exactly one JSON object")
 			}
