@@ -23,6 +23,7 @@ type Conversation struct {
 	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
+// 传递切片  上下文消息
 type ContextMessage struct {
 	SessionID uint   `json:"session_id"`
 	Seq       int    `json:"seq"`

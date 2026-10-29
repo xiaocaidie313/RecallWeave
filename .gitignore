@@ -9,6 +9,7 @@ config/config.yaml
 bin/
 *.exe
 *.test
+*.md
 
 # Editor and operating-system files
 .idea/

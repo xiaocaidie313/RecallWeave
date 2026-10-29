@@ -14,6 +14,7 @@ type Config struct {
 	Skills      SkillsConfig      `yaml:"skills"`
 	Artifacts   ArtifactsConfig   `yaml:"artifacts"`
 	ExternalMCP ExternalMCPConfig `yaml:"external_mcp"`
+	Subagents   SubagentsConfig   `yaml:"subagents"`
 }
 
 // ExternalMCPConfig enables one remote Streamable HTTP MCP server. Empty URL
@@ -86,6 +87,9 @@ func LoadConfig(configPath string) (*Config, error) {
 	}
 	if err := yaml.Unmarshal(cfgFile, &cfg); err != nil {
 		return &Config{}, fmt.Errorf("failed to unmarshal config file: %w", err)
+	}
+	if err := cfg.Subagents.Validate(); err != nil {
+		return &Config{}, fmt.Errorf("invalid subagent configuration: %w", err)
 	}
 	return &cfg, nil
 }

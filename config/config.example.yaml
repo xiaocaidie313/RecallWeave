@@ -26,3 +26,12 @@ skills:
 #   token_env: RECALLWEAVE_EXTERNAL_MCP_TOKEN
 #   tools:
 #     - search
+
+# 可选替代：Tavily 远程搜索与正文提取（与上面的 external_mcp 二选一）。
+# 先在启动服务的进程环境设置 TAVILY_API_KEY；实际密钥不要放进 URL 或 YAML。
+external_mcp:
+  url: https://mcp.tavily.com/mcp/
+  token_env: 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
+  tools:
+    - tavily_search
+    - tavily_extract

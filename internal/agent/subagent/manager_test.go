@@ -42,6 +42,35 @@ func managerReadTool(name string, run llm.ToolFunc) llm.Tool {
 	return llm.Tool{Schema: llm.ToolSchema{Name: name}, Run: run}
 }
 
+func testManager(t *testing.T, config Config) *Manager {
+	t.Helper()
+	manager, err := NewManager(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manager
+}
+
+func TestResearcherRetainsExternalToolInstructions(t *testing.T) {
+	parent := agent.NewAgent(1, "parent", nil, "", 6,
+		agent.NewAbility("memory", "", "", agent.ToolBox{managerReadTool("get_messages", nil)}))
+	parent.ExternalTools = []llm.Tool{managerReadTool("mcp_tavily_search", nil), managerReadTool("mcp_write_file", nil)}
+	manager := testManager(t, Config{})
+	child := manager.newChild(parent, manager.presets[manager.DefaultAgent()])
+	if len(child.ExternalTools) != 1 || child.ExternalTools[0].Schema.Name != "mcp_tavily_search" {
+		t.Fatalf("allowed remote reader lost its external classification: %+v", child.ExternalTools)
+	}
+	instructions := child.Instructions()
+	for _, rule := range []string{"外部工具与资料规则", "不发送完整聊天、记忆原文、密钥", "不可信资料"} {
+		if !strings.Contains(instructions, rule) {
+			t.Fatalf("child lost external-tool policy %q", rule)
+		}
+	}
+	if len(parent.ExternalTools) != 2 {
+		t.Fatal("shared parent external tools were mutated")
+	}
+}
+
 func TestDelegateRunsIndependentResearchLoop(t *testing.T) {
 	var childConversation *llm.Conversation
 	modelCalls, toolCalls := 0, 0
@@ -76,7 +105,7 @@ func TestDelegateRunsIndependentResearchLoop(t *testing.T) {
 		return `{"session_id":8,"messages":[{"seq":1,"role":"user","content":"使用 Go"}]}`, nil
 	}))
 	request := runtime.DelegationRequest{Task: "核查后端语言", Context: "只核查指定来源", ExpectedOutput: "结论和消息位置"}
-	result, err := NewManager(Config{}).Delegate(context.Background(), parent, request)
+	result, err := testManager(t, Config{}).Delegate(context.Background(), parent, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +164,7 @@ func TestDelegateEnforcesReadOnlyToolScopeEvenForUnexpectedCalls(t *testing.T) {
 		}
 		return llm.Turn{ToolCalls: calls}, nil
 	}}
-	result, err := NewManager(Config{}).Delegate(context.Background(), managerParent(model, parentTools...), runtime.DelegationRequest{Task: "read only"})
+	result, err := testManager(t, Config{}).Delegate(context.Background(), managerParent(model, parentTools...), runtime.DelegationRequest{Task: "read only"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +211,7 @@ func TestDelegatePreservesBranchSnapshotReadScope(t *testing.T) {
 	parent.Agent.Abilities = []*agent.Ability{ability.NewBranchContextAbility([]store.ContextMessage{
 		{SessionID: 10, Seq: 1, Role: "user", Content: "frozen prefix"},
 	})}
-	result, err := NewManager(Config{}).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "核查分支"})
+	result, err := testManager(t, Config{}).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "核查分支"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +231,7 @@ func TestDelegateTimeoutPreservesFailedRunAndUsage(t *testing.T) {
 		<-ctx.Done()
 		return llm.Turn{Usage: llm.Usage{PromptTokens: 9}}, ctx.Err()
 	}}
-	result, err := NewManager(Config{Timeout: 10 * time.Millisecond}).Delegate(context.Background(), managerParent(model), runtime.DelegationRequest{Task: "等待模型"})
+	result, err := testManager(t, Config{Timeout: 10 * time.Millisecond}).Delegate(context.Background(), managerParent(model), runtime.DelegationRequest{Task: "等待模型"})
 	if !errors.Is(err, context.DeadlineExceeded) || result.State.Status != runtime.RunCancelled || result.State.RunID == "" || result.State.ParentRunID != "parent-run" {
 		t.Fatalf("timeout lost child state: %+v err=%v", result, err)
 	}
@@ -229,7 +258,7 @@ func TestDelegatePropagatesParentCancellationToChildTool(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		result, err := NewManager(Config{Timeout: time.Second}).Delegate(ctx, parent, runtime.DelegationRequest{Task: "等待原文"})
+		result, err := testManager(t, Config{Timeout: time.Second}).Delegate(ctx, parent, runtime.DelegationRequest{Task: "等待原文"})
 		done <- outcome{result, err}
 	}()
 	select {
@@ -255,7 +284,7 @@ func TestDelegateEnforcesChildRoundLimit(t *testing.T) {
 		return llm.Turn{ToolCalls: []llm.ToolCall{{ID: "read", Name: "get_messages", Arguments: `{}`}}}, nil
 	}}
 	parent := managerParent(model, managerReadTool("get_messages", func(context.Context, string) (string, error) { return `{}`, nil }))
-	result, err := NewManager(Config{MaxRounds: 2}).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "不会结束的查询"})
+	result, err := testManager(t, Config{MaxRounds: 2}).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "不会结束的查询"})
 	if err == nil || !strings.Contains(err.Error(), "maximum tool rounds") || result.State.Status != runtime.RunFailed || calls != 2 || len(result.State.Calls) != 2 || len(result.State.Steps) != 2 {
 		t.Fatalf("child round budget not enforced: %+v err=%v calls=%d", result, err, calls)
 	}
@@ -275,7 +304,7 @@ func TestManagerConcurrentDelegationsKeepIndependentRunsAndScopes(t *testing.T) 
 		}
 		return llm.Turn{Content: "done"}, nil
 	}}
-	manager := NewManager(Config{})
+	manager := testManager(t, Config{})
 	var toolCalls atomic.Int32
 	type outcome struct {
 		index  int
@@ -328,10 +357,10 @@ func TestDelegateRejectsMissingParentAndTask(t *testing.T) {
 		task    string
 	}{
 		{"nil manager", nil, valid, "task"},
-		{"nil agent", NewManager(Config{}), runtime.DelegationParent{RunID: "parent"}, "task"},
-		{"nil model", NewManager(Config{}), managerParent(nil), "task"},
-		{"no parent run", NewManager(Config{}), runtime.DelegationParent{Agent: valid.Agent}, "task"},
-		{"empty task", NewManager(Config{}), valid, " \n "},
+		{"nil agent", testManager(t, Config{}), runtime.DelegationParent{RunID: "parent"}, "task"},
+		{"nil model", testManager(t, Config{}), managerParent(nil), "task"},
+		{"no parent run", testManager(t, Config{}), runtime.DelegationParent{Agent: valid.Agent}, "task"},
+		{"empty task", testManager(t, Config{}), valid, " \n "},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

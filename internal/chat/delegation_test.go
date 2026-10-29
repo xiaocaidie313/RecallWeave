@@ -27,6 +27,25 @@ import (
 // This exercises actual SDK request history against a local fake endpoint.
 // No paid model, external MCP or real database is used.
 func TestDelegationThroughModelHTTP(t *testing.T) {
+	for _, name := range []string{"", "reviewer"} {
+		t.Run("agent="+name, func(t *testing.T) { delegationThroughModelHTTP(t, name) })
+	}
+}
+
+func testDelegationManager(t *testing.T, cfg subagent.Config) *subagent.Manager {
+	t.Helper()
+	manager, err := subagent.NewManager(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manager
+}
+
+func delegationThroughModelHTTP(t *testing.T, agentName string) {
+	wantedAgent := agentName
+	if wantedAgent == "" {
+		wantedAgent = "researcher"
+	}
 	var mu sync.Mutex
 	var parentCalls, childCalls, reads int
 	var capturedErrors []string
@@ -57,9 +76,10 @@ func TestDelegationThroughModelHTTP(t *testing.T) {
 		if isParent {
 			parentCalls++
 			if parentCalls == 1 {
+				args, _ := json.Marshal(runtime.DelegationRequest{Agent: agentName, Task: "核查原文", Context: "PUBLIC_CONTEXT", ExpectedOutput: "结论和来源"})
 				message["tool_calls"] = []any{map[string]any{"id": "delegate", "type": "function", "function": map[string]any{
 					"name":      runtime.DelegateTaskToolName,
-					"arguments": `{"task":"核查原文","context":"PUBLIC_CONTEXT","expected_output":"结论和来源"}`,
+					"arguments": string(args),
 				}}}
 			} else {
 				found := false
@@ -73,7 +93,7 @@ func TestDelegationThroughModelHTTP(t *testing.T) {
 					}
 					var result runtime.DelegationResult
 					if json.Unmarshal([]byte(text), &result) == nil && result.ChildRunID != "" {
-						found = result.Status == runtime.RunCompleted && result.Summary == "已核对原文" && len(result.Sources) == 1
+						found = result.Agent == wantedAgent && result.Status == runtime.RunCompleted && result.Summary == "已核对原文" && len(result.Sources) == 1
 						if strings.Contains(text, "FULL_CHILD_TOOL_BODY") {
 							capturedErrors = append(capturedErrors, "raw child trace was returned to parent")
 						}
@@ -86,6 +106,13 @@ func TestDelegationThroughModelHTTP(t *testing.T) {
 			}
 		} else {
 			childCalls++
+			if wantedAgent == "reviewer" {
+				for _, tool := range request.Tools {
+					if tool.Function.Name == "search_memories" {
+						capturedErrors = append(capturedErrors, "reviewer received researcher-only search tool")
+					}
+				}
+			}
 			encoded, _ := json.Marshal(request.Messages)
 			if strings.Contains(string(encoded), "ROOT_PRIVATE_MARKER") {
 				capturedErrors = append(capturedErrors, "parent history leaked to child")
@@ -117,11 +144,12 @@ func TestDelegationThroughModelHTTP(t *testing.T) {
 		reads++
 		return `{"session_id":8,"messages":[{"seq":3,"content":"FULL_CHILD_TOOL_BODY"}]}`, nil
 	}}
-	core := agent.NewAgent(1, "recall", client, "", 3, agent.NewAbility("memory", "", "", agent.ToolBox{read}))
+	search := llm.Tool{Schema: llm.ToolSchema{Name: "search_memories", Parameters: map[string]any{"type": "object"}}, Run: func(context.Context, string) (string, error) { return "{}", nil }}
+	core := agent.NewAgent(1, "recall", client, "", 3, agent.NewAbility("memory", "", "", agent.ToolBox{read, search}))
 	result, err := runtime.Run(context.Background(), core, runtime.Request{
 		Input: "请单独核查", ConversationID: 7,
 		Preload:   runtime.Preload{History: []llm.Message{{Role: "user", Content: "ROOT_PRIVATE_MARKER"}}},
-		Delegator: subagent.NewManager(subagent.Config{MaxRounds: 3}),
+		Delegator: testDelegationManager(t, subagent.Config{MaxRounds: 3}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +161,7 @@ func TestDelegationThroughModelHTTP(t *testing.T) {
 		t.Fatalf("unexpected calls: parent=%d child=%d reads=%d", parentCalls, childCalls, reads)
 	}
 	child := result.State.Children[0]
-	if child.State.ParentRunID != result.State.RunID || child.State.RunID == result.State.RunID || child.State.ConversationID != 7 {
+	if child.State.ParentRunID != result.State.RunID || child.State.RunID == result.State.RunID || child.State.ConversationID != 7 || child.State.AgentName != wantedAgent {
 		t.Fatalf("invalid child attribution: %+v", child.State)
 	}
 	answer := answerFromResult(result)
@@ -159,7 +187,7 @@ func TestBranchDelegationPreservesScopedMessageReader(t *testing.T) {
 	}
 	core := agent.NewAgent(1, "recall", model, "", 3, agent.NewAbility("memory", "", "", globalTools))
 	scoped := branchCore(core, []store.ContextMessage{{SessionID: 10, Seq: 1, Role: "user", Content: "分叉前原文"}})
-	result, err := runtime.Run(context.Background(), scoped, runtime.Request{Input: "调查", Delegator: subagent.NewManager(subagent.Config{})})
+	result, err := runtime.Run(context.Background(), scoped, runtime.Request{Input: "调查", Delegator: testDelegationManager(t, subagent.Config{})})
 	if err != nil {
 		t.Fatal(err)
 	}

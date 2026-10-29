@@ -63,7 +63,11 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 	}
 	tools.Register(planTool(&state))
 	if req.Delegator != nil && req.ParentRunID == "" {
-		tools.Register(delegationTool(&state, a, req.Delegator))
+		tool, err := delegationTool(&state, a, req.Delegator)
+		if err != nil {
+			return fail(0, err, RunFailed)
+		}
+		tools.Register(tool)
 		req.SystemPrompt += "\n" + delegationInstructions
 	}
 	maxRounds := a.Rounds()
