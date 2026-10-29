@@ -31,7 +31,9 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 	}
 	state := RunState{
 		RunID:          runID,
+		ParentRunID:    req.ParentRunID,
 		AgentID:        a.ID,
+		AgentName:      a.Name,
 		ConversationID: req.ConversationID,
 		Input:          req.Input,
 		Status:         RunRunning,
@@ -55,11 +57,15 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 
 	tools := a.Tools()
 	for _, schema := range tools.Schemas() {
-		if schema.Name == plan.ToolName {
-			return fail(0, fmt.Errorf("runtime: tool name %q is reserved for runtime planning", plan.ToolName), RunFailed)
+		if schema.Name == plan.ToolName || schema.Name == DelegateTaskToolName {
+			return fail(0, fmt.Errorf("runtime: tool name %q is reserved for runtime", schema.Name), RunFailed)
 		}
 	}
 	tools.Register(planTool(&state))
+	if req.Delegator != nil && req.ParentRunID == "" {
+		tools.Register(delegationTool(&state, a, req.Delegator))
+		req.SystemPrompt += "\n" + delegationInstructions
+	}
 	maxRounds := a.Rounds()
 	conversation := buildConversation(a, req)
 
@@ -88,6 +94,9 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 			}
 			return fail(round, wrapped, status)
 		}
+		if err := ctx.Err(); err != nil {
+			return fail(round, err, RunCancelled)
+		}
 
 		if len(turn.ToolCalls) == 0 {
 			if strings.TrimSpace(turn.Content) == "" {
@@ -109,6 +118,9 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 		}
 
 		for _, call := range turn.ToolCalls {
+			if err := ctx.Err(); err != nil {
+				return fail(round, err, RunCancelled)
+			}
 			step := RunStep{
 				Round:     round,
 				ToolName:  call.Name,
@@ -137,6 +149,9 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 			step.Result = output
 			state.Steps = append(state.Steps, step)
 			conversation.AddToolResult(call.ID, output)
+		}
+		if err := ctx.Err(); err != nil {
+			return fail(round, err, RunCancelled)
 		}
 	}
 

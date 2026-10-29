@@ -20,7 +20,9 @@ const (
 // RunState 是一次 Run 的可变状态，每次 Run 独立一份，不能放在共享的 Agent 上。
 type RunState struct {
 	RunID          string                  `json:"run_id"`
+	ParentRunID    string                  `json:"parent_run_id,omitempty"`
 	AgentID        int64                   `json:"agent_id"`
+	AgentName      string                  `json:"agent_name,omitempty"`
 	ConversationID uint                    `json:"conversation_id"`
 	Input          string                  `json:"input"`
 	Status         RunStatus               `json:"status"`
@@ -28,6 +30,7 @@ type RunState struct {
 	Steps          []RunStep               `json:"steps"`
 	Errors         []RunError              `json:"errors"`
 	Calls          []useage.ModelCallStats `json:"calls,omitempty"`
+	Children       []RunResult             `json:"children,omitempty"`
 	Plan           *plan.Plan              `json:"plan,omitempty"`
 	StartedAt      time.Time               `json:"started_at"`
 	FinishedAt     *time.Time              `json:"finished_at,omitempty"`
@@ -53,12 +56,34 @@ type RunError struct {
 // Request 是调用方传入的一次运行输入。
 type Request struct {
 	Input          string
+	ParentRunID    string
 	ConversationID uint
 	SystemPrompt   string
 	Preload        Preload
+	Delegator      Delegator
 }
 
 type RunResult struct {
 	Content string   `json:"content"`
 	State   RunState `json:"state"`
+}
+
+// AllCalls includes child calls without changing Calls, which always belongs
+// to this Run alone. Failed child Runs still contribute their actual usage.
+func (s RunState) AllCalls() []useage.ModelCallStats {
+	calls := append([]useage.ModelCallStats(nil), s.Calls...)
+	for _, child := range s.Children {
+		calls = append(calls, child.State.AllCalls()...)
+	}
+	return calls
+}
+
+// AllSteps makes successfully retrieved child evidence available to the same
+// citation checks used for a parent's own tools.
+func (s RunState) AllSteps() []RunStep {
+	steps := append([]RunStep(nil), s.Steps...)
+	for _, child := range s.Children {
+		steps = append(steps, child.State.AllSteps()...)
+	}
+	return steps
 }

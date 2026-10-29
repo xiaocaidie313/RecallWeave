@@ -65,12 +65,20 @@ type Agent struct {
 	core      *agent.Agent
 	memory    *memory.MemoryManger
 	extracter *extract.ExtractExcuter
+	delegator runtime.Delegator
 }
 
 // core 或 core.Model 为 nil 表示没配 api_key，这时问答直接报错。
 // 提炼有本地兜底，问答没有——没有模型就没法组织回答。
 func NewAgent(core *agent.Agent, memoryManger *memory.MemoryManger, extracter *extract.ExtractExcuter) *Agent {
 	return &Agent{core: core, memory: memoryManger, extracter: extracter}
+}
+
+// WithDelegator is configured once during assembly. Per-run delegation state
+// stays inside runtime.Run, including for already-scoped branch Agents.
+func (a *Agent) WithDelegator(delegator runtime.Delegator) *Agent {
+	a.delegator = delegator
+	return a
 }
 
 func (a *Agent) model() llm.ChatGenerator {
@@ -106,6 +114,7 @@ func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) 
 		ConversationID: conversationID,
 		SystemPrompt:   systemPrompt,
 		Preload:        preload,
+		Delegator:      a.delegator,
 	})
 	timings.AgentMs = time.Since(stageStarted).Milliseconds()
 	logToolErrors(result.State)
@@ -136,10 +145,11 @@ func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) 
 }
 
 func answerFromResult(result runtime.RunResult) Answer {
-	total := useage.Sum(result.State.Calls)
+	calls := result.State.AllCalls()
+	total := useage.Sum(calls)
 	return Answer{
 		Text:      result.Content,
-		Citations: citationsFromSteps(result.State.Steps),
+		Citations: citationsFromSteps(result.State.AllSteps()),
 		Rounds:    result.State.CurrentRound,
 		RunID:     result.State.RunID,
 		Usage: Usage{
@@ -148,7 +158,7 @@ func answerFromResult(result runtime.RunResult) Answer {
 			ReasoningTokens:  total.Usage.ReasoningTokens,
 			CachedTokens:     total.Usage.CachedTokens,
 			LatencyMs:        total.LatencyMs,
-			Calls:            len(result.State.Calls),
+			Calls:            len(calls),
 		},
 	}
 }
@@ -157,14 +167,18 @@ func (a *Agent) saveRun(ctx context.Context, result runtime.RunResult) {
 	if a.memory == nil || result.State.RunID == "" {
 		return
 	}
+	for _, child := range result.State.Children {
+		a.saveRun(ctx, child)
+	}
 	encoded, err := json.Marshal(result.State)
 	if err != nil {
 		slog.Warn("encode run state failed", "run_id", result.State.RunID, "error", err)
 		return
 	}
-	total := useage.Sum(result.State.Calls)
+	total := useage.Sum(result.State.AllCalls())
 	if err := a.memory.SaveAgentRun(ctx, store.AgentRun{
 		RunID:            result.State.RunID,
+		ParentRunID:      result.State.ParentRunID,
 		ConversationID:   result.State.ConversationID,
 		Status:           string(result.State.Status),
 		Input:            result.State.Input,
