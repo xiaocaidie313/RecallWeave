@@ -9,6 +9,7 @@ import (
 type AgentRun struct {
 	ID               uint            `gorm:"primaryKey" json:"id"`
 	RunID            string          `gorm:"uniqueIndex;size:64;not null" json:"run_id"`
+	ParentRunID      string          `gorm:"index;size:64" json:"parent_run_id,omitempty"`
 	ConversationID   uint            `gorm:"index" json:"conversation_id"`
 	Status           string          `gorm:"size:32;index" json:"status"`
 	Input            string          `gorm:"type:text" json:"input"`
