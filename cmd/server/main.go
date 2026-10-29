@@ -34,6 +34,11 @@ func main() {
 		logger.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
+	delegator, err := newSubagentManager(cfg.Subagents)
+	if err != nil {
+		logger.Error("failed to configure subagents", "error", err)
+		os.Exit(1)
+	}
 
 	// 连接数据库并建表
 	database, err := db.NewDB(cfg.Database)
@@ -121,7 +126,8 @@ func main() {
 		}
 		logger.Info("external MCP tools registered", "count", len(remoteTools))
 	}
-	chatService := chat.NewAgent(recall, memoryManger, extracter)
+	chatService := chat.NewAgent(recall, memoryManger, extracter).
+		WithDelegator(delegator)
 
 	r := apphttp.NewRouter(
 		apphttp.NewIngestHandler(ingest.NewService(database, extracter)),
