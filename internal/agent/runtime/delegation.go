@@ -23,7 +23,7 @@ const delegationInstructions = `可用 delegate_task 委派一个边界明确的
 
 // DelegationRequest contains model-authored task data, never execution policy.
 type DelegationRequest struct {
-	Agent          string `json:"agent,omitempty"` // 
+	Agent          string `json:"agent,omitempty"` //
 	Task           string `json:"task"`
 	Context        string `json:"context,omitempty"`
 	ExpectedOutput string `json:"expected_output,omitempty"`
@@ -58,15 +58,17 @@ type DelegationCatalog interface {
 }
 
 type DelegationResult struct {
-	ChildRunID string            `json:"child_run_id"`
-	Agent      string            `json:"agent,omitempty"`
-	Status     RunStatus         `json:"status"`
-	Summary    string            `json:"summary"`
-	Sources    []Source          `json:"sources"`
-	Usage      useage.TokenUsage `json:"usage"`
-	Calls      int               `json:"calls"`
-	LatencyMs  int64             `json:"latency_ms"`
-	Error      string            `json:"error,omitempty"`
+	ChildRunID  string            `json:"child_run_id"`
+	SubagentID  string            `json:"subagent_id,omitempty"`
+	CanFollowUp bool              `json:"can_follow_up"`
+	Agent       string            `json:"agent,omitempty"`
+	Status      RunStatus         `json:"status"`
+	Summary     string            `json:"summary"`
+	Sources     []Source          `json:"sources"`
+	Usage       useage.TokenUsage `json:"usage"`
+	Calls       int               `json:"calls"`
+	LatencyMs   int64             `json:"latency_ms"`
+	Error       string            `json:"error,omitempty"`
 }
 
 func delegationTool(state *RunState, parent *agent.Agent, delegator Delegator) (llm.Tool, error) {
@@ -141,22 +143,28 @@ func delegationTool(state *RunState, parent *agent.Agent, delegator Delegator) (
 				return "", fmt.Errorf("delegate_task: child did not produce a Run")
 			}
 			state.Children = append(state.Children, child)
-			calls := child.State.AllCalls()
-			total := useage.Sum(calls)
-			// 子 agent 返回个 父的结果
-			reply := DelegationResult{
-				ChildRunID: child.State.RunID, Agent: child.State.AgentName, Status: child.State.Status,
-				Summary: boundedText(child.Content, 16<<10), Sources: SourcesFromSteps(child.State.Steps),
-				Usage: total.Usage, Calls: len(calls), LatencyMs: total.LatencyMs,
-			}
-			if runErr != nil {
-				reply.Error = boundedText(runErr.Error(), 2<<10)
-			}
-			encoded, err := json.Marshal(reply)
 			// 返回给父 agent 一个子agent runtime的 运行结果
-			return string(encoded), err
+			return encodeDelegationResult(child, runErr)
 		},
 	}, nil
+}
+
+func encodeDelegationResult(child RunResult, runErr error) (string, error) {
+	calls := child.State.AllCalls()
+	total := useage.Sum(calls)
+	reply := DelegationResult{
+		ChildRunID: child.State.RunID, SubagentID: child.State.SubagentID,
+		// 有subagentID 有切片 没有错误 说明可以续期
+		CanFollowUp: child.State.SubagentID != "" && child.State.ContextSnapshot != nil && child.State.ContextError == "",
+		Agent:       child.State.AgentName, Status: child.State.Status,
+		Summary: boundedText(child.Content, 16<<10), Sources: SourcesForRun(child.State),
+		Usage: total.Usage, Calls: len(calls), LatencyMs: total.LatencyMs,
+	}
+	if runErr != nil {
+		reply.Error = boundedText(runErr.Error(), 2<<10)
+	}
+	encoded, err := json.Marshal(reply)
+	return string(encoded), err
 }
 
 func decodeDelegation(arguments string) (DelegationRequest, error) {

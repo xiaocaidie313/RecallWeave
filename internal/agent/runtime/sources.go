@@ -9,13 +9,36 @@ import (
 // Source identifies retrieved material, not a model-authored citation or a
 // claim that the material proves the answer. Only known read tools qualify.
 type Source struct {
-	Kind      string `json:"kind"`
-	Tool      string `json:"tool"`
-	SessionID uint   `json:"session_id,omitempty"`
-	SeqStart  int    `json:"seq_start,omitempty"`
-	SeqEnd    int    `json:"seq_end,omitempty"`
-	URL       string `json:"url,omitempty"`
-	Title     string `json:"title,omitempty"`
+	SourceRunID string `json:"source_run_id,omitempty"`
+	Kind        string `json:"kind"`
+	Tool        string `json:"tool"`
+	SessionID   uint   `json:"session_id,omitempty"`
+	SeqStart    int    `json:"seq_start,omitempty"`
+	SeqEnd      int    `json:"seq_end,omitempty"`
+	URL         string `json:"url,omitempty"`
+	Title       string `json:"title,omitempty"`
+}
+
+// SourcesForRun preserves where inherited material was actually fetched while
+// leaving model-call accounting local to the new Run. Fresh sources have
+// priority within the bounded result so old history cannot hide new evidence.
+func SourcesForRun(state RunState) []Source {
+	sources := make([]Source, 0)
+	seen := make(map[Source]bool)
+	add := func(source Source) {
+		if !seen[source] && len(sources) < 32 {
+			seen[source] = true
+			sources = append(sources, source)
+		}
+	}
+	for _, source := range SourcesFromSteps(state.Steps) {
+		source.SourceRunID = state.RunID
+		add(source)
+	}
+	for _, source := range state.InheritedSources {
+		add(source)
+	}
+	return sources
 }
 
 func SourcesFromSteps(steps []RunStep) []Source {
@@ -53,6 +76,7 @@ func SourcesFromSteps(steps []RunStep) []Source {
 			}
 			sort.Ints(ordered)
 			for i := 0; i < len(ordered); {
+				// 连续的seq 合并成一个区间  [1,2,3,4,5] -> [1,5]
 				start, end := ordered[i], ordered[i]
 				i++
 				for i < len(ordered) && ordered[i] == end+1 {

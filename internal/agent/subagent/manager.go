@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"recallweave/internal/agent"
@@ -25,6 +26,10 @@ type Manager struct {
 	agentIDs     map[string]int64
 	order        []string
 	defaultAgent string
+	subagentSessionsStore     SubagentSessionStore
+	activeMu     sync.Mutex
+	active       map[string]bool
+	unsaved      map[string]unsavedCheckpoint
 }
 
 func NewManager(config Config) (*Manager, error) {
@@ -50,6 +55,8 @@ func NewManager(config Config) (*Manager, error) {
 		presets:      make(map[string]Preset, len(config.Presets)),
 		agentIDs:     make(map[string]int64, len(config.Presets)),
 		defaultAgent: config.DefaultAgent,
+		active:       make(map[string]bool),
+		unsaved:      make(map[string]unsavedCheckpoint),
 	}
 	for index, preset := range config.Presets {
 		if preset.MaxRounds == 0 {
@@ -121,15 +128,17 @@ func (m *Manager) Delegate(ctx context.Context, parent runtime.DelegationParent,
 	if !exists {
 		return runtime.RunResult{}, fmt.Errorf("subagent: preset %q is not registered", name)
 	}
-	child := m.newChild(parent.Agent, preset)
-	childCtx, cancel := context.WithTimeout(ctx, preset.Timeout)
-	defer cancel()
-	// No parent Preload or Delegator: fresh context and one delegation level.
-	// 运行子 Agent
-	return runtime.Run(childCtx, child, runtime.Request{
-		ParentRunID: parent.RunID, ConversationID: parent.ConversationID,
-		Input: taskInput(request),
-	})
+	if m.ContinuationsEnabled() {
+		if parent.ConversationID == 0 {
+			return runtime.RunResult{}, fmt.Errorf("subagent: a conversation is required for a persistent child")
+		}
+		id, err := newSubagentID()
+		if err != nil {
+			return runtime.RunResult{}, err
+		}
+		return m.executeSession(ctx, parent, taskInput(request), request.Task, preset, id, nil)
+	}
+	return m.executeSession(ctx, parent, taskInput(request), request.Task, preset, "", nil)
 }
 
 func (m *Manager) newChild(parent *agent.Agent, preset Preset) *agent.Agent {
