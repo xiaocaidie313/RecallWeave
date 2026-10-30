@@ -9,6 +9,7 @@ import (
 
 	"recallweave/internal/agent"
 	"recallweave/internal/agent/ability"
+	"recallweave/internal/agent/subagent"
 	"recallweave/internal/artifact"
 	"recallweave/internal/chat"
 	"recallweave/internal/config"
@@ -51,6 +52,7 @@ func main() {
 		logger.Error("failed to migrate database", "error", err)
 		os.Exit(1)
 	}
+	delegator.WithSubagentSessions(subagent.NewSubagentSessionStore(database))
 
 	// 没配 api_key 时提炼退回整段兜底，问答直接不可用
 	var client *llm.Client

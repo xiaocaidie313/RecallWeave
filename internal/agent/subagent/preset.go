@@ -75,7 +75,7 @@ func validatePreset(preset Preset) error {
 		}
 		seen[name] = true
 		switch name {
-		case "delegate_task", "update_plan", "load_skill", "read_skill_reference", "save_artifact", "deactivate_memory":
+		case "delegate_task", "followup_task", "list_subagents", "update_plan", "load_skill", "read_skill_reference", "save_artifact", "deactivate_memory":
 			return fmt.Errorf("tool %q cannot be granted by a subagent preset", name)
 		}
 	}

@@ -220,7 +220,7 @@ func TestSaveDelegatedRunsPersistsChildAndParentUsage(t *testing.T) {
 		{"parent", "", "completed", "question", parent.Content, 18, 8},
 	} {
 		mock.ExpectBegin()
-		mock.ExpectQuery(`INSERT INTO "agent_runs"`).WithArgs(row.id, row.parent, uint(9), row.status, row.input, row.content, sqlmock.AnyArg(), row.prompt, row.completion, int64(0), 0, sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+		mock.ExpectQuery(`INSERT INTO "agent_runs"`).WithArgs(row.id, row.parent, "", "", uint(9), row.status, row.input, row.content, sqlmock.AnyArg(), row.prompt, row.completion, int64(0), 0, sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 		mock.ExpectCommit()
 	}
 	NewAgent(nil, memory.NewMemoryManger(database, nil), nil).saveRun(context.Background(), parent)

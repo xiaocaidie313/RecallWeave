@@ -30,20 +30,34 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 		return RunResult{}, fmt.Errorf("runtime: generate run id: %w", err)
 	}
 	state := RunState{
-		RunID:          runID,
-		ParentRunID:    req.ParentRunID,
-		AgentID:        a.ID,
-		AgentName:      a.Name,
-		ConversationID: req.ConversationID,
-		Input:          req.Input,
-		Status:         RunRunning,
-		StartedAt:      time.Now(),
+		RunID:            runID,
+		ParentRunID:      req.ParentRunID,
+		SubagentID:       req.SubagentID,
+		PreviousRunID:    req.PreviousRunID,
+		AgentID:          a.ID,
+		AgentName:        a.Name,
+		ConversationID:   req.ConversationID,
+		Input:            req.Input,
+		Status:           RunRunning,
+		StartedAt:        time.Now(),
+		InheritedSources: append([]Source(nil), req.InheritedSources...),
 	}
 
+	var conversation *llm.Conversation
 	finish := func(status RunStatus) {
 		finishedAt := time.Now()
 		state.Status = status
 		state.FinishedAt = &finishedAt
+		if req.CaptureContext && conversation != nil {
+			// 保存对话切片
+			snapshot, err := conversation.Snapshot()
+			if err != nil {
+				state.ContextSnapshot = nil
+				state.ContextError = err.Error()
+			} else {
+				state.ContextSnapshot = snapshot
+			}
+		}
 	}
 	fail := func(round int, err error, status RunStatus) (RunResult, error) {
 		state.Errors = append(state.Errors, RunError{
@@ -51,13 +65,14 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 			Message: err.Error(),
 			Fatal:   true,
 		})
+		// 保存对话切片
 		finish(status)
 		return RunResult{State: state}, err
 	}
 
 	tools := a.Tools()
 	for _, schema := range tools.Schemas() {
-		if schema.Name == plan.ToolName || schema.Name == DelegateTaskToolName {
+		if schema.Name == plan.ToolName || schema.Name == DelegateTaskToolName || schema.Name == FollowupTaskToolName || schema.Name == ListSubagentsToolName {
 			return fail(0, fmt.Errorf("runtime: tool name %q is reserved for runtime", schema.Name), RunFailed)
 		}
 	}
@@ -69,9 +84,25 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 		}
 		tools.Register(tool)
 		req.SystemPrompt += "\n" + delegationInstructions
+		// 如果可以续期 注册续期工具  判断是不是 continuationDelegator 接口
+		if continuation, ok := req.Delegator.(ContinuationDelegator); ok && continuation.ContinuationsEnabled() {
+			for _, tool := range continuationTools(&state, a, continuation) {
+				tools.Register(tool)
+			}
+			req.SystemPrompt += "\n" + continuationInstructions
+		}
 	}
 	maxRounds := a.Rounds()
-	conversation := buildConversation(a, req)
+	if req.ContextSnapshot == nil {
+		conversation = buildConversation(a, req)
+	} else {
+		// 如果有切片 说明是续期 复活原对话
+		conversation, err = resumeConversation(a, req)
+		if err != nil {
+			state.ContextError = err.Error()
+			return fail(0, fmt.Errorf("runtime: restore context: %w", err), RunFailed)
+		}
+	}
 
 	for round := 1; round <= maxRounds; round++ {
 		if err := ctx.Err(); err != nil {

@@ -118,6 +118,7 @@ func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) 
 	})
 	timings.AgentMs = time.Since(stageStarted).Milliseconds()
 	logToolErrors(result.State)
+	// 不管 http 的取消 还是 模型超时 都保存运行结果 都保存 run结果
 	a.saveRun(context.WithoutCancel(ctx), result)
 	if err != nil {
 		return Answer{}, err
@@ -179,6 +180,8 @@ func (a *Agent) saveRun(ctx context.Context, result runtime.RunResult) {
 	if err := a.memory.SaveAgentRun(ctx, store.AgentRun{
 		RunID:            result.State.RunID,
 		ParentRunID:      result.State.ParentRunID,
+		SubagentID:       result.State.SubagentID,
+		PreviousRunID:    result.State.PreviousRunID,
 		ConversationID:   result.State.ConversationID,
 		Status:           string(result.State.Status),
 		Input:            result.State.Input,
