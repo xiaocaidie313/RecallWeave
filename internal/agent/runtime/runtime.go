@@ -72,7 +72,7 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 
 	tools := a.Tools()
 	for _, schema := range tools.Schemas() {
-		if schema.Name == plan.ToolName || schema.Name == DelegateTaskToolName || schema.Name == FollowupTaskToolName || schema.Name == ListSubagentsToolName {
+		if schema.Name == plan.ToolName || schema.Name == DelegateTaskToolName || schema.Name == FollowupTaskToolName || schema.Name == ListSubagentsToolName || schema.Name == GetSubagentTaskToolName || schema.Name == CancelSubagentTaskToolName {
 			return fail(0, fmt.Errorf("runtime: tool name %q is reserved for runtime", schema.Name), RunFailed)
 		}
 	}
@@ -84,6 +84,12 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 		}
 		tools.Register(tool)
 		req.SystemPrompt += "\n" + delegationInstructions
+		if background, ok := enabledBackground(req.Delegator); ok {
+			for _, tool := range backgroundTools(&state, a, background) {
+				tools.Register(tool)
+			}
+			req.SystemPrompt += "\n" + backgroundInstructions
+		}
 		// 如果可以续期 注册续期工具  判断是不是 continuationDelegator 接口
 		if continuation, ok := req.Delegator.(ContinuationDelegator); ok && continuation.ContinuationsEnabled() {
 			for _, tool := range continuationTools(&state, a, continuation) {

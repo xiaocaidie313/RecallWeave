@@ -18,15 +18,17 @@ const ListSubagentsToolName = "list_subagents"
 
 const continuationInstructions = `可用 followup_task 向同一个子任务补充要求。subagent_id 是持续会话身份，child_run_id 是其中一次执行；每次补查会产生新的 Run。
 使用本轮委派结果中的 subagent_id，或先用 list_subagents 查找当前对话已有的子任务。不要猜 ID，也不能续接其他对话的子任务。
-补查同步等待；每个主 Run 最多新委派一次、补查一次，两项分别限制。补查由用户补充要求、子任务返回的问题或对照交付要求发现的缺口触发，不必每次都补查。
+补查默认同步等待；每个主 Run 最多新委派一次、补查一次，两项分别限制。补查由用户补充要求、子任务返回的问题或对照交付要求发现的缺口触发，不必每次都补查。
 只有 can_follow_up=true 才表示上下文已保存且可以尝试续接。completed 只说明本次执行正常结束，不保证任务已经充分完成或结论正确。`
 
 type FollowupRequest struct {
 	SubagentID string `json:"subagent_id"`
 	Message    string `json:"message"`
+	Background bool   `json:"background,omitempty"`
 }
 
 type SubagentInfo struct {
+	TaskID      string    `json:"task_id,omitempty"`
 	SubagentID  string    `json:"subagent_id"`
 	Agent       string    `json:"agent"`
 	Task        string    `json:"task"`
@@ -45,6 +47,16 @@ type ContinuationDelegator interface {
 
 func continuationTools(state *RunState, parent *agent.Agent, continuation ContinuationDelegator) []llm.Tool {
 	used := false
+	background, backgroundEnabled := enabledBackground(continuation)
+	followupProperties := map[string]any{
+		"subagent_id": map[string]any{"type": "string", "description": "委派或 list_subagents 返回的子任务 ID，32 位小写十六进制"},
+		"message":     map[string]any{"type": "string", "description": "补充要求及当前约束，非空且最多 8 KiB"},
+	}
+	description := "向当前对话中同一个子任务补充要求，恢复它的消息和工具历史后同步执行。每个主 Run 最多一次实际补查。"
+	if backgroundEnabled {
+		followupProperties["background"] = map[string]any{"type": "boolean", "default": false, "description": "true 后台续接并立刻返回任务 ID；省略时同步等待"}
+		description = "向同一个子任务补充要求并恢复其历史。默认同步；background=true 提交后台续接。每个主 Run 最多一次，后台与同步共用额度。"
+	}
 	parentInfo := func() DelegationParent {
 		return DelegationParent{RunID: state.RunID, ConversationID: state.ConversationID, Agent: parent}
 	}
@@ -52,14 +64,11 @@ func continuationTools(state *RunState, parent *agent.Agent, continuation Contin
 		{
 			Schema: llm.ToolSchema{
 				Name:        FollowupTaskToolName,
-				Description: "向当前对话中同一个子任务补充要求，恢复它的消息和工具历史后同步执行。每个主 Run 最多一次实际补查。",
+				Description: description,
 				Parameters: map[string]any{
 					"type": "object", "additionalProperties": false,
-					"properties": map[string]any{
-						"subagent_id": map[string]any{"type": "string", "description": "委派或 list_subagents 返回的子任务 ID，32 位小写十六进制"},
-						"message":     map[string]any{"type": "string", "description": "补充要求及当前约束，非空且最多 8 KiB"},
-					},
-					"required": []string{"subagent_id", "message"},
+					"properties": followupProperties,
+					"required":   []string{"subagent_id", "message"},
 				},
 			},
 			Run: func(ctx context.Context, arguments string) (string, error) {
@@ -72,6 +81,20 @@ func continuationTools(state *RunState, parent *agent.Agent, continuation Contin
 				}
 				if err := ctx.Err(); err != nil {
 					return "", err
+				}
+				if request.Background {
+					if !backgroundEnabled {
+						return "", fmt.Errorf("followup_task: background execution is unavailable")
+					}
+					task, submitErr := background.SubmitFollowUp(ctx, parentInfo(), request)
+					if task.TaskID == "" {
+						if submitErr != nil {
+							return "", submitErr
+						}
+						return "", fmt.Errorf("followup_task: background submission did not produce a task")
+					}
+					used = true
+					return encodeBackgroundTask(task, submitErr)
 				}
 				child, runErr := continuation.FollowUp(ctx, parentInfo(), request)
 				if child.State.RunID == "" {

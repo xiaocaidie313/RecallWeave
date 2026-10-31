@@ -24,7 +24,7 @@ type continuationMemoryStore struct {
 
 func cloneSession(row store.SubagentSession) store.SubagentSession {
 	row.Snapshot = append(json.RawMessage(nil), row.Snapshot...)
-	row.Preset = append(json.RawMessage(nil), row.Preset...)
+	row.PresetAgent = append(json.RawMessage(nil), row.PresetAgent...)
 	row.Sources = append(json.RawMessage(nil), row.Sources...)
 	return row
 }
@@ -123,7 +123,7 @@ func TestContinuationRestoresRealHistoryAcrossManagersWithoutRepeatingToolsOrUsa
 		reads++
 		return `{"session_id":8,"messages":[{"seq":3,"content":"ORIGINAL_TOOL_BODY"}]}`, nil
 	}))
-	first, err := testManager(t, Config{}).WithSessions(repository).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "核查历史"})
+	first, err := testManager(t, Config{}).WithSubagentSessions(repository).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "核查历史"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestContinuationRestoresRealHistoryAcrossManagersWithoutRepeatingToolsOrUsa
 		t.Fatal("initial child is not resumable")
 	}
 	parent.RunID = "parent-two"
-	manager := testManager(t, Config{}).WithSessions(repository)
+	manager := testManager(t, Config{}).WithSubagentSessions(repository)
 	second, err := manager.FollowUp(context.Background(), parent, runtime.FollowupRequest{SubagentID: first.State.SubagentID, Message: "补查最新讨论"})
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +156,7 @@ func TestContinuationRestoresRealHistoryAcrossManagersWithoutRepeatingToolsOrUsa
 	}
 }
 
-func TestContinuationChecksOwnerAndRemovedPresetBeforeCallingModel(t *testing.T) {
+func TestContinuationChecksOwnerAndRemovedPresetAgentBeforeCallingModel(t *testing.T) {
 	repository := &continuationMemoryStore{}
 	calls := 0
 	model := &transcriptModel{next: func(context.Context, *llm.Conversation, []llm.ToolSchema) (llm.Turn, error) {
@@ -164,7 +164,7 @@ func TestContinuationChecksOwnerAndRemovedPresetBeforeCallingModel(t *testing.T)
 		return llm.Turn{Content: "done"}, nil
 	}}
 	parent := managerParent(model)
-	manager := testManager(t, Config{}).WithSessions(repository)
+	manager := testManager(t, Config{}).WithSubagentSessions(repository)
 	first, err := manager.Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "task"})
 	if err != nil {
 		t.Fatal(err)
@@ -174,8 +174,8 @@ func TestContinuationChecksOwnerAndRemovedPresetBeforeCallingModel(t *testing.T)
 	if result, err := manager.FollowUp(context.Background(), foreign, runtime.FollowupRequest{SubagentID: first.State.SubagentID, Message: "continue"}); err == nil || result.State.RunID != "" {
 		t.Fatal("foreign conversation resumed child")
 	}
-	otherPreset := Preset{Name: "other", Description: "other role", Instructions: "other instructions", AllowedTools: []string{"get_messages"}}
-	changed := testManager(t, Config{Presets: []Preset{otherPreset}, DefaultAgent: "other"}).WithSessions(repository)
+	otherPresetAgent := PresetAgent{Name: "other", Description: "other role", Instructions: "other instructions", AllowedTools: []string{"get_messages"}}
+	changed := testManager(t, Config{PresetAgents: []PresetAgent{otherPresetAgent}, DefaultAgent: "other"}).WithSubagentSessions(repository)
 	if result, err := changed.FollowUp(context.Background(), parent, runtime.FollowupRequest{SubagentID: first.State.SubagentID, Message: "continue"}); err == nil || result.State.RunID != "" {
 		t.Fatal("removed role resumed")
 	}
@@ -204,15 +204,15 @@ func TestContinuationCannotExpandOriginalToolAndBudgetGrant(t *testing.T) {
 		return llm.Turn{ToolCalls: []llm.ToolCall{{ID: "read", Name: "get_messages", Arguments: `{}`}}}, nil
 	}}
 	parent := managerParent(model, managerReadTool("get_messages", func(context.Context, string) (string, error) { return `{"session_id":8,"messages":[]}`, nil }), managerReadTool("search_memories", nil))
-	preset := Preset{Name: "auditor", Description: "audit", Instructions: "old role", AllowedTools: []string{"get_messages"}, MaxRounds: 2, Timeout: time.Second}
-	first, err := testManager(t, Config{Presets: []Preset{preset}, DefaultAgent: "auditor"}).WithSessions(repository).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "audit"})
+	PresetAgent := PresetAgent{Name: "auditor", Description: "audit", Instructions: "old role", AllowedTools: []string{"get_messages"}, MaxRounds: 2, Timeout: time.Second}
+	first, err := testManager(t, Config{PresetAgents: []PresetAgent{PresetAgent}, DefaultAgent: "auditor"}).WithSubagentSessions(repository).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "audit"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	preset.MaxRounds = 8
-	preset.Timeout = 2 * time.Second
-	preset.AllowedTools = append(preset.AllowedTools, "search_memories")
-	continued, err := testManager(t, Config{Presets: []Preset{preset}, DefaultAgent: "auditor"}).WithSessions(repository).FollowUp(context.Background(), parent, runtime.FollowupRequest{SubagentID: first.State.SubagentID, Message: "continue"})
+	PresetAgent.MaxRounds = 8
+	PresetAgent.Timeout = 2 * time.Second
+	PresetAgent.AllowedTools = append(PresetAgent.AllowedTools, "search_memories")
+	continued, err := testManager(t, Config{PresetAgents: []PresetAgent{PresetAgent}, DefaultAgent: "auditor"}).WithSubagentSessions(repository).FollowUp(context.Background(), parent, runtime.FollowupRequest{SubagentID: first.State.SubagentID, Message: "continue"})
 	if err == nil || continued.State.CurrentRound != 2 || call != 3 {
 		t.Fatalf("old round budget was expanded: calls=%d run=%+v err=%v", call, continued.State, err)
 	}
@@ -230,7 +230,7 @@ func TestContinuationRejectsConcurrentExecutionOfSameChild(t *testing.T) {
 		return llm.Turn{Content: "done"}, nil
 	}}
 	parent := managerParent(model)
-	manager := testManager(t, Config{}).WithSessions(repository)
+	manager := testManager(t, Config{}).WithSubagentSessions(repository)
 	first, err := manager.Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "task"})
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +261,7 @@ func TestContinuationWriteFailureCannotSilentlyReuseOldCheckpoint(t *testing.T) 
 		return llm.Turn{Content: "done"}, nil
 	}}
 	parent := managerParent(model)
-	manager := testManager(t, Config{}).WithSessions(repository)
+	manager := testManager(t, Config{}).WithSubagentSessions(repository)
 	first, err := manager.Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "task"})
 	if err != nil {
 		t.Fatal(err)
@@ -283,7 +283,7 @@ func TestContinuationWriteFailureCannotSilentlyReuseOldCheckpoint(t *testing.T) 
 	// After restart, persisted Run metadata is the guard supplied by the DB
 	// adapter; this fake simulates the same CheckpointVerifier result.
 	repository.checkpointError = ErrCheckpointUnavailable
-	restarted := testManager(t, Config{}).WithSessions(repository)
+	restarted := testManager(t, Config{}).WithSubagentSessions(repository)
 	if _, err := restarted.FollowUp(context.Background(), parent, request); !errors.Is(err, ErrCheckpointUnavailable) {
 		t.Fatalf("restart resumed uncommitted work: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestContinuationCASConflictDoesNotPoisonNewerCheckpoint(t *testing.T) {
 		return llm.Turn{Content: "done"}, nil
 	}}
 	parent := managerParent(model)
-	manager := testManager(t, Config{}).WithSessions(repository)
+	manager := testManager(t, Config{}).WithSubagentSessions(repository)
 	first, err := manager.Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "task"})
 	if err != nil {
 		t.Fatal(err)

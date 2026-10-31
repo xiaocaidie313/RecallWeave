@@ -42,9 +42,9 @@ func sessionStoreRecord() store.SubagentSession {
 	return store.SubagentSession{
 		ID: "child-session", ConversationID: 9, AgentName: "researcher", Task: "Check original sources",
 		LatestRunID: "run-1", Status: "completed",
-		Snapshot: json.RawMessage(`{"version":1,"messages":[{"role":"user","content":"task"}]}`),
-		Preset:   json.RawMessage(`{"Name":"researcher","AllowedTools":["get_messages"]}`),
-		Sources:  json.RawMessage(`[{"kind":"message","session_id":8,"seq_start":2,"seq_end":2}]`),
+		Snapshot:    json.RawMessage(`{"version":1,"messages":[{"role":"user","content":"task"}]}`),
+		PresetAgent: json.RawMessage(`{"Name":"researcher","AllowedTools":["get_messages"]}`),
+		Sources:     json.RawMessage(`[{"kind":"message","session_id":8,"seq_start":2,"seq_end":2}]`),
 	}
 }
 
@@ -67,7 +67,7 @@ func TestSessionStoreCreatesNewIdentityWithJSONAndRevision(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`^INSERT INTO "subagent_sessions" .* VALUES .*`).WithArgs(
 		record.ID, record.ConversationID, record.AgentName, record.Task, record.LatestRunID, record.Status,
-		sessionJSONArgument(record.Snapshot), sessionJSONArgument(record.Preset), sessionJSONArgument(record.Sources),
+		sessionJSONArgument(record.Snapshot), sessionJSONArgument(record.PresetAgent), sessionJSONArgument(record.Sources),
 		uint64(1), sessionStoreNow, sessionStoreNow,
 	).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -101,10 +101,10 @@ func TestSessionStoreCreateDoesNotOverwriteExistingSession(t *testing.T) {
 }
 
 func sessionStoreRows(records ...store.SubagentSession) *sqlmock.Rows {
-	rows := sqlmock.NewRows([]string{"id", "conversation_id", "agent_name", "task", "latest_run_id", "status", "snapshot", "preset", "sources", "revision", "created_at", "updated_at"})
+	rows := sqlmock.NewRows([]string{"id", "conversation_id", "agent_name", "task", "latest_run_id", "status", "snapshot", "PresetAgent", "sources", "revision", "created_at", "updated_at"})
 	for _, record := range records {
 		rows.AddRow(record.ID, record.ConversationID, record.AgentName, record.Task, record.LatestRunID, record.Status,
-			string(record.Snapshot), string(record.Preset), string(record.Sources), record.Revision, sessionStoreNow, sessionStoreNow)
+			string(record.Snapshot), string(record.PresetAgent), string(record.Sources), record.Revision, sessionStoreNow, sessionStoreNow)
 	}
 	return rows
 }
@@ -120,7 +120,7 @@ func TestSessionStoreLoadRequiresOwnerAndReadsJSONStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.ID != want.ID || got.ConversationID != want.ConversationID || got.Revision != 3 ||
-		!reflect.DeepEqual(got.Snapshot, want.Snapshot) || !reflect.DeepEqual(got.Preset, want.Preset) || !reflect.DeepEqual(got.Sources, want.Sources) {
+		!reflect.DeepEqual(got.Snapshot, want.Snapshot) || !reflect.DeepEqual(got.PresetAgent, want.PresetAgent) || !reflect.DeepEqual(got.Sources, want.Sources) {
 		t.Fatalf("stored JSON was not restored: %+v", got)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -144,7 +144,7 @@ func expectSessionUpdate(mock sqlmock.Sqlmock, record store.SubagentSession, exp
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE "subagent_sessions" SET .* WHERE id = \$10 AND conversation_id = \$11 AND revision = \$12`).WithArgs(
 		record.AgentName, record.Task, record.LatestRunID, record.Status,
-		sessionJSONArgument(record.Snapshot), sessionJSONArgument(record.Preset), sessionJSONArgument(record.Sources),
+		sessionJSONArgument(record.Snapshot), sessionJSONArgument(record.PresetAgent), sessionJSONArgument(record.Sources),
 		expected+1, sessionStoreNow, record.ID, record.ConversationID, expected,
 	).WillReturnResult(sqlmock.NewResult(0, affected))
 	mock.ExpectCommit()
@@ -192,7 +192,7 @@ func TestSessionStoreUpdateCanClearUnusableCheckpoint(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE "subagent_sessions" SET .* WHERE id = \$10 AND conversation_id = \$11 AND revision = \$12`).WithArgs(
 		record.AgentName, record.Task, record.LatestRunID, record.Status, nil,
-		sessionJSONArgument(record.Preset), sessionJSONArgument(record.Sources), uint64(2), sessionStoreNow, record.ID, record.ConversationID, uint64(1),
+		sessionJSONArgument(record.PresetAgent), sessionJSONArgument(record.Sources), uint64(2), sessionStoreNow, record.ID, record.ConversationID, uint64(1),
 	).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if err := repository.Update(context.Background(), &record, 1); err != nil {
@@ -260,7 +260,7 @@ func TestSessionStoreRejectsInvalidScopeAndJSONBeforeSQL(t *testing.T) {
 			t.Fatal("invalid revision accepted")
 		}
 	}
-	record.Preset = json.RawMessage(`{`)
+	record.PresetAgent = json.RawMessage(`{`)
 	if err := repository.Create(context.Background(), &record); err == nil {
 		t.Fatal("invalid JSON create accepted")
 	}

@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"recallweave/internal/agent"
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/llm"
 	"recallweave/internal/store"
@@ -20,9 +22,9 @@ import (
 const sessionPolicyVersion = 1
 
 type sessionPolicy struct {
-	Version int      `json:"version"`
-	Preset  Preset   `json:"preset"`
-	Tools   []string `json:"tools"`
+	Version     int         `json:"version"`
+	PresetAgent PresetAgent `json:"PresetAgent"`
+	Tools       []string    `json:"tools"`
 }
 
 type unsavedCheckpoint struct {
@@ -66,40 +68,58 @@ func (m *Manager) lockSubagentSession(conversationID uint, id string) (func(), e
 }
 
 func (m *Manager) FollowUp(ctx context.Context, parent runtime.DelegationParent, request runtime.FollowupRequest) (runtime.RunResult, error) {
-	if !m.ContinuationsEnabled() || parent.Agent == nil || parent.Agent.Model == nil || parent.RunID == "" || parent.ConversationID == 0 {
-		return runtime.RunResult{}, fmt.Errorf("subagent: continuation requires a live parent and conversation")
-	}
-	if !subagentIDPattern.MatchString(request.SubagentID) || !utf8.ValidString(request.Message) || strings.TrimSpace(request.Message) == "" || len(request.Message) > 8<<10 {
-		return runtime.RunResult{}, fmt.Errorf("subagent: invalid child identity or follow-up message")
-	}
-	if err := ctx.Err(); err != nil {
-		return runtime.RunResult{}, err
-	}
-	release, err := m.lockSubagentSession(parent.ConversationID, request.SubagentID)
+	previous, current, release, err := m.prepareFollowUp(ctx, parent, request)
 	if err != nil {
 		return runtime.RunResult{}, err
 	}
 	defer release()
+	return m.executeSession(ctx, parent, "继续此子任务：\n"+request.Message, previous.Task, current, previous.ID, &previous)
+}
+
+func (m *Manager) prepareFollowUp(ctx context.Context, parent runtime.DelegationParent, request runtime.FollowupRequest) (store.SubagentSession, PresetAgent, func(), error) {
+	var empty store.SubagentSession
+	fail := func(err error) (store.SubagentSession, PresetAgent, func(), error) {
+		return empty, PresetAgent{}, nil, err
+	}
+	if !m.ContinuationsEnabled() || parent.Agent == nil || parent.Agent.Model == nil || parent.RunID == "" || parent.ConversationID == 0 {
+		return fail(fmt.Errorf("subagent: continuation requires a live parent and conversation"))
+	}
+	if !subagentIDPattern.MatchString(request.SubagentID) || !utf8.ValidString(request.Message) || strings.TrimSpace(request.Message) == "" || len(request.Message) > 8<<10 {
+		return fail(fmt.Errorf("subagent: invalid child identity or follow-up message"))
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	release, err := m.lockSubagentSession(parent.ConversationID, request.SubagentID)
+	if err != nil {
+		return fail(err)
+	}
+	prepared := false
+	defer func() {
+		if !prepared {
+			release()
+		}
+	}()
 	previous, err := m.subagentSessionsStore.Load(ctx, request.SubagentID, parent.ConversationID)
 	if err != nil {
-		return runtime.RunResult{}, fmt.Errorf("subagent: child unavailable in this conversation: %w", err)
+		return fail(fmt.Errorf("subagent: child unavailable in this conversation: %w", err))
 	}
 	// 如果不是同一任务/ 执行agent  或者不是同一对话
 	if previous.ID != request.SubagentID || previous.ConversationID != parent.ConversationID {
-		return runtime.RunResult{}, fmt.Errorf("subagent: child ownership mismatch")
+		return fail(fmt.Errorf("subagent: child ownership mismatch"))
 	}
 	// 检查是否可以继续
 	if err := m.checkCheckpoint(ctx, previous); err != nil {
-		return runtime.RunResult{}, err
+		return fail(err)
 	}
-	current, ok := m.presets[previous.AgentName]
+	current, ok := m.PresetAgents[previous.AgentName]
 	if !ok {
-		return runtime.RunResult{}, fmt.Errorf("subagent: the child's preset is no longer registered")
+		return fail(fmt.Errorf("subagent: the child's PresetAgent is no longer registered"))
 	}
 	// policy 限制哪些能行， 能用
 	var policy sessionPolicy
-	if json.Unmarshal(previous.Preset, &policy) != nil || policy.Version != sessionPolicyVersion || policy.Preset.Name != previous.AgentName || validateBudget(policy.Preset.MaxRounds, policy.Preset.Timeout) != nil {
-		return runtime.RunResult{}, fmt.Errorf("subagent: saved child policy is invalid")
+	if json.Unmarshal(previous.PresetAgent, &policy) != nil || policy.Version != sessionPolicyVersion || policy.PresetAgent.Name != previous.AgentName || validateBudget(policy.PresetAgent.MaxRounds, policy.PresetAgent.Timeout) != nil {
+		return fail(fmt.Errorf("subagent: saved child policy is invalid"))
 	}
 	// Current policy can narrow the old grant, never enlarge it. Recreated
 	// tools come from this request's scoped parent, preserving branch readers.
@@ -115,18 +135,23 @@ func (m *Manager) FollowUp(ctx context.Context, parent runtime.DelegationParent,
 	}
 	// 跟新能用的tools
 	current.AllowedTools = tools
-	if policy.Preset.MaxRounds < current.MaxRounds {
-		current.MaxRounds = policy.Preset.MaxRounds
+	if policy.PresetAgent.MaxRounds < current.MaxRounds {
+		current.MaxRounds = policy.PresetAgent.MaxRounds
 	}
-	if policy.Preset.Timeout < current.Timeout {
-		current.Timeout = policy.Preset.Timeout
+	if policy.PresetAgent.Timeout < current.Timeout {
+		current.Timeout = policy.PresetAgent.Timeout
 	}
-	return m.executeSession(ctx, parent, "继续此子任务：\n"+request.Message, previous.Task, current, previous.ID, &previous)
+	prepared = true
+	return previous, current, release, nil
 }
 
-func (m *Manager) executeSession(ctx context.Context, parent runtime.DelegationParent, input, task string, preset Preset, id string, previous *store.SubagentSession) (runtime.RunResult, error) {
+func (m *Manager) executeSession(ctx context.Context, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, id string, previous *store.SubagentSession) (runtime.RunResult, error) {
 	// 创建一个新的子agent
-	child := m.newChild(parent.Agent, preset)
+	child := m.newChild(parent.Agent, PresetAgent)
+	return m.executeChildSession(ctx, child, parent, input, task, PresetAgent, id, previous)
+}
+
+func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, id string, previous *store.SubagentSession) (runtime.RunResult, error) {
 	request := runtime.Request{ParentRunID: parent.RunID, ConversationID: parent.ConversationID, SubagentID: id, Input: input, CaptureContext: m.ContinuationsEnabled()}
 	if previous != nil {
 		if len(previous.Snapshot) == 0 || string(previous.Snapshot) == "null" {
@@ -142,13 +167,13 @@ func (m *Manager) executeSession(ctx context.Context, parent runtime.DelegationP
 			return runtime.RunResult{}, fmt.Errorf("subagent: invalid saved source records")
 		}
 	}
-	childCtx, cancel := context.WithTimeout(ctx, preset.Timeout)
+	childCtx, cancel := context.WithTimeout(ctx, PresetAgent.Timeout)
 	defer cancel()
 	result, runErr := runtime.Run(childCtx, child, request)
 	if !m.ContinuationsEnabled() || result.State.RunID == "" {
 		return result, runErr
 	}
-	policy := sessionPolicy{Version: sessionPolicyVersion, Preset: preset}
+	policy := sessionPolicy{Version: sessionPolicyVersion, PresetAgent: PresetAgent}
 	for _, schema := range child.Tools().Schemas() {
 		policy.Tools = append(policy.Tools, schema.Name)
 	}
@@ -165,7 +190,7 @@ func (m *Manager) executeSession(ctx context.Context, parent runtime.DelegationP
 		return result, err
 	}
 	// 新建 子agent session 记录
-	record := store.SubagentSession{ID: id, ConversationID: parent.ConversationID, AgentName: preset.Name, Task: task, LatestRunID: result.State.RunID, Status: string(result.State.Status), Snapshot: encodedSnapshot, Preset: encodedPolicy, Sources: encodedSources}
+	record := store.SubagentSession{ID: id, ConversationID: parent.ConversationID, AgentName: PresetAgent.Name, Task: task, LatestRunID: result.State.RunID, Status: string(result.State.Status), Snapshot: encodedSnapshot, PresetAgent: encodedPolicy, Sources: encodedSources}
 	// Save completed/failed work even if the HTTP request has been cancelled.
 	saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer saveCancel()
@@ -207,6 +232,7 @@ func (m *Manager) ListSubagents(ctx context.Context, parent runtime.DelegationPa
 		return nil, err
 	}
 	items := make([]runtime.SubagentInfo, 0, len(rows))
+	updated := make(map[string]time.Time)
 	for _, row := range rows {
 		if row.ConversationID != parent.ConversationID {
 			return nil, fmt.Errorf("subagent: stored child ownership mismatch")
@@ -218,7 +244,7 @@ func (m *Manager) ListSubagents(ctx context.Context, parent runtime.DelegationPa
 			}
 			canContinue = false
 		}
-		_, registered := m.presets[row.AgentName]
+		_, registered := m.PresetAgents[row.AgentName]
 		status := runtime.RunStatus(row.Status)
 		m.activeMu.Lock()
 		busy := m.active[fmt.Sprintf("%d/%s", parent.ConversationID, row.ID)]
@@ -227,6 +253,55 @@ func (m *Manager) ListSubagents(ctx context.Context, parent runtime.DelegationPa
 			status = runtime.RunRunning
 		}
 		items = append(items, runtime.SubagentInfo{SubagentID: row.ID, Agent: row.AgentName, Task: shortTask(row.Task), LastRunID: row.LatestRunID, Status: status, CanFollowUp: canContinue && registered && !busy})
+		updated[row.ID] = row.UpdatedAt
+	}
+	if m.BackgroundEnabled() {
+		tasks, err := m.ListTasks(ctx, parent.ConversationID)
+		if err != nil {
+			return nil, err
+		}
+		positions := make(map[string]int, len(items))
+		for i, item := range items {
+			positions[item.SubagentID] = i
+		}
+		for _, task := range tasks {
+			index, exists := positions[task.SubagentID]
+			if exists && !task.UpdatedAt.After(updated[task.SubagentID]) {
+				if items[index].TaskID == "" && task.RunID == items[index].LastRunID {
+					items[index].TaskID = task.TaskID
+				}
+				continue
+			}
+			lastRunID := task.RunID
+			if lastRunID == "" {
+				lastRunID = task.PreviousRunID
+			}
+			info := runtime.SubagentInfo{SubagentID: task.SubagentID, TaskID: task.TaskID, Agent: task.Agent,
+				Task: shortTask(task.Task), LastRunID: lastRunID, Status: runtime.RunStatus(task.Status)}
+			if exists {
+				info.CanFollowUp = items[index].CanFollowUp
+			}
+			if task.Status == "queued" || task.Status == "running" {
+				info.CanFollowUp = false
+			}
+			if exists {
+				items[index] = info
+			} else {
+				positions[task.SubagentID] = len(items)
+				items = append(items, info)
+			}
+			updated[task.SubagentID] = task.UpdatedAt
+		}
+		sort.Slice(items, func(i, j int) bool {
+			a, b := updated[items[i].SubagentID], updated[items[j].SubagentID]
+			if a.Equal(b) {
+				return items[i].SubagentID > items[j].SubagentID
+			}
+			return a.After(b)
+		})
+		if len(items) > 5 {
+			items = items[:5]
+		}
 	}
 	return items, nil
 }
@@ -245,7 +320,14 @@ func (m *Manager) checkCheckpoint(ctx context.Context, row store.SubagentSession
 		return ErrCheckpointUnavailable
 	}
 	if verifier, ok := m.subagentSessionsStore.(CheckpointVerifier); ok {
-		return verifier.CheckCheckpoint(ctx, row)
+		if err := verifier.CheckCheckpoint(ctx, row); err != nil {
+			return err
+		}
+	}
+	if m.background != nil {
+		if verifier, ok := m.background.store.(TaskCheckpointVerifier); ok {
+			return verifier.CheckTaskCheckpoint(ctx, row)
+		}
 	}
 	return nil
 }

@@ -8,9 +8,9 @@ import (
 	"unicode/utf8"
 )
 
-// Preset is trusted server configuration. Model requests can select its Name,
+// PresetAgent is trusted server configuration. Model requests can select its Name,
 // but cannot alter its instructions, tool allowlist or execution budget.
-type Preset struct {
+type PresetAgent struct {
 	Name         string
 	Description  string
 	Instructions string
@@ -19,14 +19,14 @@ type Preset struct {
 	Timeout      time.Duration
 }
 
-var presetNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,39}$`)
+var PresetAgentNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,39}$`)
 var toolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
-// DefaultPresets returns new values on every call, including tool slices.
+// DefaultPresetAgents returns new values on every call, including tool slices.
 // Zero budgets inherit the Manager's configured defaults.
-func DefaultPresets() []Preset {
+func DefaultPresetAgents() []PresetAgent {
 	// 依旧硬编码
-	return []Preset{
+	return []PresetAgent{
 		{
 			Name:         "researcher",
 			Description:  "只读研究员：检索历史或外部资料，核对原文并返回来源与未解决的问题。",
@@ -52,31 +52,31 @@ func validateBudget(rounds int, timeout time.Duration) error {
 	return nil
 }
 
-func validatePreset(preset Preset) error {
-	if !presetNamePattern.MatchString(preset.Name) {
-		return fmt.Errorf("name must match %s", presetNamePattern.String())
+func validatePresetAgent(PresetAgent PresetAgent) error {
+	if !PresetAgentNamePattern.MatchString(PresetAgent.Name) {
+		return fmt.Errorf("name must match %s", PresetAgentNamePattern.String())
 	}
-	if !utf8.ValidString(preset.Description) || strings.TrimSpace(preset.Description) == "" || len(preset.Description) > 500 {
+	if !utf8.ValidString(PresetAgent.Description) || strings.TrimSpace(PresetAgent.Description) == "" || len(PresetAgent.Description) > 500 {
 		return fmt.Errorf("description must be nonempty UTF-8 and at most 500 bytes")
 	}
-	if !utf8.ValidString(preset.Instructions) || strings.TrimSpace(preset.Instructions) == "" || len(preset.Instructions) > 8<<10 {
+	if !utf8.ValidString(PresetAgent.Instructions) || strings.TrimSpace(PresetAgent.Instructions) == "" || len(PresetAgent.Instructions) > 8<<10 {
 		return fmt.Errorf("instructions must be nonempty UTF-8 and at most 8 KiB")
 	}
-	if err := validateBudget(preset.MaxRounds, preset.Timeout); err != nil {
+	if err := validateBudget(PresetAgent.MaxRounds, PresetAgent.Timeout); err != nil {
 		return err
 	}
-	if len(preset.AllowedTools) == 0 {
+	if len(PresetAgent.AllowedTools) == 0 {
 		return fmt.Errorf("allowed_tools must not be empty")
 	}
-	seen := make(map[string]bool, len(preset.AllowedTools))
-	for _, name := range preset.AllowedTools {
+	seen := make(map[string]bool, len(PresetAgent.AllowedTools))
+	for _, name := range PresetAgent.AllowedTools {
 		if !toolNamePattern.MatchString(name) || seen[name] {
 			return fmt.Errorf("invalid or duplicate allowed tool %q", name)
 		}
 		seen[name] = true
 		switch name {
-		case "delegate_task", "followup_task", "list_subagents", "update_plan", "load_skill", "read_skill_reference", "save_artifact", "deactivate_memory":
-			return fmt.Errorf("tool %q cannot be granted by a subagent preset", name)
+		case "delegate_task", "followup_task", "list_subagents", "get_subagent_task", "cancel_subagent_task", "update_plan", "load_skill", "read_skill_reference", "save_artifact", "deactivate_memory":
+			return fmt.Errorf("tool %q cannot be granted by a subagent PresetAgent", name)
 		}
 	}
 	return nil

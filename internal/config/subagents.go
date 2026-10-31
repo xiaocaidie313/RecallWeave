@@ -2,14 +2,14 @@ package config
 
 import "fmt"
 
-// SubagentsConfig contains configuration data only. A nil Presets slice selects
+// SubagentsConfig contains configuration data only. A nil PresetAgents slice selects
 // built-in defaults; an explicitly empty slice is left for domain validation.
 type SubagentsConfig struct {
-	DefaultAgent string                 `yaml:"default_agent"`
-	Presets      []SubagentPresetConfig `yaml:"presets"`
+	DefaultAgent string                      `yaml:"default_agent"`
+	PresetAgents []SubagentPresetAgentConfig `yaml:"PresetAgents"`
 }
 
-type SubagentPresetConfig struct {
+type SubagentPresetAgentConfig struct {
 	Name           string   `yaml:"name"`
 	Description    string   `yaml:"description"`
 	Instructions   string   `yaml:"instructions"`
@@ -22,12 +22,12 @@ type SubagentPresetConfig struct {
 // Zero means inherit the manager defaults; names and tool policy belong to the
 // subagent package. Errors identify fields without echoing configuration data.
 func (c SubagentsConfig) Validate() error {
-	for i, preset := range c.Presets {
-		if preset.MaxRounds < 0 || preset.MaxRounds > 20 {
-			return fmt.Errorf("subagents.presets[%d].max_rounds must be between 0 and 20", i)
+	for i, PresetAgent := range c.PresetAgents {
+		if PresetAgent.MaxRounds < 0 || PresetAgent.MaxRounds > 20 {
+			return fmt.Errorf("subagents.PresetAgents[%d].max_rounds must be between 0 and 20", i)
 		}
-		if preset.TimeoutSeconds < 0 || preset.TimeoutSeconds > 300 {
-			return fmt.Errorf("subagents.presets[%d].timeout_seconds must be between 0 and 300", i)
+		if PresetAgent.TimeoutSeconds < 0 || PresetAgent.TimeoutSeconds > 300 {
+			return fmt.Errorf("subagents.PresetAgents[%d].timeout_seconds must be between 0 and 300", i)
 		}
 	}
 	return nil

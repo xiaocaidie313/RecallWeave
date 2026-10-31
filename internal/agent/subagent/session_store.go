@@ -66,7 +66,7 @@ func checkSessionIdentity(id string, conversationID uint) error {
 
 // 单纯检查 json 是否合法
 func checkSessionJSON(session *store.SubagentSession) error {
-	for _, value := range []json.RawMessage{session.Snapshot, session.Preset, session.Sources} {
+	for _, value := range []json.RawMessage{session.Snapshot, session.PresetAgent, session.Sources} {
 		if len(value) > 0 && !json.Valid(value) {
 			return fmt.Errorf("subagent: stored context must be valid JSON")
 		}
@@ -93,7 +93,7 @@ func (s *GormSubagentSessionStore) Create(ctx context.Context, session *store.Su
 	}
 	// Create deliberately has no upsert: an existing identity must never be
 	// overwritten by a newly delegated task.
-	if err := s.db.WithContext(ctx).Create(record).Error; err != nil {
+	if err := s.db.WithContext(ctx).Create(&record).Error; err != nil {
 		return err
 	}
 	*session = record
@@ -135,11 +135,11 @@ func (s *GormSubagentSessionStore) Update(ctx context.Context, session *store.Su
 	record := *session
 	// 版本号 +1 用于乐观锁 防止两个请求同时更新同一个会话
 	// 跟新一次 在原来的id 和 conversation_id 和 版本号 都相同的情况下  改版本号  expectedRevision 是旧版本
-	record.Revision = expectedRevision + 1  
+	record.Revision = expectedRevision + 1
 	record.UpdatedAt = s.db.NowFunc()
 	result := s.db.WithContext(ctx).Model(&store.SubagentSession{}).
 		Where("id = ? AND conversation_id = ? AND revision = ?", record.ID, record.ConversationID, expectedRevision).
-		Select("agent_name", "task", "latest_run_id", "status", "snapshot", "preset", "sources", "revision", "updated_at").
+		Select("agent_name", "task", "latest_run_id", "status", "snapshot", "PresetAgent", "sources", "revision", "updated_at").
 		Updates(&record)
 	if result.Error != nil {
 		return result.Error
