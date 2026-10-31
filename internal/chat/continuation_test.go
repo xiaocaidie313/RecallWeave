@@ -27,7 +27,7 @@ type chatContinuationStore struct {
 
 func cloneChatContinuation(row store.SubagentSession) store.SubagentSession {
 	row.Snapshot = append(json.RawMessage(nil), row.Snapshot...)
-	row.Preset = append(json.RawMessage(nil), row.Preset...)
+	row.PresetAgent = append(json.RawMessage(nil), row.PresetAgent...)
 	row.Sources = append(json.RawMessage(nil), row.Sources...)
 	return row
 }
@@ -269,7 +269,7 @@ func TestSubagentContinuationThroughModelHTTPAcrossParentRuns(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return manager.WithSessions(repository)
+		return manager.WithSubagentSessions(repository)
 	}
 	first, err := runtime.Run(context.Background(), core, runtime.Request{Input: "第一次调查", ConversationID: 17, Delegator: newManager(), Preload: runtime.Preload{History: []llm.Message{{Role: "user", Content: "ROOT_PRIVATE_MARKER first parent"}}}})
 	if err != nil {

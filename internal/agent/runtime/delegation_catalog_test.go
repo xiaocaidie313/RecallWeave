@@ -68,13 +68,13 @@ func TestDelegationCatalogRoutesRegisteredAgentAndKeepsDefault(t *testing.T) {
 				t.Fatal(err)
 			}
 			if reply.Agent != wanted || result.State.Children[0].State.AgentName != wanted {
-				t.Fatalf("selected preset attribution missing: %+v", reply)
+				t.Fatalf("selected PresetAgent attribution missing: %+v", reply)
 			}
 		})
 	}
 }
 
-func TestUnknownPresetCanBeCorrectedWithoutSpendingDelegation(t *testing.T) {
+func TestUnknownPresetAgentCanBeCorrectedWithoutSpendingDelegation(t *testing.T) {
 	turn := delegationCall(`{"agent":"invented","task":"check"}`)
 	turn.ToolCalls = append(turn.ToolCalls, delegationCall(`{"agent":"reviewer","task":"check"}`).ToolCalls...)
 	model := &delegationScriptModel{turns: []llm.Turn{turn, {Content: "done"}}}
@@ -84,7 +84,7 @@ func TestUnknownPresetCanBeCorrectedWithoutSpendingDelegation(t *testing.T) {
 		runtimeTestDelegator: func(_ context.Context, parent DelegationParent, request DelegationRequest) (RunResult, error) {
 			starts++
 			if request.Agent != "reviewer" {
-				t.Fatal("unknown preset reached manager")
+				t.Fatal("unknown PresetAgent reached manager")
 			}
 			return delegationChild(parent, RunCompleted), nil
 		},
@@ -98,7 +98,7 @@ func TestUnknownPresetCanBeCorrectedWithoutSpendingDelegation(t *testing.T) {
 	}
 }
 
-func TestChangingPresetDoesNotResetDelegationLimit(t *testing.T) {
+func TestChangingPresetAgentDoesNotResetDelegationLimit(t *testing.T) {
 	turn := delegationCall(`{"agent":"researcher","task":"research"}`)
 	turn.ToolCalls = append(turn.ToolCalls, delegationCall(`{"agent":"reviewer","task":"review"}`).ToolCalls...)
 	model := &delegationScriptModel{turns: []llm.Turn{turn, {Content: "done"}}}

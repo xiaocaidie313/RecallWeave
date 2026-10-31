@@ -1,4 +1,4 @@
-// Package subagent manages bounded, synchronous task delegations. The
+// Package subagent manages bounded task delegations and continuations. The
 // execution backend reuses runtime.Run; it never creates chat turns or memories.
 package subagent
 
@@ -17,19 +17,20 @@ import (
 type Config struct {
 	MaxRounds    int
 	Timeout      time.Duration
-	Presets      []Preset
+	PresetAgents []PresetAgent
 	DefaultAgent string
 }
 
 type Manager struct {
-	presets      map[string]Preset
-	agentIDs     map[string]int64
-	order        []string
-	defaultAgent string
-	subagentSessionsStore     SubagentSessionStore
-	activeMu     sync.Mutex
-	active       map[string]bool
-	unsaved      map[string]unsavedCheckpoint
+	PresetAgents          map[string]PresetAgent
+	agentIDs              map[string]int64
+	order                 []string
+	defaultAgent          string
+	subagentSessionsStore SubagentSessionStore
+	activeMu              sync.Mutex
+	active                map[string]bool
+	unsaved               map[string]unsavedCheckpoint
+	background            *backgroundRunner
 }
 
 func NewManager(config Config) (*Manager, error) {
@@ -42,42 +43,42 @@ func NewManager(config Config) (*Manager, error) {
 	if err := validateBudget(config.MaxRounds, config.Timeout); err != nil {
 		return nil, fmt.Errorf("subagent: default budget: %w", err)
 	}
-	if config.Presets == nil {
-		config.Presets = DefaultPresets()
+	if config.PresetAgents == nil {
+		config.PresetAgents = DefaultPresetAgents()
 	}
-	if len(config.Presets) == 0 {
-		return nil, fmt.Errorf("subagent: at least one preset is required")
+	if len(config.PresetAgents) == 0 {
+		return nil, fmt.Errorf("subagent: at least one PresetAgent is required")
 	}
 	if config.DefaultAgent == "" {
 		config.DefaultAgent = "researcher"
 	}
 	manager := &Manager{
-		presets:      make(map[string]Preset, len(config.Presets)),
-		agentIDs:     make(map[string]int64, len(config.Presets)),
+		PresetAgents: make(map[string]PresetAgent, len(config.PresetAgents)),
+		agentIDs:     make(map[string]int64, len(config.PresetAgents)),
 		defaultAgent: config.DefaultAgent,
 		active:       make(map[string]bool),
 		unsaved:      make(map[string]unsavedCheckpoint),
 	}
-	for index, preset := range config.Presets {
-		if preset.MaxRounds == 0 {
-			preset.MaxRounds = config.MaxRounds
+	for index, PresetAgent := range config.PresetAgents {
+		if PresetAgent.MaxRounds == 0 {
+			PresetAgent.MaxRounds = config.MaxRounds
 		}
-		if preset.Timeout == 0 {
-			preset.Timeout = config.Timeout
+		if PresetAgent.Timeout == 0 {
+			PresetAgent.Timeout = config.Timeout
 		}
-		if err := validatePreset(preset); err != nil {
-			return nil, fmt.Errorf("subagent: preset %q: %w", preset.Name, err)
+		if err := validatePresetAgent(PresetAgent); err != nil {
+			return nil, fmt.Errorf("subagent: PresetAgent %q: %w", PresetAgent.Name, err)
 		}
-		if _, exists := manager.presets[preset.Name]; exists {
-			return nil, fmt.Errorf("subagent: duplicate preset %q", preset.Name)
+		if _, exists := manager.PresetAgents[PresetAgent.Name]; exists {
+			return nil, fmt.Errorf("subagent: duplicate PresetAgent %q", PresetAgent.Name)
 		}
-		preset.AllowedTools = append([]string(nil), preset.AllowedTools...)
-		manager.presets[preset.Name] = preset
-		manager.agentIDs[preset.Name] = int64(index + 2)
-		manager.order = append(manager.order, preset.Name)
+		PresetAgent.AllowedTools = append([]string(nil), PresetAgent.AllowedTools...)
+		manager.PresetAgents[PresetAgent.Name] = PresetAgent
+		manager.agentIDs[PresetAgent.Name] = int64(index + 2)
+		manager.order = append(manager.order, PresetAgent.Name)
 	}
-	if _, exists := manager.presets[manager.defaultAgent]; !exists {
-		return nil, fmt.Errorf("subagent: default preset %q is not registered", manager.defaultAgent)
+	if _, exists := manager.PresetAgents[manager.defaultAgent]; !exists {
+		return nil, fmt.Errorf("subagent: default PresetAgent %q is not registered", manager.defaultAgent)
 	}
 	return manager, nil
 }
@@ -99,8 +100,8 @@ func (m *Manager) AvailableAgents() []runtime.DelegationAgent {
 	}
 	agents := make([]runtime.DelegationAgent, 0, len(m.order))
 	for _, name := range m.order {
-		preset := m.presets[name]
-		agents = append(agents, runtime.DelegationAgent{Name: preset.Name, Description: preset.Description})
+		PresetAgent := m.PresetAgents[name]
+		agents = append(agents, runtime.DelegationAgent{Name: PresetAgent.Name, Description: PresetAgent.Description})
 	}
 	return agents
 }
@@ -124,9 +125,9 @@ func (m *Manager) Delegate(ctx context.Context, parent runtime.DelegationParent,
 	if name == "" {
 		name = m.defaultAgent
 	}
-	preset, exists := m.presets[name]
+	PresetAgent, exists := m.PresetAgents[name]
 	if !exists {
-		return runtime.RunResult{}, fmt.Errorf("subagent: preset %q is not registered", name)
+		return runtime.RunResult{}, fmt.Errorf("subagent: PresetAgent %q is not registered", name)
 	}
 	if m.ContinuationsEnabled() {
 		if parent.ConversationID == 0 {
@@ -136,21 +137,21 @@ func (m *Manager) Delegate(ctx context.Context, parent runtime.DelegationParent,
 		if err != nil {
 			return runtime.RunResult{}, err
 		}
-		return m.executeSession(ctx, parent, taskInput(request), request.Task, preset, id, nil)
+		return m.executeSession(ctx, parent, taskInput(request), request.Task, PresetAgent, id, nil)
 	}
-	return m.executeSession(ctx, parent, taskInput(request), request.Task, preset, "", nil)
+	return m.executeSession(ctx, parent, taskInput(request), request.Task, PresetAgent, "", nil)
 }
 
-func (m *Manager) newChild(parent *agent.Agent, preset Preset) *agent.Agent {
+func (m *Manager) newChild(parent *agent.Agent, PresetAgent PresetAgent) *agent.Agent {
 	allowed := parent.Tools()
-	presetTools := make(map[string]bool, len(preset.AllowedTools))
-	for _, name := range preset.AllowedTools {
-		presetTools[name] = true
+	PresetAgentTools := make(map[string]bool, len(PresetAgent.AllowedTools))
+	for _, name := range PresetAgent.AllowedTools {
+		PresetAgentTools[name] = true
 	}
 	var tools agent.ToolBox
 	var external []llm.Tool
 	for _, schema := range allowed.Schemas() {
-		if !presetTools[schema.Name] {
+		if !PresetAgentTools[schema.Name] {
 			continue
 		}
 		name := schema.Name
@@ -166,9 +167,9 @@ func (m *Manager) newChild(parent *agent.Agent, preset Preset) *agent.Agent {
 			tools = append(tools, tool)
 		}
 	}
-	child := agent.NewAgent(m.agentIDs[preset.Name], preset.Name, parent.Model,
-		childInstructions+"\n\n"+preset.Instructions, preset.MaxRounds,
-		agent.NewAbility(preset.Name, preset.Description, "", tools))
+	child := agent.NewAgent(m.agentIDs[PresetAgent.Name], PresetAgent.Name, parent.Model,
+		childInstructions+"\n\n"+PresetAgent.Instructions, PresetAgent.MaxRounds,
+		agent.NewAbility(PresetAgent.Name, PresetAgent.Description, "", tools))
 	// Retain the external-tool classification so the existing privacy and
 	// untrusted-web-content instructions also apply inside the researcher.
 	child.ExternalTools = external

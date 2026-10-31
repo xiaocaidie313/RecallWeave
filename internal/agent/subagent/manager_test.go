@@ -56,7 +56,7 @@ func TestResearcherRetainsExternalToolInstructions(t *testing.T) {
 		agent.NewAbility("memory", "", "", agent.ToolBox{managerReadTool("get_messages", nil)}))
 	parent.ExternalTools = []llm.Tool{managerReadTool("mcp_tavily_search", nil), managerReadTool("mcp_write_file", nil)}
 	manager := testManager(t, Config{})
-	child := manager.newChild(parent, manager.presets[manager.DefaultAgent()])
+	child := manager.newChild(parent, manager.PresetAgents[manager.DefaultAgent()])
 	if len(child.ExternalTools) != 1 || child.ExternalTools[0].Schema.Name != "mcp_tavily_search" {
 		t.Fatalf("allowed remote reader lost its external classification: %+v", child.ExternalTools)
 	}

@@ -2,9 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"recallweave/internal/agent"
@@ -27,6 +32,12 @@ import (
 const defaultConfigPath = "config/config.yaml"
 
 func main() {
+	exitCode := 0
+	defer func() {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+	}()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// 加载配置
@@ -128,6 +139,20 @@ func main() {
 		}
 		logger.Info("external MCP tools registered", "count", len(remoteTools))
 	}
+	serviceCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := delegator.StartBackground(serviceCtx, subagent.NewTaskStore(database), subagent.BackgroundConfig{Workers: 2, QueueCapacity: 8}); err != nil {
+		logger.Error("failed to start background subagents", "error", err)
+		exitCode = 1
+		return
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		if err := delegator.CloseBackground(ctx); err != nil {
+			logger.Error("background subagent shutdown incomplete", "error", err)
+		}
+	}()
 	chatService := chat.NewAgent(recall, memoryManger, extracter).
 		WithDelegator(delegator)
 
@@ -137,6 +162,7 @@ func main() {
 		apphttp.NewChatHandler(chatService),
 		apphttp.NewConversationHandler(memoryManger),
 	)
+	apphttp.MountSubagentTasks(r, apphttp.NewSubagentTaskHandler(delegator))
 	// if token := os.Getenv("RECALLWEAVE_MCP_TOKEN"); token != "" {
 	// 	apphttp.MountMCP(r, appmcp.NewMcpServer(memoryManger), token)
 	// 	logger.Info("MCP Streamable HTTP enabled", "path", "/mcp")
@@ -148,8 +174,23 @@ func main() {
 	address := fmt.Sprintf(":%d", cfg.Server.Port)
 	logger.Info("RecallWeave API started", "address", address)
 
-	if err := r.Run(address); err != nil {
-		logger.Error("failed to start server", "error", err)
-		os.Exit(1)
+	server := &http.Server{Addr: address, Handler: r, ReadHeaderTimeout: 5 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return serviceCtx }}
+	serverErrors := make(chan error, 1)
+	go func() { serverErrors <- server.ListenAndServe() }()
+	select {
+	case err := <-serverErrors:
+		if !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTP server stopped", "error", err)
+			exitCode = 1
+		}
+		stop()
+	case <-serviceCtx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("HTTP shutdown timed out", "error", err)
+		_ = server.Close()
 	}
 }
