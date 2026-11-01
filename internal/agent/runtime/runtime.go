@@ -72,18 +72,29 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 
 	tools := a.Tools()
 	for _, schema := range tools.Schemas() {
-		if schema.Name == plan.ToolName || schema.Name == DelegateTaskToolName || schema.Name == FollowupTaskToolName || schema.Name == ListSubagentsToolName || schema.Name == GetSubagentTaskToolName || schema.Name == CancelSubagentTaskToolName {
+		if schema.Name == plan.ToolName || schema.Name == DelegateTaskToolName || schema.Name == FollowupTaskToolName || schema.Name == ListSubagentsToolName || schema.Name == GetSubagentTaskToolName || schema.Name == CancelSubagentTaskToolName || schema.Name == DelegateTaskGroupToolName || schema.Name == GetTaskGroupToolName || schema.Name == CancelTaskGroupToolName {
 			return fail(0, fmt.Errorf("runtime: tool name %q is reserved for runtime", schema.Name), RunFailed)
 		}
 	}
 	tools.Register(planTool(&state))
 	if req.Delegator != nil && req.ParentRunID == "" {
-		tool, err := delegationTool(&state, a, req.Delegator)
+		budget := &delegationBudget{}
+		tool, err := delegationTool(&state, a, req.Delegator, budget)
 		if err != nil {
 			return fail(0, err, RunFailed)
 		}
 		tools.Register(tool)
 		req.SystemPrompt += "\n" + delegationInstructions
+		if groups, ok := enabledGroups(req.Delegator); ok {
+			groupTools, err := taskGroupTools(&state, a, req.Delegator, groups, budget)
+			if err != nil {
+				return fail(0, err, RunFailed)
+			}
+			for _, tool := range groupTools {
+				tools.Register(tool)
+			}
+			req.SystemPrompt += "\n" + groupInstructions
+		}
 		if background, ok := enabledBackground(req.Delegator); ok {
 			for _, tool := range backgroundTools(&state, a, background) {
 				tools.Register(tool)

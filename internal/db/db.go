@@ -35,6 +35,8 @@ func AutoMigrate(db *gorm.DB) error {
 		&store.AgentRun{},
 		&store.SubagentSession{},
 		&store.SubagentTask{},
+		&store.TaskGroup{},
+		&store.ConversationEvent{},
 	); err != nil {
 		return err
 	}

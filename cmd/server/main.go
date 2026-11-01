@@ -19,6 +19,7 @@ import (
 	"recallweave/internal/chat"
 	"recallweave/internal/config"
 	"recallweave/internal/db"
+	"recallweave/internal/events"
 	"recallweave/internal/extract"
 	apphttp "recallweave/internal/http"
 	"recallweave/internal/ingest"
@@ -141,7 +142,8 @@ func main() {
 	}
 	serviceCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := delegator.StartBackground(serviceCtx, subagent.NewTaskStore(database), subagent.BackgroundConfig{Workers: 2, QueueCapacity: 8}); err != nil {
+	backgroundTasks := subagent.NewTaskStore(database).WithEvents().WithTaskGroups()
+	if err := delegator.StartBackground(serviceCtx, backgroundTasks, subagent.BackgroundConfig{Workers: 2, QueueCapacity: 8}); err != nil {
 		logger.Error("failed to start background subagents", "error", err)
 		exitCode = 1
 		return
@@ -153,8 +155,22 @@ func main() {
 			logger.Error("background subagent shutdown incomplete", "error", err)
 		}
 	}()
+	reportStore := chat.NewReportStore(database)
 	chatService := chat.NewAgent(recall, memoryManger, extracter).
-		WithDelegator(delegator)
+		WithDelegator(delegator).WithTurnWriter(reportStore)
+	reports, err := chat.StartReportDispatcher(serviceCtx, chatService, reportStore, chat.ReportConfig{})
+	if err != nil {
+		logger.Error("failed to start automatic reports", "error", err)
+		exitCode = 1
+		return
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := reports.Close(ctx); err != nil {
+			logger.Error("automatic report shutdown incomplete", "error", err)
+		}
+	}()
 
 	r := apphttp.NewRouter(
 		apphttp.NewIngestHandler(ingest.NewService(database, extracter)),
@@ -163,6 +179,8 @@ func main() {
 		apphttp.NewConversationHandler(memoryManger),
 	)
 	apphttp.MountSubagentTasks(r, apphttp.NewSubagentTaskHandler(delegator))
+	apphttp.MountTaskGroups(r, apphttp.NewTaskGroupHandler(delegator))
+	apphttp.MountConversationEvents(r, apphttp.NewEventsHandler(events.NewStore(database)))
 	// if token := os.Getenv("RECALLWEAVE_MCP_TOKEN"); token != "" {
 	// 	apphttp.MountMCP(r, appmcp.NewMcpServer(memoryManger), token)
 	// 	logger.Info("MCP Streamable HTTP enabled", "path", "/mcp")

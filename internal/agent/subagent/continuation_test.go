@@ -204,15 +204,15 @@ func TestContinuationCannotExpandOriginalToolAndBudgetGrant(t *testing.T) {
 		return llm.Turn{ToolCalls: []llm.ToolCall{{ID: "read", Name: "get_messages", Arguments: `{}`}}}, nil
 	}}
 	parent := managerParent(model, managerReadTool("get_messages", func(context.Context, string) (string, error) { return `{"session_id":8,"messages":[]}`, nil }), managerReadTool("search_memories", nil))
-	PresetAgent := PresetAgent{Name: "auditor", Description: "audit", Instructions: "old role", AllowedTools: []string{"get_messages"}, MaxRounds: 2, Timeout: time.Second}
-	first, err := testManager(t, Config{PresetAgents: []PresetAgent{PresetAgent}, DefaultAgent: "auditor"}).WithSubagentSessions(repository).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "audit"})
+	preset := PresetAgent{Name: "auditor", Description: "audit", Instructions: "old role", AllowedTools: []string{"get_messages"}, MaxRounds: 2, Timeout: time.Second}
+	first, err := testManager(t, Config{PresetAgents: []PresetAgent{preset}, DefaultAgent: "auditor"}).WithSubagentSessions(repository).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "audit"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	PresetAgent.MaxRounds = 8
-	PresetAgent.Timeout = 2 * time.Second
-	PresetAgent.AllowedTools = append(PresetAgent.AllowedTools, "search_memories")
-	continued, err := testManager(t, Config{PresetAgents: []PresetAgent{PresetAgent}, DefaultAgent: "auditor"}).WithSubagentSessions(repository).FollowUp(context.Background(), parent, runtime.FollowupRequest{SubagentID: first.State.SubagentID, Message: "continue"})
+	preset.MaxRounds = 8
+	preset.Timeout = 2 * time.Second
+	preset.AllowedTools = append(preset.AllowedTools, "search_memories")
+	continued, err := testManager(t, Config{PresetAgents: []PresetAgent{preset}, DefaultAgent: "auditor"}).WithSubagentSessions(repository).FollowUp(context.Background(), parent, runtime.FollowupRequest{SubagentID: first.State.SubagentID, Message: "continue"})
 	if err == nil || continued.State.CurrentRound != 2 || call != 3 {
 		t.Fatalf("old round budget was expanded: calls=%d run=%+v err=%v", call, continued.State, err)
 	}

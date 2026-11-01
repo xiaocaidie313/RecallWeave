@@ -28,6 +28,7 @@ type FollowupRequest struct {
 }
 
 type SubagentInfo struct {
+	GroupID     string    `json:"group_id,omitempty"`
 	TaskID      string    `json:"task_id,omitempty"`
 	SubagentID  string    `json:"subagent_id"`
 	Agent       string    `json:"agent"`

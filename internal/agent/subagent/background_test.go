@@ -355,6 +355,13 @@ func TestBackgroundFollowupRestoresHistoryAndSharesSessionLock(t *testing.T) {
 	if _, err := m.FollowUp(context.Background(), parent, runtime.FollowupRequest{SubagentID: first.SubagentID, Message: "racing"}); err == nil {
 		t.Fatal("concurrent sync followup accepted")
 	}
+	// Reporting an old result updates its metadata after a newer execution
+	// starts. It must not make that old execution the current child again.
+	tasks.mu.Lock()
+	old := tasks.rows[initial.TaskID]
+	old.ReportStatus, old.UpdatedAt = "delivered", time.Now().Add(time.Minute)
+	tasks.rows[initial.TaskID] = old
+	tasks.mu.Unlock()
 	items, err := m.ListSubagents(context.Background(), parent)
 	if err != nil {
 		t.Fatal(err)

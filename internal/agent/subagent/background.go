@@ -238,7 +238,7 @@ func (m *Manager) enqueue(ctx context.Context, parent runtime.DelegationParent, 
 		child: child, presetAgent: PresetAgentConfig, input: input, previous: previous, ctx: jobCtx, cancel: cancel, release: func() { released.Do(release) }}
 
 	r.mu.Lock()
-	r.jobs[record.ID] = nil
+	r.jobs[record.ID] = job
 	r.mu.Unlock()
 	// Every accepted submission owns a slot, so this buffered send cannot
 	// wait for a worker. The channel stays open throughout shutdown.
@@ -396,6 +396,7 @@ func (m *Manager) taskView(row store.SubagentTask) (runtime.BackgroundTask, erro
 		RunID: row.RunID, PreviousRunID: row.PreviousRunID, ConversationID: row.ConversationID,
 		Agent: row.AgentName, Task: row.Task, Status: row.Status, CancelRequested: row.CancelRequested,
 		Error: row.Error, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt}
+	view.GroupID = row.GroupID
 	view.ReportStatus, view.ReportRunID, view.ReportMessageID = row.ReportStatus, row.ReportRunID, row.ReportMessageID
 	view.ReportError, view.ReportedAt = row.ReportError, row.ReportedAt
 	if len(row.Result) != 0 && string(row.Result) != "null" {

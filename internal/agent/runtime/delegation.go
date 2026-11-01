@@ -72,8 +72,7 @@ type DelegationResult struct {
 	Error       string            `json:"error,omitempty"`
 }
 
-func delegationTool(state *RunState, parent *agent.Agent, delegator Delegator) (llm.Tool, error) {
-	started := false // Per Run, never stored on a shared manager or Agent.
+func delegationTool(state *RunState, parent *agent.Agent, delegator Delegator, budget *delegationBudget) (llm.Tool, error) {
 	properties := map[string]any{
 		"task":            map[string]any{"type": "string", "description": "具体任务；最多 8 KiB"},
 		"context":         map[string]any{"type": "string", "description": "必要背景和限制，不自动继承聊天；最多 16 KiB"},
@@ -132,7 +131,7 @@ func delegationTool(state *RunState, parent *agent.Agent, delegator Delegator) (
 			} else if request.Agent != "" {
 				return "", fmt.Errorf("delegate_task: this delegator does not expose named agents")
 			}
-			if started {
+			if budget.started {
 				return "", fmt.Errorf("delegate_task: this Run already used its one delegation")
 			}
 			if err := ctx.Err(); err != nil {
@@ -151,10 +150,10 @@ func delegationTool(state *RunState, parent *agent.Agent, delegator Delegator) (
 					}
 					return "", fmt.Errorf("delegate_task: background submission did not produce a task")
 				}
-				started = true
+				budget.started = true
 				return encodeBackgroundTask(task, submitErr)
 			}
-			started = true
+			budget.started = true
 			child, runErr := delegator.Delegate(ctx, DelegationParent{
 				RunID: state.RunID, ConversationID: state.ConversationID, Agent: parent,
 			}, request)
@@ -179,6 +178,7 @@ func encodeDelegationResult(child RunResult, runErr error) (string, error) {
 
 // SummarizeDelegation reads a completed child result without replaying its
 // tools or adding historical model calls to the caller's usage.
+// 总结委派结果
 func SummarizeDelegation(child RunResult, runErr error) DelegationResult {
 	calls := child.State.AllCalls()
 	total := useage.Sum(calls)

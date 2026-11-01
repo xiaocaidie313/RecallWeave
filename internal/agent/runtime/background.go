@@ -24,6 +24,7 @@ cancel_requested=true 表示取消已请求，运行中的任务仍需等执行�
 // BackgroundTask is a read-only projection; full child state is persisted
 // independently instead of being attached to an already-finished parent Run.
 type BackgroundTask struct {
+	GroupID         string            `json:"group_id,omitempty"`
 	TaskID          string            `json:"task_id"`
 	SubagentID      string            `json:"subagent_id"`
 	ParentRunID     string            `json:"parent_run_id"`
@@ -40,6 +41,11 @@ type BackgroundTask struct {
 	UpdatedAt       time.Time         `json:"updated_at"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	FinishedAt      *time.Time        `json:"finished_at,omitempty"`
+	ReportStatus    string            `json:"report_status,omitempty"`
+	ReportRunID     string            `json:"report_run_id,omitempty"`
+	ReportMessageID uint              `json:"report_message_id,omitempty"`
+	ReportError     string            `json:"report_error,omitempty"`
+	ReportedAt      *time.Time        `json:"reported_at,omitempty"`
 }
 
 // BackgroundDelegator is optional so synchronous-only callers retain their

@@ -28,6 +28,7 @@ func LockConversation(tx *gorm.DB, owner uint) error {
 		return fmt.Errorf("events: transaction and conversation are required")
 	}
 	var conversation store.Conversation
+	// 单行锁住  id 为 owner 的 conversation
 	return tx.Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", owner).Take(&conversation).Error
 }
 

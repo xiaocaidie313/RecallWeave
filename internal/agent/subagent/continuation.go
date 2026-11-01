@@ -64,6 +64,7 @@ func (m *Manager) lockSubagentSession(conversationID uint, id string) (func(), e
 		return nil, fmt.Errorf("subagent: this child is already running")
 	}
 	m.active[key] = true
+	// release 释放锁  释放子任务
 	return func() { m.activeMu.Lock(); delete(m.active, key); m.activeMu.Unlock() }, nil
 }
 
@@ -90,6 +91,7 @@ func (m *Manager) prepareFollowUp(ctx context.Context, parent runtime.Delegation
 	if err := ctx.Err(); err != nil {
 		return fail(err)
 	}
+	// 锁定子任务
 	release, err := m.lockSubagentSession(parent.ConversationID, request.SubagentID)
 	if err != nil {
 		return fail(err)
@@ -265,10 +267,18 @@ func (m *Manager) ListSubagents(ctx context.Context, parent runtime.DelegationPa
 			positions[item.SubagentID] = i
 		}
 		for _, task := range tasks {
+			activity := task.CreatedAt
+			if task.StartedAt != nil && task.StartedAt.After(activity) {
+				activity = *task.StartedAt
+			}
+			if task.FinishedAt != nil && task.FinishedAt.After(activity) {
+				activity = *task.FinishedAt
+			}
 			index, exists := positions[task.SubagentID]
-			if exists && !task.UpdatedAt.After(updated[task.SubagentID]) {
+			if exists && !activity.After(updated[task.SubagentID]) {
 				if items[index].TaskID == "" && task.RunID == items[index].LastRunID {
 					items[index].TaskID = task.TaskID
+					items[index].GroupID = task.GroupID
 				}
 				continue
 			}
@@ -276,7 +286,7 @@ func (m *Manager) ListSubagents(ctx context.Context, parent runtime.DelegationPa
 			if lastRunID == "" {
 				lastRunID = task.PreviousRunID
 			}
-			info := runtime.SubagentInfo{SubagentID: task.SubagentID, TaskID: task.TaskID, Agent: task.Agent,
+			info := runtime.SubagentInfo{SubagentID: task.SubagentID, TaskID: task.TaskID, GroupID: task.GroupID, Agent: task.Agent,
 				Task: shortTask(task.Task), LastRunID: lastRunID, Status: runtime.RunStatus(task.Status)}
 			if exists {
 				info.CanFollowUp = items[index].CanFollowUp
@@ -290,7 +300,7 @@ func (m *Manager) ListSubagents(ctx context.Context, parent runtime.DelegationPa
 				positions[task.SubagentID] = len(items)
 				items = append(items, info)
 			}
-			updated[task.SubagentID] = task.UpdatedAt
+			updated[task.SubagentID] = activity
 		}
 		sort.Slice(items, func(i, j int) bool {
 			a, b := updated[items[i].SubagentID], updated[items[j].SubagentID]
@@ -324,8 +334,8 @@ func (m *Manager) checkCheckpoint(ctx context.Context, row store.SubagentSession
 			return err
 		}
 	}
-	if m.background != nil {
-		if verifier, ok := m.background.store.(TaskCheckpointVerifier); ok {
+	if m.backgroundRunner != nil {
+		if verifier, ok := m.backgroundRunner.store.(TaskCheckpointVerifier); ok {
 			return verifier.CheckTaskCheckpoint(ctx, row)
 		}
 	}
