@@ -125,6 +125,7 @@ func TestBackgroundQueryAndCancellationPreserveScopeWithoutRebillingHistory(t *t
 		}
 		task := backgroundReceipt(parent)
 		task.Status = "completed"
+		task.DeliveryMode = "direct"
 		child := delegationChild(parent, RunCompleted)
 		summary := SummarizeDelegation(child, nil)
 		task.Result = &summary
@@ -147,9 +148,11 @@ func TestBackgroundQueryAndCancellationPreserveScopeWithoutRebillingHistory(t *t
 	if gets != 1 || cancels != 1 || len(result.State.Children) != 0 || len(result.State.AllCalls()) != 3 {
 		t.Fatalf("old work was billed again: %+v", result.State)
 	}
-	var reply BackgroundTask
-	if err := json.Unmarshal([]byte(result.State.Steps[0].Result), &reply); err != nil || reply.Result == nil || reply.Result.Usage.PromptTokens != 13 {
-		t.Fatalf("historical usage missing from read-only result: %+v %v", reply, err)
+	for _, step := range result.State.Steps {
+		var reply BackgroundTask
+		if err := json.Unmarshal([]byte(step.Result), &reply); err != nil || reply.Result == nil || reply.Result.Usage.PromptTokens != 13 || reply.DeliveryMode != "direct" {
+			t.Fatalf("historical usage or delivery mode missing from read-only result: %+v %v", reply, err)
+		}
 	}
 }
 

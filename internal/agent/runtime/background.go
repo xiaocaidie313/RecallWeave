@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"recallweave/internal/agent"
+	"recallweave/internal/delivery"
 	"recallweave/internal/llm"
 )
 
@@ -16,6 +17,7 @@ const GetSubagentTaskToolName = "get_subagent_task"
 const CancelSubagentTaskToolName = "cancel_subagent_task"
 
 const backgroundInstructions = `delegate_task 和 followup_task 可设置 background=true 提交后台任务；省略或 false 仍同步等待。当前回答必须依赖结果时使用同步；用户希望边聊边调查时可用后台方式。
+后台 delivery_mode 默认 direct：结束后直接交付该子任务的结果和来源，不再调用模型改写。只有用户明确要求主 Agent 综合判断或改写交付时才用 synthesize；任务有关联或数量多本身不是综合理由。派发时按已有用户要求选择，不增加一次模型判断。该字段不改变同步执行。
 后台提交只返回 task_id、subagent_id 和调度状态，不代表已经得到调查结论。主 Run 可以结束，后台任务独立执行，不会继续修改当前 Run 的 children 或消耗。
 需要查看进展或取得结果时，用 get_subagent_task 查询本对话的 task_id；用户要求停止时用 cancel_subagent_task。不能猜 ID，也不能读取其他对话的任务。
 不要在一轮里反复查询等待任务完成；queued 或 running 时说明仍在处理并结束本轮，后续再按需查询。完成后 result 中才有结论、实际来源和子 Run 消耗；读取结果不会把历史调用再次计入当前 Run。
@@ -24,6 +26,7 @@ cancel_requested=true 表示取消已请求，运行中的任务仍需等执行�
 // BackgroundTask is a read-only projection; full child state is persisted
 // independently instead of being attached to an already-finished parent Run.
 type BackgroundTask struct {
+	DeliveryMode    string            `json:"delivery_mode"`
 	GroupID         string            `json:"group_id,omitempty"`
 	TaskID          string            `json:"task_id"`
 	SubagentID      string            `json:"subagent_id"`
@@ -46,6 +49,13 @@ type BackgroundTask struct {
 	ReportMessageID uint              `json:"report_message_id,omitempty"`
 	ReportError     string            `json:"report_error,omitempty"`
 	ReportedAt      *time.Time        `json:"reported_at,omitempty"`
+}
+
+func taskDeliveryModeSchema() map[string]any {
+	return map[string]any{
+		"type": "string", "enum": []string{delivery.Direct, delivery.Synthesize}, "default": delivery.Direct,
+		"description": "仅后台交付生效；默认 direct 直接交付子任务结果、无额外模型调用。只有用户明确要求主 Agent 综合判断或改写时选 synthesize，结束后额外调用一次主模型",
+	}
 }
 
 // BackgroundDelegator is optional so synchronous-only callers retain their

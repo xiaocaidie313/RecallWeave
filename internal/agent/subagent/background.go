@@ -13,6 +13,7 @@ import (
 
 	"recallweave/internal/agent"
 	"recallweave/internal/agent/runtime"
+	"recallweave/internal/delivery"
 	"recallweave/internal/store"
 	"recallweave/internal/watch/useage"
 )
@@ -156,6 +157,10 @@ func (m *Manager) Submit(ctx context.Context, parent runtime.DelegationParent, r
 	if strings.TrimSpace(request.Task) == "" || len(request.Task) > 8<<10 || len(request.Context) > 16<<10 || len(request.ExpectedOutput) > 2<<10 || !utf8.ValidString(taskInput(request)) {
 		return runtime.BackgroundTask{}, fmt.Errorf("subagent: invalid background task")
 	}
+	mode, err := delivery.NormalizeTaskMode(request.DeliveryMode)
+	if err != nil {
+		return runtime.BackgroundTask{}, err
+	}
 	name := request.Agent
 	if name == "" {
 		name = m.defaultAgent
@@ -179,12 +184,16 @@ func (m *Manager) Submit(ctx context.Context, parent runtime.DelegationParent, r
 		m.abortReservation()
 		return runtime.BackgroundTask{}, err
 	}
-	return m.enqueue(ctx, parent, taskInput(request), request.Task, PresetAgentConfig, id, nil, release)
+	return m.enqueue(ctx, parent, taskInput(request), request.Task, PresetAgentConfig, mode, id, nil, release)
 }
 
 func (m *Manager) SubmitFollowUp(ctx context.Context, parent runtime.DelegationParent, request runtime.FollowupRequest) (runtime.BackgroundTask, error) {
 	if !m.BackgroundEnabled() {
 		return runtime.BackgroundTask{}, ErrBackgroundUnavailable
+	}
+	mode, err := delivery.NormalizeTaskMode(request.DeliveryMode)
+	if err != nil {
+		return runtime.BackgroundTask{}, err
 	}
 	if err := m.backgroundRunner.reserve(ctx); err != nil {
 		return runtime.BackgroundTask{}, err
@@ -194,7 +203,7 @@ func (m *Manager) SubmitFollowUp(ctx context.Context, parent runtime.DelegationP
 		m.abortReservation()
 		return runtime.BackgroundTask{}, err
 	}
-	return m.enqueue(ctx, parent, "继续此子任务：\n"+request.Message, previous.Task, PresetAgent, previous.ID, &previous, release)
+	return m.enqueue(ctx, parent, "继续此子任务：\n"+request.Message, previous.Task, PresetAgent, mode, previous.ID, &previous, release)
 }
 
 func (m *Manager) abortReservation() {
@@ -203,7 +212,7 @@ func (m *Manager) abortReservation() {
 	m.backgroundRunner.pending.Done()
 }
 
-func (m *Manager) enqueue(ctx context.Context, parent runtime.DelegationParent, input, task string, PresetAgentConfig PresetAgent, id string, previous *store.SubagentSession, release func()) (runtime.BackgroundTask, error) {
+func (m *Manager) enqueue(ctx context.Context, parent runtime.DelegationParent, input, task string, PresetAgentConfig PresetAgent, mode, id string, previous *store.SubagentSession, release func()) (runtime.BackgroundTask, error) {
 	r := m.backgroundRunner
 	accepted := false
 	defer func() {
@@ -220,7 +229,7 @@ func (m *Manager) enqueue(ctx context.Context, parent runtime.DelegationParent, 
 	}
 	now := time.Now()
 	record := store.SubagentTask{ID: taskID, SubagentID: id, ParentRunID: parent.RunID,
-		ConversationID: parent.ConversationID, AgentName: PresetAgentConfig.Name, Task: task, Status: "queued", CreatedAt: now, UpdatedAt: now}
+		ConversationID: parent.ConversationID, AgentName: PresetAgentConfig.Name, Task: task, DeliveryMode: mode, Status: "queued", CreatedAt: now, UpdatedAt: now}
 	if previous != nil {
 		record.PreviousRunID = previous.LatestRunID
 	}
@@ -392,11 +401,16 @@ func (m *Manager) finishBackground(r *backgroundRunner, row store.SubagentTask, 
 
 // 将 委派任务格式 转化成 后台任务视图
 func (m *Manager) taskView(row store.SubagentTask) (runtime.BackgroundTask, error) {
+	mode, err := delivery.NormalizeTaskMode(row.DeliveryMode)
+	if err != nil {
+		return runtime.BackgroundTask{}, err
+	}
 	view := runtime.BackgroundTask{TaskID: row.ID, SubagentID: row.SubagentID, ParentRunID: row.ParentRunID,
 		RunID: row.RunID, PreviousRunID: row.PreviousRunID, ConversationID: row.ConversationID,
 		Agent: row.AgentName, Task: row.Task, Status: row.Status, CancelRequested: row.CancelRequested,
 		Error: row.Error, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt}
 	view.GroupID = row.GroupID
+	view.DeliveryMode = mode
 	view.ReportStatus, view.ReportRunID, view.ReportMessageID = row.ReportStatus, row.ReportRunID, row.ReportMessageID
 	view.ReportError, view.ReportedAt = row.ReportError, row.ReportedAt
 	if len(row.Result) != 0 && string(row.Result) != "null" {

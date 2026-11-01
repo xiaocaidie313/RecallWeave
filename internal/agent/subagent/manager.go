@@ -28,9 +28,9 @@ type Manager struct {
 	defaultAgent          string
 	subagentSessionsStore SubagentSessionStore
 	activeMu              sync.Mutex
-	active                map[string]bool
-	unsaved               map[string]unsavedCheckpoint
-	background            *backgroundRunner
+	active                map[string]bool              // 标记活跃任务  并发
+	unsaved               map[string]unsavedCheckpoint // 未保存的检查点
+	backgroundRunner      *backgroundRunner            // 后台任务运行器
 }
 
 func NewManager(config Config) (*Manager, error) {
@@ -142,10 +142,10 @@ func (m *Manager) Delegate(ctx context.Context, parent runtime.DelegationParent,
 	return m.executeSession(ctx, parent, taskInput(request), request.Task, PresetAgent, "", nil)
 }
 
-func (m *Manager) newChild(parent *agent.Agent, PresetAgent PresetAgent) *agent.Agent {
+func (m *Manager) newChild(parent *agent.Agent, PresetAgentConfig PresetAgent) *agent.Agent {
 	allowed := parent.Tools()
-	PresetAgentTools := make(map[string]bool, len(PresetAgent.AllowedTools))
-	for _, name := range PresetAgent.AllowedTools {
+	PresetAgentTools := make(map[string]bool, len(PresetAgentConfig.AllowedTools))
+	for _, name := range PresetAgentConfig.AllowedTools {
 		PresetAgentTools[name] = true
 	}
 	var tools agent.ToolBox
@@ -167,9 +167,9 @@ func (m *Manager) newChild(parent *agent.Agent, PresetAgent PresetAgent) *agent.
 			tools = append(tools, tool)
 		}
 	}
-	child := agent.NewAgent(m.agentIDs[PresetAgent.Name], PresetAgent.Name, parent.Model,
-		childInstructions+"\n\n"+PresetAgent.Instructions, PresetAgent.MaxRounds,
-		agent.NewAbility(PresetAgent.Name, PresetAgent.Description, "", tools))
+	child := agent.NewAgent(m.agentIDs[PresetAgentConfig.Name], PresetAgentConfig.Name, parent.Model,
+		childInstructions+"\n\n"+PresetAgentConfig.Instructions, PresetAgentConfig.MaxRounds,
+		agent.NewAbility(PresetAgentConfig.Name, PresetAgentConfig.Description, "", tools))
 	// Retain the external-tool classification so the existing privacy and
 	// untrusted-web-content instructions also apply inside the researcher.
 	child.ExternalTools = external

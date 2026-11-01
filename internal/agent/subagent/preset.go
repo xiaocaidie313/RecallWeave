@@ -8,8 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-// PresetAgent is trusted server configuration. Model requests can select its Name,
-// but cannot alter its instructions, tool allowlist or execution budget.
+// preset agent Config  preset agent 配置
 type PresetAgent struct {
 	Name         string
 	Description  string
@@ -75,7 +74,7 @@ func validatePresetAgent(PresetAgent PresetAgent) error {
 		}
 		seen[name] = true
 		switch name {
-		case "delegate_task", "followup_task", "list_subagents", "get_subagent_task", "cancel_subagent_task", "update_plan", "load_skill", "read_skill_reference", "save_artifact", "deactivate_memory":
+		case "delegate_task", "delegate_task_group", "get_task_group", "cancel_task_group", "followup_task", "list_subagents", "get_subagent_task", "cancel_subagent_task", "update_plan", "load_skill", "read_skill_reference", "save_artifact", "deactivate_memory":
 			return fmt.Errorf("tool %q cannot be granted by a subagent PresetAgent", name)
 		}
 	}

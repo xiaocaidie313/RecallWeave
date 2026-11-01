@@ -33,13 +33,13 @@ func taskStoreRecord() store.SubagentTask {
 	return store.SubagentTask{ID: "task-1", SubagentID: "child-1", ParentRunID: "parent-1", ConversationID: 9, AgentName: "researcher", Task: "Check original sources", Status: "queued"}
 }
 func taskStoreRows(records ...store.SubagentTask) *sqlmock.Rows {
-	rows := sqlmock.NewRows([]string{"id", "subagent_id", "parent_run_id", "run_id", "previous_run_id", "conversation_id", "agent_name", "task", "status", "cancel_requested", "result", "error", "created_at", "updated_at", "started_at", "finished_at"})
+	rows := sqlmock.NewRows([]string{"id", "subagent_id", "parent_run_id", "run_id", "previous_run_id", "conversation_id", "agent_name", "task", "delivery_mode", "status", "cancel_requested", "result", "error", "created_at", "updated_at", "started_at", "finished_at"})
 	for _, r := range records {
 		var raw any
 		if len(r.Result) > 0 {
 			raw = string(r.Result)
 		}
-		rows.AddRow(r.ID, r.SubagentID, r.ParentRunID, r.RunID, r.PreviousRunID, r.ConversationID, r.AgentName, r.Task, r.Status, r.CancelRequested, raw, r.Error, taskStoreNow, taskStoreNow, r.StartedAt, r.FinishedAt)
+		rows.AddRow(r.ID, r.SubagentID, r.ParentRunID, r.RunID, r.PreviousRunID, r.ConversationID, r.AgentName, r.Task, r.DeliveryMode, r.Status, r.CancelRequested, raw, r.Error, taskStoreNow, taskStoreNow, r.StartedAt, r.FinishedAt)
 	}
 	return rows
 }
@@ -57,13 +57,56 @@ func TestTaskStoreCreatePersistsQueuedTaskBeforeExecution(t *testing.T) {
 	repo, mock := taskStoreTestDB(t)
 	r := taskStoreRecord()
 	mock.ExpectBegin()
-	mock.ExpectExec(`INSERT INTO "subagent_tasks" .*`).WithArgs(r.ID, r.SubagentID, r.ParentRunID, "", "", r.ConversationID, r.AgentName, r.Task, "queued", false, nil, "", taskStoreNow, taskStoreNow, nil, nil).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO "subagent_tasks" .*`).WithArgs(r.ID, "", r.SubagentID, r.ParentRunID, "", "", r.ConversationID, r.AgentName, r.Task, "direct", "queued", false, nil, "", taskStoreNow, taskStoreNow, nil, nil, "", "", "", uint(0), "", nil).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if err := repo.Create(context.Background(), &r); err != nil {
 		t.Fatal(err)
 	}
-	if !r.CreatedAt.Equal(taskStoreNow) || !r.UpdatedAt.Equal(taskStoreNow) {
+	if !r.CreatedAt.Equal(taskStoreNow) || !r.UpdatedAt.Equal(taskStoreNow) || r.DeliveryMode != "direct" {
 		t.Fatalf("timestamps missing: %+v", r)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskStoreDeliveryModeValidationAndExplicitSynthesis(t *testing.T) {
+	for _, mode := range []string{"combined", "smart"} {
+		repo, mock := taskStoreTestDB(t)
+		task := taskStoreRecord()
+		task.DeliveryMode = mode
+		if err := repo.Create(context.Background(), &task); err == nil {
+			t.Fatalf("invalid task mode %q accepted", mode)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo, mock := taskStoreTestDB(t)
+	task := taskStoreRecord()
+	task.DeliveryMode = "synthesize"
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO "subagent_tasks" .*`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	if err := repo.Create(context.Background(), &task); err != nil || task.DeliveryMode != "synthesize" {
+		t.Fatalf("explicit synthesis lost: %+v %v", task, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskStoreFinishCannotChangeDeliveryMode(t *testing.T) {
+	repo, mock := taskStoreTestDB(t)
+	current := taskStoreRecord()
+	current.DeliveryMode, current.Status = "direct", "running"
+	done := current
+	done.DeliveryMode, done.Status = "synthesize", "completed"
+	mock.ExpectBegin()
+	mock.ExpectQuery(taskLockSQL).WillReturnRows(taskStoreRows(current))
+	mock.ExpectRollback()
+	if err := repo.Finish(context.Background(), &done, nil); err == nil {
+		t.Fatal("completion changed delivery mode")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

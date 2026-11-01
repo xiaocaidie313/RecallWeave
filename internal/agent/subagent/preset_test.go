@@ -50,7 +50,7 @@ func TestManagerValidatesPresetAgentConfiguration(t *testing.T) {
 		{"invalid tool name", func(c *Config) { c.PresetAgents[0].AllowedTools = []string{"get.messages"} }},
 		{"empty tool name", func(c *Config) { c.PresetAgents[0].AllowedTools = []string{""} }},
 	}
-	for _, blocked := range []string{"delegate_task", "followup_task", "list_subagents", "get_subagent_task", "cancel_subagent_task", "update_plan", "load_skill", "read_skill_reference", "save_artifact", "deactivate_memory"} {
+	for _, blocked := range []string{"delegate_task", "delegate_task_group", "get_task_group", "cancel_task_group", "followup_task", "list_subagents", "get_subagent_task", "cancel_subagent_task", "update_plan", "load_skill", "read_skill_reference", "save_artifact", "deactivate_memory"} {
 		tests = append(tests, struct {
 			name string
 			edit func(*Config)
@@ -91,8 +91,8 @@ func TestDefaultPresetAgentsAndDefaultSelectionRemainCompatible(t *testing.T) {
 }
 
 func TestPresetAgentAndMetadataCannotMutateManagerConfiguration(t *testing.T) {
-	PresetAgent := validPresetAgent()
-	config := Config{DefaultAgent: "auditor", PresetAgents: []PresetAgent{PresetAgent}}
+	preset := validPresetAgent()
+	config := Config{DefaultAgent: "auditor", PresetAgents: []PresetAgent{preset}}
 	manager := testManager(t, config)
 	config.PresetAgents[0].Name = "changed"
 	config.PresetAgents[0].Instructions = "changed"
@@ -101,11 +101,11 @@ func TestPresetAgentAndMetadataCannotMutateManagerConfiguration(t *testing.T) {
 	metadata[0].Name = "changed"
 	metadata[0].Description = "changed"
 	stored := manager.PresetAgents["auditor"]
-	if stored.Name != "auditor" || stored.Instructions != PresetAgent.Instructions || !slices.Equal(stored.AllowedTools, []string{"get_messages"}) {
+	if stored.Name != "auditor" || stored.Instructions != preset.Instructions || !slices.Equal(stored.AllowedTools, []string{"get_messages"}) {
 		t.Fatalf("caller configuration mutated manager: %+v", stored)
 	}
 	again := manager.AvailableAgents()
-	if again[0].Name != "auditor" || again[0].Description != PresetAgent.Description {
+	if again[0].Name != "auditor" || again[0].Description != preset.Description {
 		t.Fatalf("caller metadata mutated manager: %+v", again)
 	}
 	firstDefaults := DefaultPresetAgents()
@@ -146,10 +146,10 @@ func TestCustomPresetAgentUsesOnlyParentToolIntersection(t *testing.T) {
 			return "REMOTE_READ", nil
 		}),
 	)
-	PresetAgent := validPresetAgent()
-	PresetAgent.AllowedTools = []string{"get_messages", "mcp_custom_reader", "mcp_not_in_parent"}
-	PresetAgent.MaxRounds, PresetAgent.Timeout = 3, time.Second
-	manager := testManager(t, Config{DefaultAgent: "auditor", PresetAgents: []PresetAgent{PresetAgent}})
+	preset := validPresetAgent()
+	preset.AllowedTools = []string{"get_messages", "mcp_custom_reader", "mcp_not_in_parent"}
+	preset.MaxRounds, preset.Timeout = 3, time.Second
+	manager := testManager(t, Config{DefaultAgent: "auditor", PresetAgents: []PresetAgent{preset}})
 	result, err := manager.Delegate(context.Background(), parent, runtime.DelegationRequest{Agent: "auditor", Task: "audit"})
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestCustomPresetAgentUsesOnlyParentToolIntersection(t *testing.T) {
 		t.Fatalf("custom role escaped its tool scope: %+v calls=%v", result.State, toolCalls)
 	}
 	child := manager.newChild(parent.Agent, manager.PresetAgents["auditor"])
-	if child.MaxRounds != 3 || !strings.Contains(child.Instructions(), PresetAgent.Instructions) || !strings.Contains(child.Instructions(), "外部工具与资料规则") {
+	if child.MaxRounds != 3 || !strings.Contains(child.Instructions(), preset.Instructions) || !strings.Contains(child.Instructions(), "外部工具与资料规则") {
 		t.Fatal("custom role instructions, budget or external-tool classification lost")
 	}
 }
@@ -210,9 +210,9 @@ func TestUnknownPresetAgentDoesNotStartChild(t *testing.T) {
 }
 
 func TestPresetAgentBudgetOverridesDefaultBudget(t *testing.T) {
-	PresetAgent := validPresetAgent()
-	PresetAgent.MaxRounds, PresetAgent.Timeout = 2, time.Second
-	manager := testManager(t, Config{MaxRounds: 8, Timeout: time.Minute, DefaultAgent: "auditor", PresetAgents: []PresetAgent{PresetAgent}})
+	preset := validPresetAgent()
+	preset.MaxRounds, preset.Timeout = 2, time.Second
+	manager := testManager(t, Config{MaxRounds: 8, Timeout: time.Minute, DefaultAgent: "auditor", PresetAgents: []PresetAgent{preset}})
 	resolved := manager.PresetAgents["auditor"]
 	if resolved.MaxRounds != 2 || resolved.Timeout != time.Second {
 		t.Fatalf("role budget was replaced by defaults: %+v", resolved)

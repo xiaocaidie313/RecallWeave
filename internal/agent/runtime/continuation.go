@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"recallweave/internal/agent"
+	"recallweave/internal/delivery"
 	"recallweave/internal/llm"
 )
 
@@ -22,9 +23,10 @@ const continuationInstructions = `可用 followup_task 向同一个子任务补�
 只有 can_follow_up=true 才表示上下文已保存且可以尝试续接。completed 只说明本次执行正常结束，不保证任务已经充分完成或结论正确。`
 
 type FollowupRequest struct {
-	SubagentID string `json:"subagent_id"`
-	Message    string `json:"message"`
-	Background bool   `json:"background,omitempty"`
+	SubagentID   string `json:"subagent_id"`
+	Message      string `json:"message"`
+	Background   bool   `json:"background,omitempty"`
+	DeliveryMode string `json:"delivery_mode,omitempty"`
 }
 
 type SubagentInfo struct {
@@ -56,6 +58,7 @@ func continuationTools(state *RunState, parent *agent.Agent, continuation Contin
 	description := "向当前对话中同一个子任务补充要求，恢复它的消息和工具历史后同步执行。每个主 Run 最多一次实际补查。"
 	if backgroundEnabled {
 		followupProperties["background"] = map[string]any{"type": "boolean", "default": false, "description": "true 后台续接并立刻返回任务 ID；省略时同步等待"}
+		followupProperties["delivery_mode"] = taskDeliveryModeSchema()
 		description = "向同一个子任务补充要求并恢复其历史。默认同步；background=true 提交后台续接。每个主 Run 最多一次，后台与同步共用额度。"
 	}
 	parentInfo := func() DelegationParent {
@@ -156,6 +159,11 @@ func decodeFollowup(arguments string) (FollowupRequest, error) {
 	if strings.TrimSpace(request.Message) == "" || len(request.Message) > 8<<10 {
 		return request, fmt.Errorf("followup_task: message must be nonempty and at most 8 KiB")
 	}
+	mode, err := delivery.NormalizeTaskMode(request.DeliveryMode)
+	if err != nil {
+		return request, fmt.Errorf("followup_task: %w", err)
+	}
+	request.DeliveryMode = mode
 	return request, nil
 }
 

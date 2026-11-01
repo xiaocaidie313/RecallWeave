@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"recallweave/internal/delivery"
+	"recallweave/internal/events"
 	"recallweave/internal/store"
 
 	"gorm.io/gorm"
@@ -14,7 +16,25 @@ import (
 )
 
 type GormTaskStore struct {
-	db *gorm.DB
+	db        *gorm.DB
+	events    bool
+	groupMode bool
+}
+
+func (s *GormTaskStore) WithTaskGroups() *GormTaskStore {
+	if s != nil {
+		s.groupMode = true
+	}
+	return s
+}
+
+func (s *GormTaskStore) GroupsEnabled() bool { return s != nil && s.groupMode }
+
+func (s *GormTaskStore) WithEvents() *GormTaskStore {
+	if s != nil {
+		s.events = true
+	}
+	return s
 }
 
 func NewTaskStore(db *gorm.DB) *GormTaskStore {
@@ -45,6 +65,8 @@ func checkTaskIdentity(id string, owner uint) error {
 	}
 	return nil
 }
+
+// 是否非空 / 长度<= 64 / 有无空格 / 是否合法utf8
 func validTaskID(id string, optional bool) bool {
 	return (id != "" || optional) && len(id) <= 64 && strings.TrimSpace(id) == id && utf8.ValidString(id)
 }
@@ -55,7 +77,7 @@ func checkTaskRecord(record *store.SubagentTask) error {
 	if err := checkTaskIdentity(record.ID, record.ConversationID); err != nil {
 		return err
 	}
-	if !validTaskID(record.SubagentID, false) || !validTaskID(record.ParentRunID, false) || !validTaskID(record.RunID, true) || !validTaskID(record.PreviousRunID, true) {
+	if !validTaskID(record.SubagentID, false) || !validTaskID(record.ParentRunID, false) || !validTaskID(record.RunID, true) || !validTaskID(record.PreviousRunID, true) || !validTaskID(record.GroupID, true) {
 		return fmt.Errorf("subagent: task execution identities are invalid")
 	}
 	if strings.TrimSpace(record.AgentName) == "" || len(record.AgentName) > 40 || !utf8.ValidString(record.AgentName) || strings.TrimSpace(record.Task) == "" || len(record.Task) > 8<<10 || !utf8.ValidString(record.Task) {
@@ -63,6 +85,9 @@ func checkTaskRecord(record *store.SubagentTask) error {
 	}
 	if len(record.Result) > 0 && !json.Valid(record.Result) {
 		return fmt.Errorf("subagent: task result must be valid JSON")
+	}
+	if _, err := delivery.NormalizeTaskMode(record.DeliveryMode); err != nil {
+		return err
 	}
 	return nil
 }
@@ -73,10 +98,12 @@ func (s *GormTaskStore) Create(ctx context.Context, task *store.SubagentTask) er
 	if err := checkTaskRecord(task); err != nil {
 		return err
 	}
-	if task.Status != "queued" || task.RunID != "" || task.CancelRequested || len(task.Result) > 0 || task.StartedAt != nil || task.FinishedAt != nil {
+	if task.GroupID != "" || task.Status != "queued" || task.RunID != "" || task.CancelRequested || len(task.Result) > 0 || task.StartedAt != nil || task.FinishedAt != nil || task.ReportStatus != "" || task.ReportClaim != "" || task.ReportRunID != "" || task.ReportMessageID != 0 || task.ReportError != "" || task.ReportedAt != nil {
 		return fmt.Errorf("subagent: a new background task must be queued and unexecuted")
 	}
 	record := *task
+	record.DeliveryMode, _ = delivery.NormalizeTaskMode(record.DeliveryMode)
+	// create 可能会回填字段  保护原始的task字段
 	if err := s.db.WithContext(ctx).Create(&record).Error; err != nil {
 		return err
 	}
@@ -91,8 +118,10 @@ func (s *GormTaskStore) Load(ctx context.Context, id string, owner uint) (store.
 	if err := checkTaskIdentity(id, owner); err != nil {
 		return record, err
 	}
-	err := s.db.WithContext(ctx).Where("id = ? AND conversation_id = ?", id, owner).Take(&record).Error
-	return record, err
+	if err := s.db.WithContext(ctx).Where("id = ? AND conversation_id = ? ", id, owner).Take(&record).Error; err != nil {
+		return record, err
+	}
+	return record, nil
 }
 func (s *GormTaskStore) List(ctx context.Context, owner uint, limit int) ([]store.SubagentTask, error) {
 	if err := s.check(ctx); err != nil {
@@ -123,9 +152,11 @@ func (s *GormTaskStore) Start(ctx context.Context, id string, owner uint) (bool,
 	if result.Error != nil {
 		return false, result.Error
 	}
+	// 命中一行 id + conversation_id 同时约束
 	if result.RowsAffected == 1 {
 		return true, nil
 	}
+	// 查看是否能load
 	if _, err := s.Load(ctx, id, owner); err != nil {
 		return false, err
 	}
@@ -146,6 +177,7 @@ func (s *GormTaskStore) Finish(ctx context.Context, task *store.SubagentTask, ru
 	if err := checkTaskRecord(task); err != nil {
 		return err
 	}
+	// 是否是终止状态
 	if !taskTerminalStatus(task.Status) {
 		return fmt.Errorf("subagent: task completion requires a terminal status")
 	}
@@ -153,21 +185,57 @@ func (s *GormTaskStore) Finish(ctx context.Context, task *store.SubagentTask, ru
 		return fmt.Errorf("subagent: execution Run does not match this task")
 	}
 	record := *task
+	if record.GroupID != "" && !s.GroupsEnabled() {
+		return fmt.Errorf("subagent: task groups are unavailable")
+	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if s.events || s.groupMode {
+			// 锁住 conversation
+			if err := events.LockConversation(tx, record.ConversationID); err != nil {
+				return err
+			}
+		}
+		var group *store.TaskGroup
+		if record.GroupID != "" {
+			var err error
+			group, err = lockTaskGroup(tx, record.GroupID, record.ConversationID)
+			if err != nil {
+				return err
+			}
+		}
 		var current store.SubagentTask
+		//
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ?", record.ID, record.ConversationID).Take(&current).Error; err != nil {
 			return err
 		}
 		if current.Status != "queued" && current.Status != "running" {
 			return ErrTaskConflict
 		}
-		if current.SubagentID != record.SubagentID || current.ParentRunID != record.ParentRunID || current.PreviousRunID != record.PreviousRunID || current.AgentName != record.AgentName || current.Task != record.Task {
+		if current.GroupID != record.GroupID || current.SubagentID != record.SubagentID || current.ParentRunID != record.ParentRunID || current.PreviousRunID != record.PreviousRunID || current.AgentName != record.AgentName || current.Task != record.Task {
 			return fmt.Errorf("subagent: completion cannot change task ownership or definition")
 		}
+		currentMode, err := delivery.NormalizeTaskMode(current.DeliveryMode)
+		if err != nil {
+			return err
+		}
+		recordMode, _ := delivery.NormalizeTaskMode(record.DeliveryMode)
+		if currentMode != recordMode {
+			return fmt.Errorf("subagent: completion cannot change delivery mode")
+		}
+		record.DeliveryMode = current.DeliveryMode
 		now := tx.NowFunc()
 		record.CreatedAt, record.StartedAt, record.CancelRequested = current.CreatedAt, current.StartedAt, current.CancelRequested
 		record.UpdatedAt, record.FinishedAt = now, &now
-		result := tx.Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ? AND status = ?", record.ID, record.ConversationID, current.Status).Select("run_id", "status", "result", "error", "finished_at", "updated_at").Updates(&record)
+		fields := []string{"run_id", "status", "result", "error", "finished_at", "updated_at"}
+		if s.events || record.GroupID != "" {
+			var err error
+			record.ReportStatus, err = s.memberReportStatus(group)
+			if err != nil {
+				return err
+			}
+			fields = append(fields, "report_status")
+		}
+		result := tx.Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ? AND status = ?", record.ID, record.ConversationID, current.Status).Select(fields).Updates(&record)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -176,7 +244,17 @@ func (s *GormTaskStore) Finish(ctx context.Context, task *store.SubagentTask, ru
 		}
 		if run != nil {
 			runCopy := *run
-			return tx.Create(&runCopy).Error
+			if err := tx.Create(&runCopy).Error; err != nil {
+				return err
+			}
+		}
+		if s.events {
+			if err := appendTaskFinished(tx, record); err != nil {
+				return err
+			}
+		}
+		if group != nil {
+			return s.refreshTaskGroup(tx, group)
 		}
 		return nil
 	})
@@ -194,8 +272,24 @@ func (s *GormTaskStore) RequestCancel(ctx context.Context, id string, owner uint
 		return record, err
 	}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if s.events || s.groupMode {
+			if err := events.LockConversation(tx, owner); err != nil {
+				return err
+			}
+		}
+		var group *store.TaskGroup
+		if s.groupMode {
+			var err error
+			group, err = lockTaskGroupForMember(tx, id, owner)
+			if err != nil {
+				return err
+			}
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ?", id, owner).Take(&record).Error; err != nil {
 			return err
+		}
+		if record.GroupID != "" && (group == nil || group.ID != record.GroupID) {
+			return fmt.Errorf("subagent: grouped cancellation requires its group lock")
 		}
 		if taskTerminalStatus(record.Status) || record.CancelRequested {
 			return nil
@@ -210,6 +304,14 @@ func (s *GormTaskStore) RequestCancel(ctx context.Context, id string, owner uint
 		if record.Status == "queued" {
 			record.Status, record.FinishedAt = "cancelled", &now
 			fields = append(fields, "status", "finished_at")
+			if s.events || record.GroupID != "" {
+				var err error
+				record.ReportStatus, err = s.memberReportStatus(group)
+				if err != nil {
+					return err
+				}
+				fields = append(fields, "report_status")
+			}
 		}
 		result := tx.Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ? AND status = ?", id, owner, oldStatus).Select(fields).Updates(&record)
 		if result.Error != nil {
@@ -217,6 +319,14 @@ func (s *GormTaskStore) RequestCancel(ctx context.Context, id string, owner uint
 		}
 		if result.RowsAffected != 1 {
 			return ErrTaskConflict
+		}
+		if s.events && record.Status == "cancelled" {
+			if err := appendTaskFinished(tx, record); err != nil {
+				return err
+			}
+		}
+		if group != nil {
+			return s.refreshTaskGroup(tx, group)
 		}
 		return nil
 	})
@@ -228,6 +338,9 @@ func (s *GormTaskStore) RequestCancel(ctx context.Context, id string, owner uint
 func (s *GormTaskStore) InterruptUnfinished(ctx context.Context) error {
 	if err := s.check(ctx); err != nil {
 		return err
+	}
+	if s.events || s.groupMode {
+		return s.interruptWithEvents(ctx)
 	}
 	now := s.db.NowFunc()
 	return s.db.WithContext(ctx).Model(&store.SubagentTask{}).Where("status IN ?", []string{"queued", "running"}).Updates(map[string]any{"status": "interrupted", "error": "server stopped before task finished; automatic replay is disabled", "finished_at": now, "updated_at": now}).Error

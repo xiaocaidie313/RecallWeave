@@ -12,6 +12,7 @@ type TaskGroup struct {
 	ParentRunID     string          `gorm:"index;size:64;not null" json:"parent_run_id"`
 	Goal            string          `gorm:"type:text;not null" json:"goal"`
 	ExpectedOutput  string          `gorm:"type:text" json:"expected_output,omitempty"`
+	DeliveryMode    string          `gorm:"size:16" json:"delivery_mode"`
 	TaskIDs         json.RawMessage `gorm:"serializer:json;type:jsonb;not null" json:"task_ids"`
 	Status          string          `gorm:"size:32;index;not null" json:"status"`
 	CancelRequested bool            `json:"cancel_requested"`

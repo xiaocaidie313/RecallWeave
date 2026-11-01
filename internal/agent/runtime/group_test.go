@@ -185,6 +185,7 @@ func TestGroupReadAndCancelKeepConversationScopeAndDoNotRebill(t *testing.T) {
 		}
 		group := groupReceipt(parent)
 		group.Status = "partial"
+		group.DeliveryMode = "combined"
 		summary := SummarizeDelegation(delegationChild(parent, RunCompleted), nil)
 		group.Tasks = []BackgroundTask{{TaskID: testBackgroundTaskID, Result: &summary}}
 		return group
@@ -199,6 +200,12 @@ func TestGroupReadAndCancelKeepConversationScopeAndDoNotRebill(t *testing.T) {
 	result, err := Run(context.Background(), core, Request{Input: "inspect group", ConversationID: 29, Delegator: d})
 	if err != nil || gets != 1 || cancels != 1 || len(result.State.Children) != 0 || len(result.State.AllCalls()) != 3 {
 		t.Fatalf("scope/history billing incorrect: %+v %v", result.State, err)
+	}
+	for _, step := range result.State.Steps {
+		var reply TaskGroup
+		if err := json.Unmarshal([]byte(step.Result), &reply); err != nil || reply.DeliveryMode != "combined" {
+			t.Fatalf("delivery mode missing from group action result: %+v %v", reply, err)
+		}
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 func groupStoreFixture() (store.TaskGroup, []store.SubagentTask) {
 	ids := []string{strings.Repeat("a", 32), strings.Repeat("b", 32)}
 	raw, _ := json.Marshal(ids)
-	group := store.TaskGroup{ID: strings.Repeat("f", 32), ConversationID: 9, ParentRunID: "parent-1", Goal: "Compare original history and external sources", TaskIDs: raw, Status: "running"}
+	group := store.TaskGroup{ID: strings.Repeat("f", 32), ConversationID: 9, ParentRunID: "parent-1", Goal: "Compare original history and external sources", DeliveryMode: "combined", TaskIDs: raw, Status: "running"}
 	members := make([]store.SubagentTask, 2)
 	for i, id := range ids {
 		members[i] = store.SubagentTask{ID: id, GroupID: group.ID, SubagentID: strings.Repeat(string(rune('c'+i)), 32), ParentRunID: group.ParentRunID, ConversationID: 9, AgentName: "researcher", Task: "independent research", Status: "queued", ReportStatus: "grouped"}
@@ -25,20 +25,20 @@ func groupStoreFixture() (store.TaskGroup, []store.SubagentTask) {
 }
 
 func groupStoreRows(groups ...store.TaskGroup) *sqlmock.Rows {
-	rows := sqlmock.NewRows([]string{"id", "conversation_id", "parent_run_id", "goal", "expected_output", "task_ids", "status", "cancel_requested", "report_status", "report_claim", "report_run_id", "report_message_id", "report_error", "reported_at", "created_at", "updated_at", "finished_at"})
+	rows := sqlmock.NewRows([]string{"id", "conversation_id", "parent_run_id", "goal", "expected_output", "delivery_mode", "task_ids", "status", "cancel_requested", "report_status", "report_claim", "report_run_id", "report_message_id", "report_error", "reported_at", "created_at", "updated_at", "finished_at"})
 	for _, g := range groups {
-		rows.AddRow(g.ID, g.ConversationID, g.ParentRunID, g.Goal, g.ExpectedOutput, string(g.TaskIDs), g.Status, g.CancelRequested, g.ReportStatus, g.ReportClaim, g.ReportRunID, g.ReportMessageID, g.ReportError, g.ReportedAt, taskStoreNow, taskStoreNow, g.FinishedAt)
+		rows.AddRow(g.ID, g.ConversationID, g.ParentRunID, g.Goal, g.ExpectedOutput, g.DeliveryMode, string(g.TaskIDs), g.Status, g.CancelRequested, g.ReportStatus, g.ReportClaim, g.ReportRunID, g.ReportMessageID, g.ReportError, g.ReportedAt, taskStoreNow, taskStoreNow, g.FinishedAt)
 	}
 	return rows
 }
 func groupMemberRows(members ...store.SubagentTask) *sqlmock.Rows {
-	rows := sqlmock.NewRows([]string{"id", "group_id", "subagent_id", "parent_run_id", "run_id", "previous_run_id", "conversation_id", "agent_name", "task", "status", "cancel_requested", "result", "error", "created_at", "updated_at", "started_at", "finished_at", "report_status"})
+	rows := sqlmock.NewRows([]string{"id", "group_id", "subagent_id", "parent_run_id", "run_id", "previous_run_id", "conversation_id", "agent_name", "task", "delivery_mode", "status", "cancel_requested", "result", "error", "created_at", "updated_at", "started_at", "finished_at", "report_status"})
 	for _, r := range members {
 		var raw any
 		if len(r.Result) > 0 {
 			raw = string(r.Result)
 		}
-		rows.AddRow(r.ID, r.GroupID, r.SubagentID, r.ParentRunID, r.RunID, r.PreviousRunID, r.ConversationID, r.AgentName, r.Task, r.Status, r.CancelRequested, raw, r.Error, taskStoreNow, taskStoreNow, r.StartedAt, r.FinishedAt, r.ReportStatus)
+		rows.AddRow(r.ID, r.GroupID, r.SubagentID, r.ParentRunID, r.RunID, r.PreviousRunID, r.ConversationID, r.AgentName, r.Task, r.DeliveryMode, r.Status, r.CancelRequested, raw, r.Error, taskStoreNow, taskStoreNow, r.StartedAt, r.FinishedAt, r.ReportStatus)
 	}
 	return rows
 }
@@ -385,5 +385,184 @@ func TestGroupStoreRepeatedTerminalCancellationDoesNotScheduleAnotherReport(t *t
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGroupStoreCreatesDeliveryModeAndMatchingMemberQueue(t *testing.T) {
+	for _, mode := range []string{"", "direct", "combined", "synthesize"} {
+		t.Run("mode_"+mode, func(t *testing.T) {
+			repo, mock := taskStoreTestDB(t)
+			repo.WithTaskGroups().WithEvents()
+			group, members := groupStoreFixture()
+			group.DeliveryMode = mode
+			for i := range members {
+				members[i].ReportStatus = ""
+			}
+			mock.ExpectBegin()
+			expectTaskConversationLock(mock)
+			mock.ExpectExec(`INSERT INTO "task_groups" .*`).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectExec(`INSERT INTO "subagent_tasks" .*`).WillReturnResult(sqlmock.NewResult(0, 2))
+			mock.ExpectCommit()
+			if err := repo.CreateGroup(context.Background(), &group, members); err != nil {
+				t.Fatal(err)
+			}
+			wantMode, wantGroupReport, wantMemberReport := mode, "", "grouped"
+			if mode == "" || mode == "direct" {
+				wantMode, wantGroupReport, wantMemberReport = "direct", "not_required", ""
+			}
+			if group.DeliveryMode != wantMode || group.ReportStatus != wantGroupReport {
+				t.Fatalf("wrong persisted group policy: %+v", group)
+			}
+			for _, member := range members {
+				if member.DeliveryMode != "direct" || member.ReportStatus != wantMemberReport {
+					t.Fatalf("wrong member queue: %+v", member)
+				}
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestGroupStoreFinishingUsesSavedModeAndLegacyBlankRemainsGrouped(t *testing.T) {
+	for _, mode := range []string{"direct", "combined", "synthesize", ""} {
+		for _, last := range []bool{false, true} {
+			t.Run(mode+map[bool]string{false: "_first", true: "_last"}[last], func(t *testing.T) {
+				repo, mock := taskStoreTestDB(t)
+				repo.WithTaskGroups().WithEvents()
+				group, members := groupStoreFixture()
+				group.DeliveryMode = mode
+				wantMemberReport, wantGroupReport := "grouped", "pending"
+				if mode == "direct" {
+					group.ReportStatus = "not_required"
+					wantMemberReport, wantGroupReport = "pending", "not_required"
+				}
+				members[0].Status = "running"
+				members[1].Status = "running"
+				if last {
+					members[1].Status = "completed"
+				}
+				done := members[0]
+				done.Status = "completed"
+				mock.ExpectBegin()
+				expectTaskConversationLock(mock)
+				expectGroupLock(mock, group)
+				mock.ExpectQuery(taskLockSQL).WillReturnRows(groupMemberRows(members[0]))
+				mock.ExpectExec(`UPDATE "subagent_tasks" SET .*report_status.*`).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectQuery(`INSERT INTO "conversation_events" .* RETURNING "id"`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+				mock.ExpectQuery(groupMembersSQL).WillReturnRows(groupMemberRows(done, members[1]))
+				if last {
+					mock.ExpectExec(`UPDATE "task_groups" SET .*report_status.*`).WithArgs("completed", wantGroupReport, taskStoreNow, taskStoreNow, group.ID, uint(9), "running").WillReturnResult(sqlmock.NewResult(0, 1))
+					expectGroupEvent(mock, group, "completed")
+				}
+				mock.ExpectCommit()
+				if err := repo.Finish(context.Background(), &done, nil); err != nil {
+					t.Fatal(err)
+				}
+				if done.ReportStatus != wantMemberReport || group.DeliveryMode != mode {
+					t.Fatalf("delivery shape changed: %+v group=%+v", done, group)
+				}
+				if err := mock.ExpectationsWereMet(); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
+func TestGroupStoreCancellationKeepsSavedDeliveryPolicy(t *testing.T) {
+	for _, mode := range []string{"direct", "combined", "synthesize", ""} {
+		t.Run("mode_"+mode, func(t *testing.T) {
+			repo, mock := taskStoreTestDB(t)
+			repo.WithTaskGroups().WithEvents()
+			group, members := groupStoreFixture()
+			group.DeliveryMode = mode
+			wantMemberReport, wantGroupReport := "grouped", "pending"
+			if mode == "direct" {
+				group.ReportStatus = "not_required"
+				wantMemberReport, wantGroupReport = "pending", "not_required"
+			}
+			mock.ExpectBegin()
+			expectTaskConversationLock(mock)
+			expectGroupLock(mock, group)
+			mock.ExpectQuery(groupMembersSQL + ` FOR UPDATE`).WillReturnRows(groupMemberRows(members...))
+			mock.ExpectExec(`UPDATE "task_groups" SET .*cancel_requested.*`).WillReturnResult(sqlmock.NewResult(0, 1))
+			for i := range members {
+				mock.ExpectExec(`UPDATE "subagent_tasks" SET .*report_status.*`).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectQuery(`INSERT INTO "conversation_events" .* RETURNING "id"`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(i + 1))
+				members[i].Status, members[i].CancelRequested = "cancelled", true
+			}
+			mock.ExpectQuery(groupMembersSQL).WillReturnRows(groupMemberRows(members...))
+			mock.ExpectExec(`UPDATE "task_groups" SET .*report_status.*`).WillReturnResult(sqlmock.NewResult(0, 1))
+			expectGroupEvent(mock, group, "cancelled")
+			mock.ExpectCommit()
+			got, tasks, err := repo.RequestCancelGroup(context.Background(), group.ID, 9)
+			if err != nil || got.DeliveryMode != mode || got.ReportStatus != wantGroupReport || tasks[0].ReportStatus != wantMemberReport || tasks[1].ReportStatus != wantMemberReport {
+				t.Fatalf("cancel changed delivery policy: %+v tasks=%+v err=%v", got, tasks, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestGroupStoreRecoveryUsesSavedDeliveryPolicy(t *testing.T) {
+	for _, mode := range []string{"direct", "combined", "synthesize", ""} {
+		t.Run("mode_"+mode, func(t *testing.T) {
+			repo, mock := taskStoreTestDB(t)
+			repo.WithTaskGroups().WithEvents()
+			group, members := groupStoreFixture()
+			group.DeliveryMode = mode
+			members[0].Status, members[1].Status = "running", "running"
+			wantMemberReport := "grouped"
+			if mode == "direct" {
+				group.ReportStatus, wantMemberReport = "not_required", "pending"
+			}
+			mock.ExpectQuery(`SELECT .* FROM "subagent_tasks" WHERE status IN .* ORDER BY id LIMIT`).WillReturnRows(groupMemberRows(members[0]))
+			mock.ExpectBegin()
+			expectTaskConversationLock(mock)
+			expectGroupLock(mock, group)
+			mock.ExpectQuery(taskLockSQL).WillReturnRows(groupMemberRows(members[0]))
+			mock.ExpectExec(`UPDATE "subagent_tasks" SET .*report_status.*`).WithArgs("interrupted", "server stopped before task finished; automatic replay is disabled", taskStoreNow, taskStoreNow, wantMemberReport, members[0].ID, uint(9)).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectQuery(`INSERT INTO "conversation_events" .* RETURNING "id"`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+			members[0].Status = "interrupted"
+			mock.ExpectQuery(groupMembersSQL).WillReturnRows(groupMemberRows(members...))
+			mock.ExpectCommit()
+			mock.ExpectQuery(`SELECT .* FROM "subagent_tasks" WHERE status IN .* ORDER BY id LIMIT`).WillReturnRows(groupMemberRows())
+			if err := repo.InterruptUnfinished(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestGroupStoreRejectsContradictoryNewDeliveryShapeBeforeSQL(t *testing.T) {
+	for _, kind := range []string{"unknown_mode", "direct_grouped_member", "combined_unnecessary", "synthesized_member"} {
+		t.Run(kind, func(t *testing.T) {
+			repo, mock := taskStoreTestDB(t)
+			repo.WithTaskGroups()
+			group, members := groupStoreFixture()
+			switch kind {
+			case "unknown_mode":
+				group.DeliveryMode = "smart"
+			case "direct_grouped_member":
+				group.DeliveryMode = "direct"
+			case "combined_unnecessary":
+				group.ReportStatus = "not_required"
+			case "synthesized_member":
+				members[0].DeliveryMode = "synthesize"
+			}
+			if err := repo.CreateGroup(context.Background(), &group, members); err == nil {
+				t.Fatal("contradictory delivery shape accepted")
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

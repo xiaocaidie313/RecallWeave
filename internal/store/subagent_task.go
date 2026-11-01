@@ -16,6 +16,7 @@ type SubagentTask struct {
 	ConversationID  uint            `gorm:"index;not null" json:"conversation_id"`
 	AgentName       string          `gorm:"size:40;not null" json:"agent"`
 	Task            string          `gorm:"type:text;not null" json:"task"`
+	DeliveryMode    string          `gorm:"size:16" json:"delivery_mode"`
 	Status          string          `gorm:"size:32;index;not null" json:"status"`
 	CancelRequested bool            `json:"cancel_requested"`
 	Result          json.RawMessage `gorm:"serializer:json;type:jsonb" json:"-"`

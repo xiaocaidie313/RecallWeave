@@ -113,7 +113,7 @@ func TestDelegationRoundTripKeepsTraceAndReturnsCompactResult(t *testing.T) {
 		if parent.Agent != core || parent.ConversationID != 23 || parent.RunID == "" {
 			t.Fatalf("parent scope was replaced: %+v", parent)
 		}
-		if request != (DelegationRequest{Task: "核查原文", Context: "必要背景", ExpectedOutput: "结论和来源"}) {
+		if request != (DelegationRequest{Task: "核查原文", Context: "必要背景", ExpectedOutput: "结论和来源", DeliveryMode: "direct"}) {
 			t.Fatalf("unexpected task payload: %+v", request)
 		}
 		child := delegationChild(parent, RunCompleted)
