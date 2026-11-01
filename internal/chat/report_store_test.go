@@ -2,8 +2,10 @@ package chat
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"recallweave/internal/agent/runtime"
 	"recallweave/internal/store"
 )
 
@@ -30,7 +33,7 @@ func reportTestDB(t *testing.T) (*GormReportStore, sqlmock.Sqlmock) {
 	return NewReportStore(db), mock
 }
 func reportTaskRows(status, claim string) *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "subagent_id", "parent_run_id", "run_id", "conversation_id", "agent_name", "task", "status", "report_status", "report_claim"}).AddRow("task-1", "child-1", "parent-1", "child-run", uint(9), "researcher", "check sources", "completed", status, claim)
+	return sqlmock.NewRows([]string{"id", "subagent_id", "parent_run_id", "run_id", "conversation_id", "agent_name", "task", "status", "report_status", "report_claim", "delivery_mode"}).AddRow("task-1", "child-1", "parent-1", "child-run", uint(9), "researcher", "check sources", "completed", status, claim, "synthesize")
 }
 func reportSessionRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{"id", "conversation_id", "source_tag", "name"}).AddRow(uint(5), uint(9), store.SourceChat, "chat")
@@ -149,7 +152,7 @@ func TestReportStoreRecoveryFailsInterruptedGenerationWithoutReplaying(t *testin
 	mock.ExpectExec(`UPDATE "subagent_tasks" SET .*`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`INSERT INTO "conversation_events" .* RETURNING "id"`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uint64(12)))
 	mock.ExpectCommit()
-	mock.ExpectQuery(`SELECT .* FROM "subagent_tasks" WHERE report_status = \$1 ORDER BY id LIMIT \$2`).WithArgs("processing", 100).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery(`SELECT .* FROM "subagent_tasks" WHERE report_status = \$1 AND id > \$2 ORDER BY id LIMIT \$3`).WithArgs("processing", "task-1", 100).WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	if err := repo.InterruptProcessing(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +162,7 @@ func TestReportStoreRecoveryFailsInterruptedGenerationWithoutReplaying(t *testin
 }
 func TestReportStorePendingUsesOnlyExplicitTerminalInbox(t *testing.T) {
 	repo, mock := reportTestDB(t)
-	mock.ExpectQuery(`SELECT "id","conversation_id" FROM "subagent_tasks" WHERE report_status = .* AND status IN .* ORDER BY finished_at ASC,id ASC LIMIT`).WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id"}).AddRow("task-1", uint(9)))
+	mock.ExpectQuery(`SELECT "id","conversation_id","delivery_mode" FROM "subagent_tasks" WHERE report_status = .* AND status IN .* ORDER BY finished_at ASC,id ASC LIMIT`).WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id"}).AddRow("task-1", uint(9)))
 	rows, err := repo.Pending(context.Background(), 200)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("pending=%+v err=%v", rows, err)
@@ -204,5 +207,60 @@ func TestReportStoreRejectsForeignRunAndCancelledContextWithoutSQL(t *testing.T)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type deliveryMessageEventArgument struct {
+	taskID, groupID, taskRunID, runID string
+	sources                           []runtime.Source
+}
+
+func (want deliveryMessageEventArgument) Match(value driver.Value) bool {
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	var data struct {
+		ConversationID uint             `json:"conversation_id"`
+		TaskID         string           `json:"task_id"`
+		GroupID        string           `json:"group_id"`
+		TaskRunID      string           `json:"task_run_id"`
+		RunID          string           `json:"run_id"`
+		Sources        []runtime.Source `json:"sources"`
+		Message        store.Message    `json:"message"`
+	}
+	if json.Unmarshal([]byte(text), &data) != nil {
+		return false
+	}
+	return data.ConversationID == 9 && data.TaskID == want.taskID && data.GroupID == want.groupID && data.TaskRunID == want.taskRunID && data.RunID == want.runID && reflect.DeepEqual(data.Sources, want.sources) && data.Message.ID == 6
+}
+
+func TestReportStoreDirectGroupMemberCommitsOriginalSourcesWithoutNewRun(t *testing.T) {
+	for _, failEvent := range []bool{false, true} {
+		t.Run(map[bool]string{false: "commit", true: "rollback"}[failEvent], func(t *testing.T) {
+			repo, mock := reportTestDB(t)
+			report := GeneratedReport{Message: store.Message{Role: "assistant", Content: "Original child answer"}, Sources: []runtime.Source{{SourceRunID: "child-run", Kind: "web", Tool: "tavily_search", URL: "https://example.com/evidence", Title: "Original evidence"}}}
+			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT .* FROM "conversations" WHERE id = .* FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uint(9)))
+			mock.ExpectQuery(`SELECT .* FROM "subagent_tasks" WHERE id = .* AND conversation_id = .* FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"id", "group_id", "run_id", "conversation_id", "delivery_mode", "status", "report_status", "report_claim"}).AddRow("task-1", "group-1", "child-run", uint(9), "direct", "completed", "processing", "claim-1"))
+			expectReportMessage(mock)
+			mock.ExpectExec(`UPDATE "subagent_tasks" SET .*`).WithArgs("", "", uint(6), "", "delivered", reportStoreNow, reportStoreNow, "task-1", uint(9), "processing", "claim-1").WillReturnResult(sqlmock.NewResult(0, 1))
+			expectEvent := mock.ExpectQuery(`INSERT INTO "conversation_events" .* RETURNING "id"`).WithArgs(uint(9), "message.created", "message:6", deliveryMessageEventArgument{taskID: "task-1", groupID: "group-1", taskRunID: "child-run", sources: report.Sources}, reportStoreNow)
+			failure := errors.New("event unavailable")
+			if failEvent {
+				expectEvent.WillReturnError(failure)
+				mock.ExpectRollback()
+			} else {
+				expectEvent.WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(11))
+				mock.ExpectCommit()
+			}
+			err := repo.Deliver(context.Background(), "task-1", 9, "claim-1", report)
+			if failEvent && !errors.Is(err, failure) || !failEvent && err != nil {
+				t.Fatalf("direct delivery atomicity: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

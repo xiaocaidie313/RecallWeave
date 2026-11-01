@@ -62,10 +62,12 @@ type Usage struct {
 // Agent 是问答服务：准备上下文 → 交给 core 跑 → 保存、提炼、压缩、起标题。
 // 真正决定调哪个工具的是 core（agent.Agent），这里的步骤每次都固定执行。
 type Agent struct {
-	core      *agent.Agent
-	memory    *memory.MemoryManger
-	extracter *extract.ExtractExcuter
-	delegator runtime.Delegator
+	core       *agent.Agent
+	memory     *memory.MemoryManger
+	extracter  *extract.ExtractExcuter
+	delegator  runtime.Delegator
+	turnWriter TurnWriter
+	gate       conversationGate
 }
 
 // core 或 core.Model 为 nil 表示没配 api_key，这时问答直接报错。
@@ -94,6 +96,11 @@ func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) 
 	if a.model() == nil {
 		return Answer{}, ErrNoModel
 	}
+	release, err := a.gate.acquire(ctx, conversationID)
+	if err != nil {
+		return Answer{}, err
+	}
+	defer release()
 
 	stageStarted := time.Now()
 	preload, sessionID, conversation, visible, err := a.loadContext(ctx, conversationID, question)
@@ -336,7 +343,13 @@ func cleanTitle(title string) string {
 }
 
 func (a *Agent) saveTurn(ctx context.Context, sessionID uint, question, answer string) error {
-	if a.memory == nil || sessionID == 0 {
+	if sessionID == 0 {
+		return nil
+	}
+	if a.turnWriter != nil {
+		return a.turnWriter.AppendTurn(ctx, sessionID, question, answer)
+	}
+	if a.memory == nil {
 		return nil
 	}
 	return a.memory.AppendMessages(ctx, sessionID, []store.Message{

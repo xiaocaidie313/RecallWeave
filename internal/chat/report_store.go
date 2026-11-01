@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"recallweave/internal/agent/runtime"
 	"recallweave/internal/events"
 	"recallweave/internal/store"
 
@@ -56,7 +57,7 @@ func (s *GormReportStore) Pending(ctx context.Context, limit int) ([]store.Subag
 		limit = 20
 	}
 	rows := make([]store.SubagentTask, 0)
-	err := s.db.WithContext(ctx).Select("id", "conversation_id").Where("report_status = ? AND status IN ?", "pending", []string{"completed", "partial", "failed", "cancelled", "interrupted"}).Order("finished_at ASC").Order("id ASC").Limit(limit).Find(&rows).Error
+	err := s.db.WithContext(ctx).Select("id", "conversation_id", "delivery_mode").Where("report_status = ? AND status IN ?", "pending", []string{"completed", "partial", "failed", "cancelled", "interrupted"}).Order("finished_at ASC").Order("id ASC").Limit(limit).Find(&rows).Error
 	return rows, err
 }
 func (s *GormReportStore) Claim(ctx context.Context, id string, owner uint, claim string) (store.SubagentTask, bool, error) {
@@ -150,7 +151,7 @@ func (s *GormReportStore) Deliver(ctx context.Context, id string, owner uint, cl
 		if result.RowsAffected != 1 {
 			return ErrReportConflict
 		}
-		return appendMessageEvent(tx, owner, id, runID, message)
+		return appendMessageEvent(tx, owner, message, messageEventMetadata{TaskID: id, GroupID: task.GroupID, RunID: runID, TaskRunID: task.RunID, Sources: report.Sources})
 	})
 }
 func (s *GormReportStore) Fail(ctx context.Context, id string, owner uint, claim string, reason string, run *store.AgentRun) error {
@@ -211,18 +212,24 @@ func (s *GormReportStore) InterruptProcessing(ctx context.Context) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
+	var after string
 	for {
 		var rows []store.SubagentTask
-		if err := s.db.WithContext(ctx).Where("report_status = ?", "processing").Order("id").Limit(100).Find(&rows).Error; err != nil {
+		query := s.db.WithContext(ctx).Where("report_status = ?", "processing")
+		if after != "" {
+			query = query.Where("id > ?", after)
+		}
+		if err := query.Order("id").Limit(100).Find(&rows).Error; err != nil {
 			return err
 		}
 		if len(rows) == 0 {
 			return nil
 		}
 		for _, task := range rows {
-			if err := s.Fail(ctx, task.ID, task.ConversationID, task.ReportClaim, "automatic report was interrupted; not retried automatically", nil); err != nil {
+			if err := s.recoverInterruptedReport(ctx, "subagent_tasks", task.ID, task.ConversationID, task.ReportClaim); err != nil {
 				return err
 			}
+			after = task.ID
 		}
 	}
 }
@@ -253,7 +260,7 @@ func (s *GormReportStore) AppendTurn(ctx context.Context, sessionID uint, questi
 			if err := appendReportMessage(tx, &message); err != nil {
 				return err
 			}
-			if err := appendMessageEvent(tx, owner, "", "", message); err != nil {
+			if err := appendMessageEvent(tx, owner, message, messageEventMetadata{}); err != nil {
 				return err
 			}
 		}
@@ -278,13 +285,24 @@ func appendReportMessage(tx *gorm.DB, message *store.Message) error {
 }
 
 // 添加消息事件 转化格式 用sse主动推
-func appendMessageEvent(tx *gorm.DB, owner uint, taskID, runID string, message store.Message) error {
+type messageEventMetadata struct {
+	TaskID    string
+	GroupID   string
+	RunID     string
+	TaskRunID string
+	Sources   []runtime.Source
+}
+
+func appendMessageEvent(tx *gorm.DB, owner uint, message store.Message, metadata messageEventMetadata) error {
 	data, err := json.Marshal(struct {
-		ConversationID uint          `json:"conversation_id"`
-		TaskID         string        `json:"task_id,omitempty"`
-		RunID          string        `json:"run_id,omitempty"`
-		Message        store.Message `json:"message"`
-	}{owner, taskID, runID, message})
+		ConversationID uint             `json:"conversation_id"`
+		TaskID         string           `json:"task_id,omitempty"`
+		GroupID        string           `json:"group_id,omitempty"`
+		RunID          string           `json:"run_id,omitempty"`
+		TaskRunID      string           `json:"task_run_id,omitempty"`
+		Sources        []runtime.Source `json:"sources,omitempty"`
+		Message        store.Message    `json:"message"`
+	}{owner, metadata.TaskID, metadata.GroupID, metadata.RunID, metadata.TaskRunID, metadata.Sources, message})
 	if err != nil {
 		return err
 	}
