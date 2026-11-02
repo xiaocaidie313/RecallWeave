@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"recallweave/internal/memory"
 	"recallweave/internal/store"
 
 	"github.com/gin-gonic/gin"
@@ -65,7 +66,8 @@ func (h *ConversationHandler) ListSessionMessages(c *gin.Context) {
 		return
 	}
 
-	if _, err := h.memory.GetSession(c.Request.Context(), sessionID); err != nil {
+	session, err := h.memory.GetSession(c.Request.Context(), sessionID)
+	if err != nil {
 		writeSessionError(c, err)
 		return
 	}
@@ -75,7 +77,12 @@ func (h *ConversationHandler) ListSessionMessages(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"messages": messageViews(messages)})
+	deliveries, err := h.memory.MessageDeliveries(c.Request.Context(), session, messages)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load message provenance"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"messages": messageViews(messages, deliveries)})
 }
 
 func (h *ConversationHandler) ListConversationMessages(c *gin.Context) {
@@ -114,9 +121,14 @@ func (h *ConversationHandler) ListConversationMessages(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
 		return
 	}
+	deliveries, err := h.memory.MessageDeliveries(c.Request.Context(), *session, messages)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load message provenance"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"session_id":         session.ID,
-		"messages":           messageViews(messages),
+		"messages":           messageViews(messages, deliveries),
 		"inherited_messages": inherited,
 	})
 }
@@ -173,18 +185,24 @@ func memoryViews(memories []store.Memory) []memoryView {
 }
 
 type messageView struct {
-	Seq     int    `json:"seq"`
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	ID        uint   `json:"id"`
+	SessionID uint   `json:"session_id"`
+	Seq       int    `json:"seq"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	memory.MessageDelivery
 }
 
-func messageViews(messages []store.Message) []messageView {
+func messageViews(messages []store.Message, deliveries map[uint]memory.MessageDelivery) []messageView {
 	views := make([]messageView, 0, len(messages))
 	for _, item := range messages {
 		views = append(views, messageView{
-			Seq:     item.Seq,
-			Role:    item.Role,
-			Content: item.Content,
+			ID:              item.ID,
+			SessionID:       item.SessionID,
+			Seq:             item.Seq,
+			Role:            item.Role,
+			Content:         item.Content,
+			MessageDelivery: deliveries[item.ID],
 		})
 	}
 	return views
