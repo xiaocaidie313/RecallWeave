@@ -35,7 +35,7 @@ func TestSearchMemoriesOverMCP(t *testing.T) {
 	ctx := context.Background()
 	finder := &fakeFinder{}
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	serverSession, err := appmcp.NewMcpServer(finder).Connect(ctx, serverTransport, nil)
+	serverSession, err := appmcp.NewMcpMemoryReaderServer(finder).Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatalf("connect server: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestGetMessagesOverMCP(t *testing.T) {
 	ctx := context.Background()
 	finder := &fakeFinder{messages: []store.Message{{SessionID: 3, Seq: 4, Role: "user", Content: "使用 PostgreSQL"}}}
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	serverSession, err := appmcp.NewMcpServer(finder).Connect(ctx, serverTransport, nil)
+	serverSession, err := appmcp.NewMcpMemoryReaderServer(finder).Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatalf("connect server: %v", err)
 	}

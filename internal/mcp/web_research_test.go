@@ -18,7 +18,7 @@ import (
 	appmcp "recallweave/internal/mcp"
 	"recallweave/internal/skill"
 
-	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	mcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type webScriptModel struct {
@@ -71,9 +71,9 @@ func TestMemoryAndWebResearchThroughMCP(t *testing.T) {
 			defer cancel()
 			searchArgs := make(chan webSearchArgs, 1)
 			var extractCalls atomic.Int32
-			server := gomcp.NewServer(&gomcp.Implementation{Name: "mock-tavily", Version: "test"}, nil)
-			gomcp.AddTool(server, &gomcp.Tool{Name: "tavily_search", Description: "Search public pages"},
-				func(_ context.Context, _ *gomcp.CallToolRequest, args webSearchArgs) (*gomcp.CallToolResult, webSearchResult, error) {
+			server := mcp.NewServer(&mcp.Implementation{Name: "mock-tavily", Version: "test"}, nil)
+			mcp.AddTool(server, &mcp.Tool{Name: "tavily_search", Description: "Search public pages"},
+				func(_ context.Context, _ *mcp.CallToolRequest, args webSearchArgs) (*mcp.CallToolResult, webSearchResult, error) {
 					searchArgs <- args
 					if outcome == "failure" {
 						return nil, webSearchResult{}, errors.New("mock search unavailable")
@@ -86,22 +86,22 @@ func TestMemoryAndWebResearchThroughMCP(t *testing.T) {
 					}
 					return nil, result, nil
 				})
-			gomcp.AddTool(server, &gomcp.Tool{Name: "tavily_extract", Description: "Read public page content"},
-				func(_ context.Context, _ *gomcp.CallToolRequest, args struct {
+			mcp.AddTool(server, &mcp.Tool{Name: "tavily_extract", Description: "Read public page content"},
+				func(_ context.Context, _ *mcp.CallToolRequest, args struct {
 					URLs []string `json:"urls"`
-				}) (*gomcp.CallToolResult, map[string]any, error) {
+				}) (*mcp.CallToolResult, map[string]any, error) {
 					extractCalls.Add(1)
 					if len(args.URLs) != 1 || args.URLs[0] != "https://docs.example.test/pgvector" {
 						return nil, nil, errors.New("unexpected extract URL")
 					}
 					return nil, map[string]any{"results": []map[string]string{{"url": args.URLs[0], "raw_content": "# pgvector documentation\nMock page body."}}}, nil
 				})
-			gomcp.AddTool(server, &gomcp.Tool{Name: "tavily_crawl"},
-				func(context.Context, *gomcp.CallToolRequest, struct{}) (*gomcp.CallToolResult, struct{}, error) {
+			mcp.AddTool(server, &mcp.Tool{Name: "tavily_crawl"},
+				func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, struct{}, error) {
 					return nil, struct{}{}, errors.New("crawl must not be exposed")
 				})
-			handler := gomcp.NewStreamableHTTPHandler(func(*http.Request) *gomcp.Server { return server },
-				&gomcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+			handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server },
+				&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 			httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer fake-test-key" || r.URL.RawQuery != "" {
 					http.Error(w, "expected bearer authentication without URL credentials", http.StatusUnauthorized)
@@ -110,7 +110,7 @@ func TestMemoryAndWebResearchThroughMCP(t *testing.T) {
 				handler.ServeHTTP(w, r)
 			}))
 			defer httpServer.Close()
-			client, err := appmcp.ConnectHTTP(ctx, httpServer.URL, "fake-test-key")
+			client, err := appmcp.NewRemoteClient(ctx, "mock-tavily", "test", httpServer.URL, map[string]string{"Authorization": "Bearer fake-test-key"})
 			if err != nil {
 				t.Fatal(err)
 			}

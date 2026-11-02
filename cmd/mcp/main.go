@@ -11,15 +11,16 @@ import (
 	"recallweave/internal/config"
 	"recallweave/internal/db"
 	"recallweave/internal/llm"
-	"recallweave/internal/mcp"
+	appmcp "recallweave/internal/mcp"
 	"recallweave/internal/memory"
 	"recallweave/internal/retrieval"
 
-	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
 
+// 启mcp Server 用暴露 自身mcp工具 @todo？ 是否要单独提出成外部mcp 不放在这个agent仓库
 func main() {
 	configPath := flag.String("config", "config/config.yaml", "path to RecallWeave configuration")
 	flag.Parse()
@@ -61,5 +62,5 @@ func run(ctx context.Context, configPath string) error {
 		embedder = client
 	}
 	reader := memory.NewMemoryManger(database, retrieval.New(database, embedder))
-	return mcp.NewMcpServer(reader).Run(ctx, &gomcp.StdioTransport{})
+	return appmcp.NewMcpMemoryReaderServer(reader).Run(ctx, &mcp.StdioTransport{})
 }

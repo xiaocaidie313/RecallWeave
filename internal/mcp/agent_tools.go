@@ -9,7 +9,7 @@ import (
 
 	"recallweave/internal/llm"
 
-	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	mcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const maxRemoteResultBytes = 64 << 10
@@ -26,7 +26,7 @@ func (c *McpClient) AgentTools(ctx context.Context, allowed []string) ([]llm.Too
 	if err != nil {
 		return nil, err
 	}
-	byName := make(map[string]*gomcp.Tool, len(remote))
+	byName := make(map[string]*mcp.Tool, len(remote))
 	for _, tool := range remote {
 		// 根据名字找tool
 		byName[tool.Name] = tool
@@ -58,7 +58,7 @@ func (c *McpClient) AgentTools(ctx context.Context, allowed []string) ([]llm.Too
 				if err := json.Unmarshal([]byte(arguments), &args); err != nil || args == nil {
 					return "", fmt.Errorf("invalid arguments for external MCP tool %q", remoteName)
 				}
-				result, err := c.Session.CallTool(ctx, &gomcp.CallToolParams{Name: remoteName, Arguments: args})
+				result, err := c.Session.CallTool(ctx, &mcp.CallToolParams{Name: remoteName, Arguments: args})
 				if err != nil {
 					return "", fmt.Errorf("external MCP tool %q: %w", remoteName, err)
 				}
@@ -73,7 +73,7 @@ func (c *McpClient) AgentTools(ctx context.Context, allowed []string) ([]llm.Too
 	return wrapped, nil
 }
 
-func formatMCPResult(result *gomcp.CallToolResult) (string, error) {
+func formatMCPResult(result *mcp.CallToolResult) (string, error) {
 	if result == nil {
 		return "", fmt.Errorf("empty result")
 	}
@@ -88,7 +88,7 @@ func formatMCPResult(result *gomcp.CallToolResult) (string, error) {
 		// text content
 		var texts []string
 		for _, block := range result.Content {
-			if item, ok := block.(*gomcp.TextContent); ok {
+			if item, ok := block.(*mcp.TextContent); ok {
 				texts = append(texts, item.Text)
 			}
 		}

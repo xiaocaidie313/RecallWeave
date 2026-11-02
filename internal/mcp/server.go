@@ -59,7 +59,10 @@ type McpToolSet struct {
 	tools []*mcp.Tool
 }
 
-func NewMcpServer(reader memoryReader) *mcp.Server {
+//作为MCP Server 向外暴露指定的MCP 工具
+//个人使用的时候，连接MCP 可以作为外置数据库
+
+func NewMcpMemoryReaderServer(reader memoryReader) *mcp.Server {
 	server := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "recallweave",
@@ -67,11 +70,11 @@ func NewMcpServer(reader memoryReader) *mcp.Server {
 		},
 		nil,
 	)
-	RegisteTools(server, reader)
+	RegisterTools(server, reader)
 	return server
 }
 
-func RegisteTools(server *mcp.Server, reader memoryReader) {
+func RegisterTools(server *mcp.Server, reader memoryReader) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search_memories",
 		Description: "Search RecallWeave's personal memories. Results include session and message numbers for checking original text.",

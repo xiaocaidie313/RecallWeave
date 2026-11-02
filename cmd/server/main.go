@@ -121,7 +121,9 @@ func main() {
 			logger.Error("external MCP token environment variable is empty", "name", cfg.ExternalMCP.TokenEnv)
 			os.Exit(1)
 		}
-		remoteClient, err := appmcp.ConnectHTTP(context.Background(), cfg.ExternalMCP.URL, os.Getenv(cfg.ExternalMCP.TokenEnv))
+		//@todo 这里有问题吧？？ 1 只能单独连接一个MCP Server
+		//2 @todo 修一下config
+		remoteClient, err := appmcp.NewRemoteClient(context.Background(), cfg.ExternalMCP.Name, cfg.ExternalMCP.Version, cfg.ExternalMCP.URL, map[string]string{cfg.ExternalMCP.TokenEnv: os.Getenv(cfg.ExternalMCP.TokenEnv)})
 		if err != nil {
 			logger.Error("failed to connect external MCP", "error", err)
 			os.Exit(1)
@@ -187,7 +189,7 @@ func main() {
 	// } else {
 	// 	logger.Info("MCP Streamable HTTP disabled; set RECALLWEAVE_MCP_TOKEN to enable it")
 	// }
-	apphttp.MountMCP(r, appmcp.NewMcpServer(memoryManger), os.Getenv("RECALLWEAVE_MCP_TOKEN"))
+	apphttp.MountMCP(r, appmcp.NewMcpMemoryReaderServer(memoryManger), os.Getenv("RECALLWEAVE_MCP_TOKEN"))
 
 	address := fmt.Sprintf(":%d", cfg.Server.Port)
 	logger.Info("RecallWeave API started", "address", address)

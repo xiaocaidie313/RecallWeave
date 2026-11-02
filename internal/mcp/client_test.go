@@ -26,7 +26,9 @@ func TestConnectHTTPListsTools(t *testing.T) {
 	}))
 	defer httpServer.Close()
 
-	client, err := ConnectHTTP(context.Background(), httpServer.URL, "secret")
+	client, err := NewRemoteClient(context.Background(), "external-test", "1.0.0", httpServer.URL, map[string]string{
+		"Authorization": "Bearer secret",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +44,7 @@ func TestConnectHTTPListsTools(t *testing.T) {
 
 func TestConnectHTTPRejectsInvalidEndpoint(t *testing.T) {
 	for _, endpoint := range []string{"", "stdio://server", "https://user:pass@example.com/mcp", "not a URL"} {
-		if _, err := ConnectHTTP(context.Background(), endpoint, ""); err == nil {
+		if _, err := NewRemoteClient(context.Background(), "external-test", "1.0.0", endpoint, nil); err == nil {
 			t.Errorf("expected %q to be rejected", endpoint)
 		}
 	}
@@ -68,27 +70,21 @@ func TestConnectDialsEveryConfig(t *testing.T) {
 	second := ping("beta")
 	defer second.Close()
 
-	client := &McpClient{}
-	if err := client.Connect(context.Background(), []ex_mcp_config{
-		{URL: first.URL},
-		{URL: second.URL},
-	}); err != nil {
+	alpha, err := NewRemoteClient(context.Background(), "external-test", "1.0.0", first.URL, map[string]string{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
-	if client.Session == nil || len(client.others) != 1 {
-		t.Fatalf("expected primary session plus one extra, others=%d", len(client.others))
+	defer alpha.Close()
+	beta, err := NewRemoteClient(context.Background(), "external-test", "1.0.0", second.URL, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	tools, err := client.ListTools(context.Background())
-	if err != nil || len(tools) != 1 || tools[0].Name != "alpha" {
-		t.Fatalf("primary tools: %+v err=%v", tools, err)
+	defer beta.Close()
+	if len(alpha.Tools) != 1 || alpha.Tools[0].Name != "alpha" {
+		t.Fatalf("alpha tools: %+v", alpha.Tools)
 	}
-	extra, err := client.others[0].ListTools(context.Background())
-	if err != nil || len(extra) != 1 || extra[0].Name != "beta" {
-		t.Fatalf("secondary tools: %+v err=%v", extra, err)
-	}
-	if err := client.Connect(context.Background(), []ex_mcp_config{{URL: first.URL}}); err == nil {
-		t.Fatal("already connected client should reject a second Connect")
+	if len(beta.Tools) != 1 || beta.Tools[0].Name != "beta" {
+		t.Fatalf("beta tools: %+v", beta.Tools)
 	}
 }
 
@@ -103,17 +99,19 @@ func TestConnectSkipsEmptyURLs(t *testing.T) {
 	httpServer := httptest.NewServer(handler)
 	defer httpServer.Close()
 
-	client := &McpClient{}
-	if err := client.Connect(context.Background(), []ex_mcp_config{
-		{URL: ""},
-		{URL: httpServer.URL},
-		{URL: "   "},
-	}); err != nil {
+	clients, err := ConnectExternalMCPs(context.Background(), []MCPServerConfig{
+		{Name: "external-test", Version: "1.0.0", URL: ""},
+		{Name: "external-test", Version: "1.0.0", URL: "   "},
+		{Name: "keep", Version: "1.0.0", URL: httpServer.URL},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
-	tools, err := client.ListTools(context.Background())
-	if err != nil || len(tools) != 1 || tools[0].Name != "keep" {
-		t.Fatalf("expected the non-empty endpoint to stay connected: %+v err=%v", tools, err)
+	if len(clients) != 1 {
+		t.Fatalf("expected the empty URLs to be skipped, got %d clients", len(clients))
+	}
+	defer clients[0].Close()
+	if len(clients[0].Tools) != 1 || clients[0].Tools[0].Name != "keep" {
+		t.Fatalf("keep tools: %+v", clients[0].Tools)
 	}
 }

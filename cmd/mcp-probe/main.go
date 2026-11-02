@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"recallweave/internal/mcp"
@@ -26,7 +27,12 @@ func main() {
 	if *tokenEnv != "" && os.Getenv(*tokenEnv) == "" {
 		fmt.Fprintf(os.Stderr, "warning: token environment variable %s is empty\n", *tokenEnv)
 	}
-	client, err := mcp.ConnectHTTP(ctx, *endpoint, os.Getenv(*tokenEnv))
+	headers := map[string]string{}
+	if token := strings.TrimSpace(os.Getenv(*tokenEnv)); token != "" {
+		headers["Authorization"] = "Bearer " + token
+	}
+	// 测试连接
+	client, err := mcp.NewRemoteClient(ctx, "recallweave-probe", "0.1.0", *endpoint, headers)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
