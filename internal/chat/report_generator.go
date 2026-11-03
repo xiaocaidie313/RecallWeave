@@ -11,13 +11,13 @@ import (
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/delivery"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 	"recallweave/internal/watch/useage"
 )
 
 type GeneratedReport struct {
-	Message store.Message
-	Run     *store.AgentRun
+	Message types.Message
+	Run     *types.AgentRun
 	Sources []runtime.Source
 	Error   string
 }
@@ -26,7 +26,7 @@ type TurnWriter interface {
 	AppendTurn(context.Context, uint, string, string) error
 }
 
-func (a *Agent) WithTurnWriter(writer TurnWriter) *Agent {
+func (a *ChatService) WithTurnWriter(writer TurnWriter) *ChatService {
 	a.turnWriter = writer
 	return a
 }
@@ -63,7 +63,7 @@ func (m reportModel) ModelName() string {
 
 // GenerateReport does not persist anything; the caller holds TryReportLock
 // until its repository commits the message, execution log, and delivery state.
-func (a *Agent) GenerateReport(ctx context.Context, task store.SubagentTask) (GeneratedReport, error) {
+func (a *ChatService) GenerateReport(ctx context.Context, task types.SubagentTask) (GeneratedReport, error) {
 	if err := ctx.Err(); err != nil {
 		return GeneratedReport{}, err
 	}
@@ -139,9 +139,9 @@ func (a *Agent) GenerateReport(ctx context.Context, task store.SubagentTask) (Ge
 	return report, nil
 }
 
-func reportFallback(task store.SubagentTask, cause error, run *store.AgentRun, sources []runtime.Source) GeneratedReport {
+func reportFallback(task types.SubagentTask, cause error, run *types.AgentRun, sources []runtime.Source) GeneratedReport {
 	return GeneratedReport{
-		Message: store.Message{Role: "assistant", Content: fmt.Sprintf("后台任务「%s」已结束，结果已保存，但自动整理失败。你可以查看结果和来源。", clipReportText(task.Task, 512))},
+		Message: types.Message{Role: "assistant", Content: fmt.Sprintf("后台任务「%s」已结束，结果已保存，但自动整理失败。你可以查看结果和来源。", clipReportText(task.Task, 512))},
 		Run:     run, Sources: sources, Error: clipReportText(cause.Error(), 2048),
 	}
 }
@@ -150,10 +150,10 @@ func generatedTextReport(text string, sources []runtime.Source) (GeneratedReport
 	if !validReportText(text) {
 		return GeneratedReport{}, errors.New("chat: report text is empty, invalid UTF-8 or exceeds the 512 KiB storage limit")
 	}
-	return GeneratedReport{Message: store.Message{Role: "assistant", Content: text}, Sources: sources}, nil
+	return GeneratedReport{Message: types.Message{Role: "assistant", Content: text}, Sources: sources}, nil
 }
 
-func reportRun(result runtime.RunResult) (*store.AgentRun, error) {
+func reportRun(result runtime.RunResult) (*types.AgentRun, error) {
 	if result.State.RunID == "" {
 		return nil, nil
 	}
@@ -162,7 +162,7 @@ func reportRun(result runtime.RunResult) (*store.AgentRun, error) {
 		return nil, err
 	}
 	total := useage.Sum(result.State.Calls)
-	return &store.AgentRun{RunID: result.State.RunID, ConversationID: result.State.ConversationID, Status: string(result.State.Status),
+	return &types.AgentRun{RunID: result.State.RunID, ConversationID: result.State.ConversationID, Status: string(result.State.Status),
 		Input: result.State.Input, Content: result.Content, State: encoded, PromptTokens: total.Usage.PromptTokens, CompletionTokens: total.Usage.CompletionTokens,
 		LatencyMs: total.LatencyMs, Rounds: result.State.CurrentRound}, nil
 }
@@ -183,7 +183,7 @@ func clipReportText(value string, limit int) string {
 	return value[:limit] + marker
 }
 
-func (a *Agent) reportHistory(ctx context.Context, owner uint) ([]llm.Message, error) {
+func (a *ChatService) reportHistory(ctx context.Context, owner uint) ([]llm.Message, error) {
 	if a.memory == nil {
 		return nil, nil
 	}

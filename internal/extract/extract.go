@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -94,7 +94,7 @@ func (e *ExtractExcuter) extractNewToMemory(ctx context.Context, sessionID uint)
 	if err != nil {
 		return 0, err
 	}
-	fresh := make([]store.Message, 0, len(messages))
+	fresh := make([]types.Message, 0, len(messages))
 	for _, msg := range messages {
 		if msg.Seq > covered {
 			fresh = append(fresh, msg)
@@ -118,17 +118,17 @@ func (e *ExtractExcuter) markExtract(ctx context.Context, sessionID uint, extrac
 	updates := map[string]any{
 		"extract_error": "",
 	}
-	if errors.Is(extractErr, store.ErrBranchMemoryPrivate) {
-		updates["extract_status"] = store.ExtractSkipped
+	if errors.Is(extractErr, types.ErrBranchMemoryPrivate) {
+		updates["extract_status"] = types.ExtractSkipped
 	} else if extractErr != nil {
-		updates["extract_status"] = store.ExtractFailed
+		updates["extract_status"] = types.ExtractFailed
 		updates["extract_error"] = extractErr.Error()
 	} else {
 		now := time.Now()
-		updates["extract_status"] = store.ExtractDone
+		updates["extract_status"] = types.ExtractDone
 		updates["extracted_at"] = now
 	}
-	if err := e.db.WithContext(ctx).Model(&store.Session{}).Where("id = ?", sessionID).Updates(updates).Error; err != nil {
+	if err := e.db.WithContext(ctx).Model(&types.Session{}).Where("id = ?", sessionID).Updates(updates).Error; err != nil {
 		slog.Warn("mark extract status failed", "session_id", sessionID, "error", err)
 	}
 }
@@ -137,26 +137,26 @@ func (e *ExtractExcuter) coveredSeq(ctx context.Context, sessionID uint) (int, e
 	var row struct {
 		Seq int
 	}
-	err := e.db.WithContext(ctx).Model(&store.Memory{}).
+	err := e.db.WithContext(ctx).Model(&types.Memory{}).
 		Where("session_id = ?", sessionID).
 		Select("COALESCE(MAX(seq_end), 0) AS seq").
 		Scan(&row).Error
 	return row.Seq, err
 }
 
-func (e *ExtractExcuter) generateMemoryFromMessage(ctx context.Context, sessionID uint, messages []store.Message) []store.Memory {
+func (e *ExtractExcuter) generateMemoryFromMessage(ctx context.Context, sessionID uint, messages []types.Message) []types.Memory {
 	segments := e.segment(ctx, messages)
-	memories := make([]store.Memory, 0, len(segments))
+	memories := make([]types.Memory, 0, len(segments))
 	for _, segment := range segments {
-		memories = append(memories, store.Memory{
+		memories = append(memories, types.Memory{
 			SessionID:   sessionID,
 			SeqStart:    segment.SeqStart,
 			SeqEnd:      segment.SeqEnd,
 			Title:       truncateTitle(segment.Title),
 			Content:     segment.Summary,
-			Tag:         store.NormalizeMemoryTag(segment.Tag),
-			ContentType: store.NormalizeContentType(segment.ContentType),
-			Embedding:   store.NewEmbedding(e.embedMemory(ctx, segment.Title, segment.Summary)),
+			Tag:         types.NormalizeMemoryTag(segment.Tag),
+			ContentType: types.NormalizeContentType(segment.ContentType),
+			Embedding:   types.NewEmbedding(e.embedMemory(ctx, segment.Title, segment.Summary)),
 		})
 	}
 	return memories
@@ -173,16 +173,16 @@ func (e *ExtractExcuter) embedMemory(ctx context.Context, title, content string)
 		slog.Warn("embed memory failed", "error", err)
 		return nil
 	}
-	if len(vector) != store.ModelEmbeddingDim && len(vector) != store.EmbeddingDim {
-		slog.Warn("unexpected embedding dimension", "got", len(vector), "want", store.ModelEmbeddingDim)
+	if len(vector) != types.ModelEmbeddingDim && len(vector) != types.EmbeddingDim {
+		slog.Warn("unexpected embedding dimension", "got", len(vector), "want", types.ModelEmbeddingDim)
 		return nil
 	}
 	return vector
 }
 
 // #1 读取消息
-func (e *ExtractExcuter) GetMessages(ctx context.Context, sessionID uint) ([]store.Message, error) {
-	var messages []store.Message
+func (e *ExtractExcuter) GetMessages(ctx context.Context, sessionID uint) ([]types.Message, error) {
+	var messages []types.Message
 
 	if err := e.db.WithContext(ctx).Where("session_id = ?", sessionID).Order("seq").Find(&messages).Error; err != nil {
 		return nil, err
@@ -191,7 +191,7 @@ func (e *ExtractExcuter) GetMessages(ctx context.Context, sessionID uint) ([]sto
 }
 
 // #2 切段。长会话按批交给模型，单批失败只降级该批。
-func (e *ExtractExcuter) segment(ctx context.Context, messages []store.Message) []llm.Segment {
+func (e *ExtractExcuter) segment(ctx context.Context, messages []types.Message) []llm.Segment {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -203,7 +203,7 @@ func (e *ExtractExcuter) segment(ctx context.Context, messages []store.Message) 
 	return mergeBatchSegments(segments)
 }
 
-func (e *ExtractExcuter) segmentBatch(ctx context.Context, messages []store.Message) []llm.Segment {
+func (e *ExtractExcuter) segmentBatch(ctx context.Context, messages []types.Message) []llm.Segment {
 	fallback := []llm.Segment{wholeSessionSegment(messages)}
 	if e.segmenter == nil {
 		return fallback
@@ -241,12 +241,12 @@ func (e *ExtractExcuter) segmentBatch(ctx context.Context, messages []store.Mess
 	return valid
 }
 
-func splitMessageBatches(messages []store.Message) [][]store.Message {
+func splitMessageBatches(messages []types.Message) [][]types.Message {
 	if len(messages) == 0 {
 		return nil
 	}
 
-	var batches [][]store.Message
+	var batches [][]types.Message
 	start := 0
 	for start < len(messages) {
 		end := start
@@ -298,18 +298,18 @@ func mergeBatchSegments(segments []llm.Segment) []llm.Segment {
 }
 
 // #3 写入记忆
-func (e *ExtractExcuter) replaceMemories(ctx context.Context, sessionID uint, memories []store.Memory) error {
+func (e *ExtractExcuter) replaceMemories(ctx context.Context, sessionID uint, memories []types.Memory) error {
 	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existing []store.Memory
+		var existing []types.Memory
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ?", sessionID).Order("id").Find(&existing).Error; err != nil {
 			return err
 		}
 		for _, item := range existing {
-			if item.Status != "" && item.Status != store.MemoryActive {
-				return store.ErrMemoryHistoryProtected
+			if item.Status != "" && item.Status != types.MemoryActive {
+				return types.ErrMemoryHistoryProtected
 			}
 		}
-		if err := tx.Where("session_id = ?", sessionID).Delete(&store.Memory{}).Error; err != nil {
+		if err := tx.Where("session_id = ?", sessionID).Delete(&types.Memory{}).Error; err != nil {
 			return err
 		}
 
@@ -323,8 +323,8 @@ func (e *ExtractExcuter) replaceMemories(ctx context.Context, sessionID uint, me
 
 // keepValidSegments 丢掉编号越界或者反向的段，并给空标题补上兜底值。
 // 模型偶尔会编出范围外的编号，直接写库会产生指不回原文的记忆。
-func keepValidSegments(segments []llm.Segment, messages []store.Message) []llm.Segment {
-	bySeq := make(map[int]store.Message, len(messages))
+func keepValidSegments(segments []llm.Segment, messages []types.Message) []llm.Segment {
+	bySeq := make(map[int]types.Message, len(messages))
 	for _, msg := range messages {
 		bySeq[msg.Seq] = msg
 	}
@@ -347,7 +347,7 @@ func keepValidSegments(segments []llm.Segment, messages []store.Message) []llm.S
 		if strings.TrimSpace(segment.Summary) == "" {
 			segment.Summary = bySeq[segment.SeqStart].Content
 		}
-		segment.ContentType = string(store.NormalizeContentType(segment.ContentType))
+		segment.ContentType = string(types.NormalizeContentType(segment.ContentType))
 
 		valid = append(valid, segment)
 	}
@@ -355,7 +355,7 @@ func keepValidSegments(segments []llm.Segment, messages []store.Message) []llm.S
 	return valid
 }
 
-func wholeSessionSegment(messages []store.Message) llm.Segment {
+func wholeSessionSegment(messages []types.Message) llm.Segment {
 	first, last := messages[0], messages[len(messages)-1]
 
 	contents := make([]string, 0, len(messages))
@@ -368,22 +368,22 @@ func wholeSessionSegment(messages []store.Message) llm.Segment {
 		SeqEnd:      last.Seq,
 		Title:       firstLine(first.Content),
 		Summary:     strings.Join(contents, "\n"),
-		Tag:         string(store.TagOther),
-		ContentType: string(store.ContentOther),
+		Tag:         string(types.TagOther),
+		ContentType: string(types.ContentOther),
 	}
 }
 
 func allowedTags() []string {
-	tags := make([]string, 0, len(store.MemoryTags))
-	for _, tag := range store.MemoryTags {
+	tags := make([]string, 0, len(types.MemoryTags))
+	for _, tag := range types.MemoryTags {
 		tags = append(tags, string(tag))
 	}
 	return tags
 }
 
 func allowedContentTypes() []string {
-	types := make([]string, 0, len(store.ContentTypes))
-	for _, contentType := range store.ContentTypes {
+	types := make([]string, 0, len(types.ContentTypes))
+	for _, contentType := range types.ContentTypes {
 		types = append(types, string(contentType))
 	}
 	return types

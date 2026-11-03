@@ -16,7 +16,7 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 const sessionPolicyVersion = 1
@@ -77,9 +77,9 @@ func (m *Manager) FollowUp(ctx context.Context, parent runtime.DelegationParent,
 	return m.executeSession(ctx, parent, "继续此子任务：\n"+request.Message, previous.Task, current, previous.ID, &previous)
 }
 
-func (m *Manager) prepareFollowUp(ctx context.Context, parent runtime.DelegationParent, request runtime.FollowupRequest) (store.SubagentSession, PresetAgent, func(), error) {
-	var empty store.SubagentSession
-	fail := func(err error) (store.SubagentSession, PresetAgent, func(), error) {
+func (m *Manager) prepareFollowUp(ctx context.Context, parent runtime.DelegationParent, request runtime.FollowupRequest) (types.SubagentSession, PresetAgent, func(), error) {
+	var empty types.SubagentSession
+	fail := func(err error) (types.SubagentSession, PresetAgent, func(), error) {
 		return empty, PresetAgent{}, nil, err
 	}
 	if !m.ContinuationsEnabled() || parent.Agent == nil || parent.Agent.Model == nil || parent.RunID == "" || parent.ConversationID == 0 {
@@ -147,13 +147,13 @@ func (m *Manager) prepareFollowUp(ctx context.Context, parent runtime.Delegation
 	return previous, current, release, nil
 }
 
-func (m *Manager) executeSession(ctx context.Context, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, id string, previous *store.SubagentSession) (runtime.RunResult, error) {
+func (m *Manager) executeSession(ctx context.Context, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, id string, previous *types.SubagentSession) (runtime.RunResult, error) {
 	// 创建一个新的子agent
 	child := m.newChild(parent.Agent, PresetAgent)
 	return m.executeChildSession(ctx, child, parent, input, task, PresetAgent, id, previous)
 }
 
-func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, id string, previous *store.SubagentSession) (runtime.RunResult, error) {
+func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, id string, previous *types.SubagentSession) (runtime.RunResult, error) {
 	request := runtime.Request{ParentRunID: parent.RunID, ConversationID: parent.ConversationID, SubagentID: id, Input: input, CaptureContext: m.ContinuationsEnabled()}
 	if previous != nil {
 		if len(previous.Snapshot) == 0 || string(previous.Snapshot) == "null" {
@@ -192,7 +192,7 @@ func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, p
 		return result, err
 	}
 	// 新建 子agent session 记录
-	record := store.SubagentSession{ID: id, ConversationID: parent.ConversationID, AgentName: PresetAgent.Name, Task: task, LatestRunID: result.State.RunID, Status: string(result.State.Status), Snapshot: encodedSnapshot, PresetAgent: encodedPolicy, Sources: encodedSources}
+	record := types.SubagentSession{ID: id, ConversationID: parent.ConversationID, AgentName: PresetAgent.Name, Task: task, LatestRunID: result.State.RunID, Status: string(result.State.Status), Snapshot: encodedSnapshot, PresetAgent: encodedPolicy, Sources: encodedSources}
 	// Save completed/failed work even if the HTTP request has been cancelled.
 	saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer saveCancel()
@@ -237,7 +237,7 @@ func (m *Manager) ListSubagents(ctx context.Context, parent runtime.DelegationPa
 	updated := make(map[string]time.Time)
 	for _, row := range rows {
 		if row.ConversationID != parent.ConversationID {
-			return nil, fmt.Errorf("subagent: stored child ownership mismatch")
+			return nil, fmt.Errorf("subagent: typesd child ownership mismatch")
 		}
 		canContinue := len(row.Snapshot) > 0 && string(row.Snapshot) != "null"
 		if err := m.checkCheckpoint(ctx, row); err != nil {
@@ -316,7 +316,7 @@ func (m *Manager) ListSubagents(ctx context.Context, parent runtime.DelegationPa
 	return items, nil
 }
 
-func (m *Manager) checkCheckpoint(ctx context.Context, row store.SubagentSession) error {
+func (m *Manager) checkCheckpoint(ctx context.Context, row types.SubagentSession) error {
 	key := fmt.Sprintf("%d/%s", row.ConversationID, row.ID)
 	m.activeMu.Lock()
 	blocked, exists := m.unsaved[key] // unsaved 是之前标记过 写入有问题的就标记成unsaved
@@ -335,7 +335,7 @@ func (m *Manager) checkCheckpoint(ctx context.Context, row store.SubagentSession
 		}
 	}
 	if m.backgroundRunner != nil {
-		if verifier, ok := m.backgroundRunner.store.(TaskCheckpointVerifier); ok {
+		if verifier, ok := m.backgroundRunner.types.(TaskCheckpointVerifier); ok {
 			return verifier.CheckTaskCheckpoint(ctx, row)
 		}
 	}

@@ -10,49 +10,49 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 type fakeMemoryBackend struct {
-	items         []store.Memory
+	items         []types.Memory
 	deactivations int
 	err           error
 }
 
-func (f *fakeMemoryBackend) SearchMemories(_ context.Context, _ string, _ store.MemoryTag, _ int, includeInactive ...bool) ([]store.Memory, error) {
-	items := []store.Memory{}
+func (f *fakeMemoryBackend) SearchMemories(_ context.Context, _ string, _ types.MemoryTag, _ int, includeInactive ...bool) ([]types.Memory, error) {
+	items := []types.Memory{}
 	for _, item := range f.items {
-		if item.Status == store.MemoryActive || (len(includeInactive) > 0 && includeInactive[0]) {
+		if item.Status == types.MemoryActive || (len(includeInactive) > 0 && includeInactive[0]) {
 			items = append(items, item)
 		}
 	}
 	return items, nil
 }
-func (f *fakeMemoryBackend) GetMessages(context.Context, uint, int, int) ([]store.Message, error) {
-	return []store.Message{{Seq: 1, Role: "user", Content: "旧方案用 Python"}}, nil
+func (f *fakeMemoryBackend) GetMessages(context.Context, uint, int, int) ([]types.Message, error) {
+	return []types.Message{{Seq: 1, Role: "user", Content: "旧方案用 Python"}}, nil
 }
-func (f *fakeMemoryBackend) GetSessions(context.Context, uint) ([]store.Session, error) {
+func (f *fakeMemoryBackend) GetSessions(context.Context, uint) ([]types.Session, error) {
 	return nil, nil
 }
-func (f *fakeMemoryBackend) DeactivateMemory(_ context.Context, id uint, reason string) (store.Memory, error) {
+func (f *fakeMemoryBackend) DeactivateMemory(_ context.Context, id uint, reason string) (types.Memory, error) {
 	f.deactivations++
 	if f.err != nil {
-		return store.Memory{}, f.err
+		return types.Memory{}, f.err
 	}
 	for i := range f.items {
 		if f.items[i].ID == id {
-			f.items[i].Status = store.MemoryInactive
+			f.items[i].Status = types.MemoryInactive
 			f.items[i].DeactivationReason = reason
 			return f.items[i], nil
 		}
 	}
-	return store.Memory{}, errors.New("not found")
+	return types.Memory{}, errors.New("not found")
 }
 
 func TestDeactivateToolAndHistorySearch(t *testing.T) {
-	backend := &fakeMemoryBackend{items: []store.Memory{
-		{ID: 1, SessionID: 10, SeqStart: 1, SeqEnd: 2, Content: "旧方案用 Python", Status: store.MemoryActive},
-		{ID: 2, SessionID: 20, SeqStart: 1, SeqEnd: 2, Content: "现方案用 Go", Status: store.MemoryActive},
+	backend := &fakeMemoryBackend{items: []types.Memory{
+		{ID: 1, SessionID: 10, SeqStart: 1, SeqEnd: 2, Content: "旧方案用 Python", Status: types.MemoryActive},
+		{ID: 2, SessionID: 20, SeqStart: 1, SeqEnd: 2, Content: "现方案用 Go", Status: types.MemoryActive},
 	}}
 	tools := llm.NewToolHandle()
 	for _, tool := range NewMemoryAbility(backend).Tools() {
@@ -64,12 +64,12 @@ func TestDeactivateToolAndHistorySearch(t *testing.T) {
 	}
 	var outcome struct {
 		MemoryID uint               `json:"memory_id"`
-		Status   store.MemoryStatus `json:"status"`
+		Status   types.MemoryStatus `json:"status"`
 	}
 	if err := json.Unmarshal([]byte(result), &outcome); err != nil {
 		t.Fatal(err)
 	}
-	if outcome.MemoryID != 1 || outcome.Status != store.MemoryInactive || backend.deactivations != 1 {
+	if outcome.MemoryID != 1 || outcome.Status != types.MemoryInactive || backend.deactivations != 1 {
 		t.Fatalf("unexpected tool result: %s", result)
 	}
 	for _, tc := range []struct {
@@ -91,7 +91,7 @@ func TestDeactivateToolAndHistorySearch(t *testing.T) {
 			t.Fatalf("unexpected visibility: %s", result)
 		}
 	}
-	if backend.items[0].Content != "旧方案用 Python" || backend.items[1].Status != store.MemoryActive {
+	if backend.items[0].Content != "旧方案用 Python" || backend.items[1].Status != types.MemoryActive {
 		t.Fatalf("unrelated memory or original changed: %+v", backend.items)
 	}
 	result, err = tools.Run(context.Background(), GetMessagesToolName, `{"session_id":10,"seq_start":1,"seq_end":2}`)
@@ -131,9 +131,9 @@ func (m *correctionModel) Next(context.Context, *llm.Conversation, []llm.ToolSch
 }
 
 func TestAgentDeactivationPersistsAcrossRuns(t *testing.T) {
-	backend := &fakeMemoryBackend{items: []store.Memory{
-		{ID: 1, Content: "Python 旧方案", Status: store.MemoryActive},
-		{ID: 2, Content: "Go 当前方案", Status: store.MemoryActive},
+	backend := &fakeMemoryBackend{items: []types.Memory{
+		{ID: 1, Content: "Python 旧方案", Status: types.MemoryActive},
+		{ID: 2, Content: "Go 当前方案", Status: types.MemoryActive},
 	}}
 	model := &correctionModel{turns: []llm.Turn{
 		{ToolCalls: []llm.ToolCall{{ID: "locate", Name: SearchMemoriesToolName, Arguments: `{"keyword":"项目方案"}`}}},

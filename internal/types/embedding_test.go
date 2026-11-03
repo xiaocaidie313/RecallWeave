@@ -1,4 +1,4 @@
-package store
+package types
 
 import (
 	"math"
@@ -15,11 +15,11 @@ func TestNewEmbedding(t *testing.T) {
 		t.Fatalf("wrong dimension should stay empty, got %d values", len(got))
 	}
 
-	stored := make([]float64, EmbeddingDim)
-	stored[0] = 1.5
-	got := EmbeddingValues(NewEmbedding(stored))
+	typesd := make([]float64, EmbeddingDim)
+	typesd[0] = 1.5
+	got := EmbeddingValues(NewEmbedding(typesd))
 	if len(got) != EmbeddingDim || got[0] != 1.5 {
-		t.Fatalf("expected stored vector to pass through, got len %d first %v", len(got), got[0])
+		t.Fatalf("expected typesd vector to pass through, got len %d first %v", len(got), got[0])
 	}
 
 	full := make([]float64, ModelEmbeddingDim)

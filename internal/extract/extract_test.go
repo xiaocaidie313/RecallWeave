@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 func TestFirstLine(t *testing.T) {
@@ -36,8 +36,8 @@ func (f fakeSegmenter) Segment(context.Context, []llm.Message, []string, []strin
 	return f.segments, f.err
 }
 
-func testMessages() []store.Message {
-	return []store.Message{
+func testMessages() []types.Message {
+	return []types.Message{
 		{SessionID: 1, Seq: 1, Role: "user", Content: "第一条\n还有下文"},
 		{SessionID: 1, Seq: 2, Role: "user", Content: "第二条"},
 		{SessionID: 1, Seq: 3, Role: "user", Content: "第三条"},
@@ -111,15 +111,15 @@ func TestSegmentFallsBackWithoutSegmenter(t *testing.T) {
 
 	got := excuter.segment(context.Background(), testMessages())
 
-	if len(got) != 1 || got[0].Tag != string(store.TagOther) {
+	if len(got) != 1 || got[0].Tag != string(types.TagOther) {
 		t.Fatalf("expected whole-session fallback, got %+v", got)
 	}
 }
 
-func numberedMessages(n int) []store.Message {
-	messages := make([]store.Message, 0, n)
+func numberedMessages(n int) []types.Message {
+	messages := make([]types.Message, 0, n)
 	for i := 1; i <= n; i++ {
-		messages = append(messages, store.Message{
+		messages = append(messages, types.Message{
 			SessionID: 1,
 			Seq:       i,
 			Role:      "user",
@@ -188,7 +188,7 @@ func TestSegmentFallsBackPerBatch(t *testing.T) {
 	var fallback llm.Segment
 	found := false
 	for _, segment := range got {
-		if segment.Tag == string(store.TagOther) {
+		if segment.Tag == string(types.TagOther) {
 			fallback = segment
 			found = true
 			break
@@ -203,10 +203,10 @@ func TestSegmentFallsBackPerBatch(t *testing.T) {
 }
 
 func TestNormalizeMemoryTagRejectsUnknown(t *testing.T) {
-	if got := store.NormalizeMemoryTag("after-sales"); got != store.TagOther {
+	if got := types.NormalizeMemoryTag("after-sales"); got != types.TagOther {
 		t.Fatalf("expected unknown tag to become other, got %q", got)
 	}
-	if got := store.NormalizeMemoryTag("tech"); got != store.TagTech {
+	if got := types.NormalizeMemoryTag("tech"); got != types.TagTech {
 		t.Fatalf("expected tech to be kept, got %q", got)
 	}
 }
@@ -217,7 +217,7 @@ func TestMemoriesFromPreservesContentTypeAndOriginalRange(t *testing.T) {
 		{SeqStart: 3, SeqEnd: 3, Title: "开始", Summary: "决定开始做 multi-agent", Tag: "tech", ContentType: "decision"},
 	}}, nil)
 	got := executer.generateMemoryFromMessage(context.Background(), 7, testMessages())
-	if len(got) != 2 || got[0].ContentType != store.ContentDecision || got[1].ContentType != store.ContentDecision {
+	if len(got) != 2 || got[0].ContentType != types.ContentDecision || got[1].ContentType != types.ContentDecision {
 		t.Fatalf("decisions should remain separate typed memories: %+v", got)
 	}
 	if got[0].SessionID != 7 || got[0].SeqStart != 1 || got[0].SeqEnd != 2 || got[1].SeqStart != 3 {
@@ -228,15 +228,15 @@ func TestMemoriesFromPreservesContentTypeAndOriginalRange(t *testing.T) {
 func TestMemoriesFromNormalizesContentTypes(t *testing.T) {
 	for _, tc := range []struct {
 		raw  string
-		want store.ContentType
+		want types.ContentType
 	}{
-		{"fact", store.ContentFact},
-		{"preference", store.ContentPreference},
-		{"decision", store.ContentDecision},
-		{"task", store.ContentTask},
-		{"question", store.ContentQuestion},
-		{"", store.ContentOther},
-		{"unsupported", store.ContentOther},
+		{"fact", types.ContentFact},
+		{"preference", types.ContentPreference},
+		{"decision", types.ContentDecision},
+		{"task", types.ContentTask},
+		{"question", types.ContentQuestion},
+		{"", types.ContentOther},
+		{"unsupported", types.ContentOther},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {
 			executer := NewExtractExcuter(nil, fakeSegmenter{segments: []llm.Segment{{
@@ -253,7 +253,7 @@ func TestMemoriesFromNormalizesContentTypes(t *testing.T) {
 func TestMemoriesFromFallbackHasUnknownContentType(t *testing.T) {
 	for _, segmenter := range []llm.Segmenter{nil, fakeSegmenter{err: errors.New("unavailable")}} {
 		got := NewExtractExcuter(nil, segmenter, nil).generateMemoryFromMessage(context.Background(), 1, testMessages())
-		if len(got) != 1 || got[0].ContentType != store.ContentOther {
+		if len(got) != 1 || got[0].ContentType != types.ContentOther {
 			t.Fatalf("fallback must not invent a classification: %+v", got)
 		}
 	}

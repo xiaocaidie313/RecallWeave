@@ -10,7 +10,7 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/llm"
 	"recallweave/internal/memory"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
@@ -33,7 +33,7 @@ func TestBranchCoreDoesNotMutateSharedAgent(t *testing.T) {
 		{Schema: llm.ToolSchema{Name: "mcp_tavily_search"}},
 		{Schema: llm.ToolSchema{Name: "mcp_recall_search_memories"}},
 	}
-	visible := []store.ContextMessage{{SessionID: 10, Seq: 1, Role: "user", Content: "分叉前"}}
+	visible := []types.ContextMessage{{SessionID: 10, Seq: 1, Role: "user", Content: "分叉前"}}
 	child := branchCore(core, visible)
 	names := []string{}
 	for _, schema := range child.Tools().Schemas() {
@@ -70,7 +70,7 @@ func TestBranchLoaderUsesFrozenPrefixWithoutGlobalQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := json.Marshal([]store.ContextMessage{
+	snapshot, err := json.Marshal([]types.ContextMessage{
 		{SessionID: 10, Seq: 1, Role: "user", Content: "主线分叉前的要求"},
 		{SessionID: 10, Seq: 2, Role: "assistant", Content: "主线分叉前的回复"},
 	})
@@ -78,14 +78,14 @@ func TestBranchLoaderUsesFrozenPrefixWithoutGlobalQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No parent queries, memory queries, embedding calls or imported catalogs are
-	// expected. A branch can only load its stored snapshot and its own chat.
+	// expected. A branch can only load its typesd snapshot and its own chat.
 	mock.ExpectQuery(`SELECT .* FROM "conversations" WHERE .*`).WithArgs(3, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "parent_conversation_id", "fork_snapshot", "brief", "brief_until_seq"}).
 			AddRow(3, 1, string(snapshot), "本支线早期摘要", 1))
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "conversations"`).WithArgs(3).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE .*`).WithArgs(3, store.SourceChat, 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(20, 3, store.SourceChat))
+	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE .*`).WithArgs(3, types.SourceChat, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(20, 3, types.SourceChat))
 	mock.ExpectQuery(`SELECT .* FROM "messages" WHERE session_id = \$1 ORDER BY seq`).WithArgs(20).
 		WillReturnRows(sqlmock.NewRows([]string{"seq", "role", "content"}).
 			AddRow(1, "user", "本支线已压缩的消息").AddRow(2, "assistant", "本支线近期回复"))

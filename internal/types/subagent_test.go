@@ -1,4 +1,4 @@
-package store
+package types
 
 import (
 	"encoding/json"
@@ -18,7 +18,7 @@ func TestSubagentSessionJSONKeepsStoredContextPrivate(t *testing.T) {
 	}
 	for _, private := range []string{"SNAPSHOT_MARKER", "PresetAgent_MARKER", "SOURCES_MARKER", `"snapshot"`, `"PresetAgent"`, `"sources"`} {
 		if strings.Contains(string(encoded), private) {
-			t.Fatalf("private stored context leaked through session metadata: %s", encoded)
+			t.Fatalf("private typesd context leaked through session metadata: %s", encoded)
 		}
 	}
 	if !strings.Contains(string(encoded), `"id":"child"`) || !strings.Contains(string(encoded), `"conversation_id":7`) {

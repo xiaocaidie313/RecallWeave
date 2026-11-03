@@ -8,16 +8,16 @@ import (
 	"reflect"
 	"testing"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-func provenanceMessage(id uint, seq int, role, text string) store.Message {
-	return store.Message{ID: id, SessionID: 70, SourceTag: store.SourceChat, Seq: seq, Role: role, Content: text}
+func provenanceMessage(id uint, seq int, role, text string) types.Message {
+	return types.Message{ID: id, SessionID: 70, SourceTag: types.SourceChat, Seq: seq, Role: role, Content: text}
 }
 
-func provenancePayload(t *testing.T, message store.Message, metadata map[string]any) []byte {
+func provenancePayload(t *testing.T, message types.Message, metadata map[string]any) []byte {
 	t.Helper()
 	payload := map[string]any{"conversation_id": 7, "message": message}
 	for key, value := range metadata {
@@ -30,11 +30,11 @@ func provenancePayload(t *testing.T, message store.Message, metadata map[string]
 	return raw
 }
 
-func expectProvenanceHistory(mock sqlmock.Sqlmock, conversation bool, messages ...store.Message) {
+func expectProvenanceHistory(mock sqlmock.Sqlmock, conversation bool, messages ...types.Message) {
 	if conversation {
 		mock.ExpectQuery(`SELECT .* FROM "conversations" WHERE .*id.*ORDER BY .*LIMIT`).WithArgs(7, 1).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
-		mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE conversation_id = .*source_tag = .*ORDER BY .*LIMIT`).WithArgs(7, store.SourceChat, 1).
+		mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE conversation_id = .*source_tag = .*ORDER BY .*LIMIT`).WithArgs(7, types.SourceChat, 1).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(70, 7, "chat"))
 	} else {
 		mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE .*id.*ORDER BY .*LIMIT`).WithArgs(70, 1).
@@ -63,7 +63,7 @@ func readProvenanceResponse(t *testing.T, path string, managerRouter http.Handle
 	return result.Messages
 }
 
-func TestMessageHistoryRestoresSavedSSEProvenance(t *testing.T) {
+func TestMessageHistoryRetypessSavedSSEProvenance(t *testing.T) {
 	for _, conversation := range []bool{true, false} {
 		path := "/api/sessions/70/messages"
 		if conversation {
@@ -87,7 +87,7 @@ func TestMessageHistoryRestoresSavedSSEProvenance(t *testing.T) {
 			if len(messages) != 3 {
 				t.Fatalf("messages missing: %+v", messages)
 			}
-			for index, want := range []store.Message{question, direct, group} {
+			for index, want := range []types.Message{question, direct, group} {
 				if messages[index]["id"] != float64(want.ID) || messages[index]["session_id"] != float64(70) || messages[index]["content"] != want.Content {
 					t.Fatalf("unstable identity/content: %+v", messages[index])
 				}
@@ -122,7 +122,7 @@ func TestMessageHistoryRejectsMalformedAndForeignProvenance(t *testing.T) {
 			manager, mock := forkHTTPManager(t)
 			expectProvenanceHistory(mock, true, message)
 			eventOwner, payloadOwner, key, kind := 7, 7, "message:701", "message.created"
-			stored := message
+			typesd := message
 			metadata := map[string]any{"conversation_id": payloadOwner, "task_id": "must-not-leak", "sources": []map[string]any{{"kind": "web", "url": "https://private.test"}}}
 			switch scenario {
 			case "event owner":
@@ -130,15 +130,15 @@ func TestMessageHistoryRejectsMalformedAndForeignProvenance(t *testing.T) {
 			case "payload owner":
 				metadata["conversation_id"] = 8
 			case "message id":
-				stored.ID = 999
+				typesd.ID = 999
 			case "session":
-				stored.SessionID = 80
+				typesd.SessionID = 80
 			case "seq":
-				stored.Seq = 9
+				typesd.Seq = 9
 			case "role":
-				stored.Role = "user"
+				typesd.Role = "user"
 			case "content":
-				stored.Content = "different text"
+				typesd.Content = "different text"
 			case "key":
 				key = "message:999"
 			case "kind":
@@ -146,7 +146,7 @@ func TestMessageHistoryRejectsMalformedAndForeignProvenance(t *testing.T) {
 			case "invalid sources":
 				metadata["sources"] = map[string]any{"url": "https://private.test"}
 			}
-			raw := provenancePayload(t, stored, metadata)
+			raw := provenancePayload(t, typesd, metadata)
 			if scenario == "invalid payload" {
 				raw = []byte(`["unexpected event payload"]`)
 			}

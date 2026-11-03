@@ -9,7 +9,7 @@ import (
 
 	"recallweave/internal/delivery"
 	"recallweave/internal/events"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,21 +17,21 @@ import (
 
 var _ GroupReportStore = (*GormReportStore)(nil)
 
-func (s *GormReportStore) PendingGroups(ctx context.Context, limit int) ([]store.TaskGroup, error) {
+func (s *GormReportStore) PendingGroups(ctx context.Context, limit int) ([]types.TaskGroup, error) {
 	if err := s.check(ctx); err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	rows := make([]store.TaskGroup, 0)
+	rows := make([]types.TaskGroup, 0)
 	err := s.db.WithContext(ctx).Select("id", "conversation_id", "delivery_mode").Where("report_status = ? AND status IN ? AND COALESCE(delivery_mode, '') <> ?", "pending", []string{"completed", "partial", "failed", "cancelled", "interrupted"}, delivery.Direct).Order("finished_at ASC").Order("id ASC").Limit(limit).Find(&rows).Error
 	return rows, err
 }
 
-func (s *GormReportStore) ClaimGroup(ctx context.Context, id string, owner uint, claim string) (store.TaskGroup, []store.SubagentTask, bool, error) {
-	var group store.TaskGroup
-	var tasks []store.SubagentTask
+func (s *GormReportStore) ClaimGroup(ctx context.Context, id string, owner uint, claim string) (types.TaskGroup, []types.SubagentTask, bool, error) {
+	var group types.TaskGroup
+	var tasks []types.SubagentTask
 	if err := s.check(ctx); err != nil {
 		return group, nil, false, err
 	}
@@ -40,7 +40,7 @@ func (s *GormReportStore) ClaimGroup(ctx context.Context, id string, owner uint,
 	}
 	claimed := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&store.TaskGroup{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND status IN ? AND COALESCE(delivery_mode, '') <> ?", id, owner, "pending", []string{"completed", "partial", "failed", "cancelled", "interrupted"}, delivery.Direct).Updates(map[string]any{"report_status": "processing", "report_claim": claim, "report_error": "", "updated_at": tx.NowFunc()})
+		result := tx.Model(&types.TaskGroup{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND status IN ? AND COALESCE(delivery_mode, '') <> ?", id, owner, "pending", []string{"completed", "partial", "failed", "cancelled", "interrupted"}, delivery.Direct).Updates(map[string]any{"report_status": "processing", "report_claim": claim, "report_error": "", "updated_at": tx.NowFunc()})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -62,7 +62,7 @@ func (s *GormReportStore) ClaimGroup(ctx context.Context, id string, owner uint,
 		return err
 	})
 	if err != nil {
-		return store.TaskGroup{}, nil, false, err
+		return types.TaskGroup{}, nil, false, err
 	}
 	return group, tasks, claimed, nil
 }
@@ -84,7 +84,7 @@ func (s *GormReportStore) DeliverGroup(ctx context.Context, id string, owner uin
 		if err := events.LockConversation(tx, owner); err != nil {
 			return err
 		}
-		var group store.TaskGroup
+		var group types.TaskGroup
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ?", id, owner).Take(&group).Error; err != nil {
 			return err
 		}
@@ -104,10 +104,10 @@ func (s *GormReportStore) DeliverGroup(ctx context.Context, id string, owner uin
 		if _, err := groupTaskIDs(group); err != nil {
 			return err
 		}
-		var session store.Session
-		err = tx.Where("conversation_id = ? AND source_tag = ?", owner, store.SourceChat).Order("id").First(&session).Error
+		var session types.Session
+		err = tx.Where("conversation_id = ? AND source_tag = ?", owner, types.SourceChat).Order("id").First(&session).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			session = store.Session{ConversationID: &owner, SourceTag: store.SourceChat, Name: "chat", ExtractStatus: store.ExtractPending}
+			session = types.Session{ConversationID: &owner, SourceTag: types.SourceChat, Name: "chat", ExtractStatus: types.ExtractPending}
 			if err := tx.Create(&session).Error; err != nil {
 				return err
 			}
@@ -117,7 +117,7 @@ func (s *GormReportStore) DeliverGroup(ctx context.Context, id string, owner uin
 		if err := lockReportSession(tx, &session, owner); err != nil {
 			return err
 		}
-		message := store.Message{SourceTag: store.SourceChat, SessionID: session.ID, Role: "assistant", Content: report.Message.Content}
+		message := types.Message{SourceTag: types.SourceChat, SessionID: session.ID, Role: "assistant", Content: report.Message.Content}
 		if err := appendReportMessage(tx, &message); err != nil {
 			return err
 		}
@@ -130,7 +130,7 @@ func (s *GormReportStore) DeliverGroup(ctx context.Context, id string, owner uin
 			runID = runCopy.RunID
 		}
 		now := tx.NowFunc()
-		result := tx.Model(&store.TaskGroup{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND report_claim = ?", id, owner, "processing", claim).Updates(map[string]any{"report_status": "delivered", "report_claim": "", "report_run_id": runID, "report_message_id": message.ID, "report_error": clipReportError(report.Error), "reported_at": now, "updated_at": now})
+		result := tx.Model(&types.TaskGroup{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND report_claim = ?", id, owner, "processing", claim).Updates(map[string]any{"report_status": "delivered", "report_claim": "", "report_run_id": runID, "report_message_id": message.ID, "report_error": clipReportError(report.Error), "reported_at": now, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -141,7 +141,7 @@ func (s *GormReportStore) DeliverGroup(ctx context.Context, id string, owner uin
 	})
 }
 
-func (s *GormReportStore) FailGroup(ctx context.Context, id string, owner uint, claim, reason string, run *store.AgentRun) error {
+func (s *GormReportStore) FailGroup(ctx context.Context, id string, owner uint, claim, reason string, run *types.AgentRun) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
@@ -158,7 +158,7 @@ func (s *GormReportStore) FailGroup(ctx context.Context, id string, owner uint, 
 		if err := events.LockConversation(tx, owner); err != nil {
 			return err
 		}
-		var group store.TaskGroup
+		var group types.TaskGroup
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ?", id, owner).Take(&group).Error; err != nil {
 			return err
 		}
@@ -178,7 +178,7 @@ func (s *GormReportStore) FailGroup(ctx context.Context, id string, owner uint, 
 		}
 		now := tx.NowFunc()
 		reason = clipReportError(reason)
-		result := tx.Model(&store.TaskGroup{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND report_claim = ?", id, owner, "processing", claim).Updates(map[string]any{"report_status": "failed", "report_claim": "", "report_run_id": runID, "report_error": reason, "updated_at": now})
+		result := tx.Model(&types.TaskGroup{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND report_claim = ?", id, owner, "processing", claim).Updates(map[string]any{"report_status": "failed", "report_claim": "", "report_run_id": runID, "report_error": reason, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -189,7 +189,7 @@ func (s *GormReportStore) FailGroup(ctx context.Context, id string, owner uint, 
 		if err != nil {
 			return err
 		}
-		return events.Append(tx, &store.ConversationEvent{ConversationID: owner, Kind: "report.failed", Key: "group-report:" + id + ":failed", Data: data})
+		return events.Append(tx, &types.ConversationEvent{ConversationID: owner, Kind: "report.failed", Key: "group-report:" + id + ":failed", Data: data})
 	})
 }
 
@@ -199,7 +199,7 @@ func (s *GormReportStore) InterruptGroupProcessing(ctx context.Context) error {
 	}
 	var after string
 	for {
-		var rows []store.TaskGroup
+		var rows []types.TaskGroup
 		query := s.db.WithContext(ctx).Where("report_status = ?", "processing")
 		if after != "" {
 			query = query.Where("id > ?", after)

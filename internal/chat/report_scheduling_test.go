@@ -14,7 +14,7 @@ import (
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/chat"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 func TestSlowGroupSynthesisDoesNotBlockDirectDeliveryBehindManySynthesisTasks(t *testing.T) {
@@ -143,7 +143,7 @@ func TestConcurrentReportLanesStillSerializeTheSameConversation(t *testing.T) {
 	}}
 	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	firstID, secondID, directID := strings.Repeat("a", 32), strings.Repeat("b", 32), strings.Repeat("c", 32)
-	ledger := &dispatchLedger{rows: map[string]store.SubagentTask{firstID: dispatchTask(1, firstID), secondID: dispatchTask(1, secondID)}}
+	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{firstID: dispatchTask(1, firstID), secondID: dispatchTask(1, secondID)}}
 	startDispatcher(t, service, ledger)
 	select {
 	case <-entered:
@@ -181,7 +181,7 @@ func TestBusyConversationDoesNotHideDirectDeliveryBehindFirstPage(t *testing.T) 
 		}
 	}}
 	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
-	ledger := &dispatchLedger{rows: make(map[string]store.SubagentTask)}
+	ledger := &dispatchLedger{rows: make(map[string]types.SubagentTask)}
 	for i := 0; i < 30; i++ {
 		id := fmt.Sprintf("%032x", i+1)
 		row := dispatchTask(1, id)
@@ -237,7 +237,7 @@ func TestReportDispatcherBoundsSynthesisAndWaitsForWorkerCleanup(t *testing.T) {
 		return llm.Turn{}, ctx.Err()
 	}}
 	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
-	ledger := &dispatchLedger{rows: make(map[string]store.SubagentTask)}
+	ledger := &dispatchLedger{rows: make(map[string]types.SubagentTask)}
 	for i := 0; i < 12; i++ {
 		id := fmt.Sprintf("%032x", i+1)
 		ledger.rows[id] = dispatchTask(uint(i+1), id)
@@ -300,14 +300,14 @@ type cancelledDeliveryClaim struct {
 	entered chan struct{}
 }
 
-func (l *cancelledDeliveryClaim) Claim(ctx context.Context, id string, owner uint, claim string) (store.SubagentTask, bool, error) {
+func (l *cancelledDeliveryClaim) Claim(ctx context.Context, id string, owner uint, claim string) (types.SubagentTask, bool, error) {
 	row, claimed, err := l.dispatchLedger.Claim(ctx, id, owner, claim)
 	if err != nil || !claimed {
 		return row, claimed, err
 	}
 	close(l.entered)
 	<-ctx.Done()
-	return store.SubagentTask{}, false, ctx.Err()
+	return types.SubagentTask{}, false, ctx.Err()
 }
 
 func TestDirectDeliveryClaimInterruptedByShutdownResumesWithoutModel(t *testing.T) {
@@ -315,7 +315,7 @@ func TestDirectDeliveryClaimInterruptedByShutdownResumesWithoutModel(t *testing.
 	id := strings.Repeat("a", 32)
 	task := dispatchTask(1, id)
 	task.DeliveryMode = "direct"
-	ledger := &dispatchLedger{rows: map[string]store.SubagentTask{id: task}}
+	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id: task}}
 	wrapper := &cancelledDeliveryClaim{dispatchLedger: ledger, entered: make(chan struct{})}
 	d, err := chat.StartReportDispatcher(context.Background(), service, wrapper, chat.ReportConfig{PollInterval: time.Millisecond, Timeout: time.Second})
 	if err != nil {

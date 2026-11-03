@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 // MessageDelivery is the provenance already committed with a message.created
@@ -19,10 +19,10 @@ type MessageDelivery struct {
 	Sources   json.RawMessage `json:"sources,omitempty"`
 }
 
-// MessageDeliveries restores old and new deliveries from the durable event log.
+// MessageDeliveries retypess old and new deliveries from the durable event log.
 // The event key is indexed with conversation_id, so this needs no replay scan
 // or new message columns. The caller supplies the session it has already loaded.
-func (m *MemoryManger) MessageDeliveries(ctx context.Context, session store.Session, messages []store.Message) (map[uint]MessageDelivery, error) {
+func (m *MemoryManger) MessageDeliveries(ctx context.Context, session types.Session, messages []types.Message) (map[uint]MessageDelivery, error) {
 	deliveries := make(map[uint]MessageDelivery) // 存储交付
 	if ctx == nil || m == nil || m.db == nil || session.ID == 0 {
 		return nil, fmt.Errorf("memory: message delivery session and storage are required")
@@ -34,7 +34,7 @@ func (m *MemoryManger) MessageDeliveries(ctx context.Context, session store.Sess
 		return deliveries, nil
 	}
 	owner := *session.ConversationID
-	byKey := make(map[string]store.Message, len(messages)) // 标记键切片+存储消息
+	byKey := make(map[string]types.Message, len(messages)) // 标记键切片+存储消息
 	keys := make([]string, 0, len(messages))               // 键切片+存储键
 	for _, message := range messages {
 		if message.ID == 0 || message.SessionID != session.ID {
@@ -52,7 +52,7 @@ func (m *MemoryManger) MessageDeliveries(ctx context.Context, session store.Sess
 		if end > len(keys) {
 			end = len(keys)
 		}
-		var events []store.ConversationEvent
+		var events []types.ConversationEvent
 		if err := m.db.WithContext(ctx).Select("conversation_id", "kind", "key", "data").
 			Where("conversation_id = ? AND kind = ? AND key IN ?", owner, "message.created", keys[offset:end]).
 			Find(&events).Error; err != nil {
@@ -66,7 +66,7 @@ func (m *MemoryManger) MessageDeliveries(ctx context.Context, session store.Sess
 			var payload struct {
 				ConversationID uint `json:"conversation_id"`
 				MessageDelivery
-				Message store.Message `json:"message"`
+				Message types.Message `json:"message"`
 			}
 			if json.Unmarshal(event.Data, &payload) != nil || payload.ConversationID != owner ||
 				payload.Message.ID != message.ID || payload.Message.SessionID != session.ID ||

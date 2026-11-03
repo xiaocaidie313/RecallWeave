@@ -7,7 +7,7 @@ import (
 
 	"recallweave/internal/delivery"
 	"recallweave/internal/events"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -81,6 +81,6 @@ func (s *GormReportStore) recoverInterruptedReport(ctx context.Context, table, i
 		if err != nil {
 			return err
 		}
-		return events.Append(tx, &store.ConversationEvent{ConversationID: owner, Kind: "report.failed", Key: key + id + ":failed", Data: data})
+		return events.Append(tx, &types.ConversationEvent{ConversationID: owner, Kind: "report.failed", Key: key + id + ":failed", Data: data})
 	})
 }

@@ -3,13 +3,13 @@ package subagent
 import (
 	"context"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 type GroupTaskStore interface {
 	GroupsEnabled() bool
-	CreateGroup(context.Context, *store.TaskGroup, []store.SubagentTask) error
-	LoadGroup(context.Context, string, uint) (store.TaskGroup, []store.SubagentTask, error)
-	ListGroups(context.Context, uint, int) ([]store.TaskGroup, error)
-	RequestCancelGroup(context.Context, string, uint) (store.TaskGroup, []store.SubagentTask, error)
+	CreateGroup(context.Context, *types.TaskGroup, []types.SubagentTask) error
+	LoadGroup(context.Context, string, uint) (types.TaskGroup, []types.SubagentTask, error)
+	ListGroups(context.Context, uint, int) ([]types.TaskGroup, error)
+	RequestCancelGroup(context.Context, string, uint) (types.TaskGroup, []types.SubagentTask, error)
 }

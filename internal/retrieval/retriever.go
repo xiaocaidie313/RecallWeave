@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -14,7 +14,7 @@ import (
 
 // Hit 是一条向量近邻。Similarity 用的是入库后的向量，和 memories.embedding 同一长度。
 type Hit struct {
-	Memory     store.Memory
+	Memory     types.Memory
 	Similarity float64
 }
 
@@ -32,7 +32,7 @@ func New(db *gorm.DB, embedder Embedder) *Retriever {
 // Search 返回按余弦相似度从高到低排列的候选。
 // limit 是数据库取出的条数。调用方若还要按活跃度重排，应传入比最终条数更大的值。
 // 没配嵌入模型、查询为空、或向量长度对不上时返回空结果，不视为错误。
-func (r *Retriever) Search(ctx context.Context, query string, tag store.MemoryTag, limit int, includeInactive ...bool) ([]Hit, error) {
+func (r *Retriever) Search(ctx context.Context, query string, tag types.MemoryTag, limit int, includeInactive ...bool) ([]Hit, error) {
 	if r == nil || r.embedder == nil || r.db == nil || strings.TrimSpace(query) == "" || limit <= 0 {
 		return nil, nil
 	}
@@ -42,21 +42,21 @@ func (r *Retriever) Search(ctx context.Context, query string, tag store.MemoryTa
 		return nil, err
 	}
 	// 和写入记忆走同一个 NewEmbedding，比较的才是截断并归一化后的 1536 维。
-	queryEmbedding := store.NewEmbedding(raw)
-	queryValues := store.EmbeddingValues(queryEmbedding)
+	queryEmbedding := types.NewEmbedding(raw)
+	queryValues := types.EmbeddingValues(queryEmbedding)
 	if len(queryValues) == 0 {
 		return nil, nil
 	}
 
-	dbQuery := r.db.WithContext(ctx).Model(&store.Memory{}).Where("embedding IS NOT NULL")
+	dbQuery := r.db.WithContext(ctx).Model(&types.Memory{}).Where("embedding IS NOT NULL")
 	if len(includeInactive) == 0 || !includeInactive[0] {
-		dbQuery = dbQuery.Where("status = ?", store.MemoryActive)
+		dbQuery = dbQuery.Where("status = ?", types.MemoryActive)
 	}
 	if tag != "" {
 		dbQuery = dbQuery.Where("tag = ?", tag)
 	}
 
-	var memories []store.Memory
+	var memories []types.Memory
 	err = dbQuery.Clauses(clause.OrderBy{
 		Expression: clause.Expr{SQL: "embedding <=> ?", Vars: []any{queryEmbedding}},
 	}).Limit(limit).Find(&memories).Error
@@ -66,7 +66,7 @@ func (r *Retriever) Search(ctx context.Context, query string, tag store.MemoryTa
 
 	hits := make([]Hit, 0, len(memories))
 	for _, item := range memories {
-		similarity := CosineSimilarity(queryValues, store.EmbeddingValues(item.Embedding))
+		similarity := CosineSimilarity(queryValues, types.EmbeddingValues(item.Embedding))
 		if similarity <= 0 {
 			continue
 		}

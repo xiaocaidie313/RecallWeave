@@ -10,7 +10,7 @@ import (
 
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/events"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -49,19 +49,19 @@ func reportTerminal(status string) bool {
 	}
 	return false
 }
-func (s *GormReportStore) Pending(ctx context.Context, limit int) ([]store.SubagentTask, error) {
+func (s *GormReportStore) Pending(ctx context.Context, limit int) ([]types.SubagentTask, error) {
 	if err := s.check(ctx); err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	rows := make([]store.SubagentTask, 0)
+	rows := make([]types.SubagentTask, 0)
 	err := s.db.WithContext(ctx).Select("id", "conversation_id", "delivery_mode").Where("report_status = ? AND status IN ?", "pending", []string{"completed", "partial", "failed", "cancelled", "interrupted"}).Order("finished_at ASC").Order("id ASC").Limit(limit).Find(&rows).Error
 	return rows, err
 }
-func (s *GormReportStore) Claim(ctx context.Context, id string, owner uint, claim string) (store.SubagentTask, bool, error) {
-	var row store.SubagentTask
+func (s *GormReportStore) Claim(ctx context.Context, id string, owner uint, claim string) (types.SubagentTask, bool, error) {
+	var row types.SubagentTask
 	if err := s.check(ctx); err != nil {
 		return row, false, err
 	}
@@ -70,7 +70,7 @@ func (s *GormReportStore) Claim(ctx context.Context, id string, owner uint, clai
 	}
 	claimed := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND status IN ?", id, owner, "pending", []string{"completed", "partial", "failed", "cancelled", "interrupted"}).Updates(map[string]any{"report_status": "processing", "report_claim": claim, "report_error": "", "updated_at": tx.NowFunc()})
+		result := tx.Model(&types.SubagentTask{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND status IN ?", id, owner, "pending", []string{"completed", "partial", "failed", "cancelled", "interrupted"}).Updates(map[string]any{"report_status": "processing", "report_claim": claim, "report_error": "", "updated_at": tx.NowFunc()})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -78,11 +78,11 @@ func (s *GormReportStore) Claim(ctx context.Context, id string, owner uint, clai
 		return tx.Where("id = ? AND conversation_id = ?", id, owner).Take(&row).Error
 	})
 	if err != nil {
-		return store.SubagentTask{}, false, err
+		return types.SubagentTask{}, false, err
 	}
 	return row, claimed, nil
 }
-func checkReportRun(run *store.AgentRun, owner uint) error {
+func checkReportRun(run *types.AgentRun, owner uint) error {
 	if run != nil && (run.ConversationID != owner || strings.TrimSpace(run.RunID) == "" || len(run.RunID) > 64 || run.SubagentID != "" || len(run.State) == 0 || !json.Valid(run.State)) {
 		return fmt.Errorf("chat: report Run does not match conversation")
 	}
@@ -105,7 +105,7 @@ func (s *GormReportStore) Deliver(ctx context.Context, id string, owner uint, cl
 		if err := events.LockConversation(tx, owner); err != nil {
 			return err
 		}
-		var task store.SubagentTask
+		var task types.SubagentTask
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ?", id, owner).Take(&task).Error; err != nil {
 			return err
 		}
@@ -115,10 +115,10 @@ func (s *GormReportStore) Deliver(ctx context.Context, id string, owner uint, cl
 		if task.ReportStatus != "processing" || task.ReportClaim != claim || !reportTerminal(task.Status) {
 			return ErrReportConflict
 		}
-		var session store.Session
-		err := tx.Where("conversation_id = ? AND source_tag = ?", owner, store.SourceChat).Order("id").First(&session).Error
+		var session types.Session
+		err := tx.Where("conversation_id = ? AND source_tag = ?", owner, types.SourceChat).Order("id").First(&session).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			session = store.Session{ConversationID: &owner, SourceTag: store.SourceChat, Name: "chat", ExtractStatus: store.ExtractPending}
+			session = types.Session{ConversationID: &owner, SourceTag: types.SourceChat, Name: "chat", ExtractStatus: types.ExtractPending}
 			if err := tx.Create(&session).Error; err != nil {
 				return err
 			}
@@ -128,7 +128,7 @@ func (s *GormReportStore) Deliver(ctx context.Context, id string, owner uint, cl
 		if err := lockReportSession(tx, &session, owner); err != nil {
 			return err
 		}
-		message := store.Message{SourceTag: store.SourceChat, SessionID: session.ID, Role: "assistant", Content: report.Message.Content}
+		message := types.Message{SourceTag: types.SourceChat, SessionID: session.ID, Role: "assistant", Content: report.Message.Content}
 		if err := appendReportMessage(tx, &message); err != nil {
 			return err
 		}
@@ -144,7 +144,7 @@ func (s *GormReportStore) Deliver(ctx context.Context, id string, owner uint, cl
 			runID = runCopy.RunID
 		}
 		now := tx.NowFunc()
-		result := tx.Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND report_claim = ?", id, owner, "processing", claim).Updates(map[string]any{"report_status": "delivered", "report_claim": "", "report_run_id": runID, "report_message_id": message.ID, "report_error": clipReportError(report.Error), "reported_at": now, "updated_at": now})
+		result := tx.Model(&types.SubagentTask{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND report_claim = ?", id, owner, "processing", claim).Updates(map[string]any{"report_status": "delivered", "report_claim": "", "report_run_id": runID, "report_message_id": message.ID, "report_error": clipReportError(report.Error), "reported_at": now, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -154,7 +154,7 @@ func (s *GormReportStore) Deliver(ctx context.Context, id string, owner uint, cl
 		return appendMessageEvent(tx, owner, message, messageEventMetadata{TaskID: id, GroupID: task.GroupID, RunID: runID, TaskRunID: task.RunID, Sources: report.Sources})
 	})
 }
-func (s *GormReportStore) Fail(ctx context.Context, id string, owner uint, claim string, reason string, run *store.AgentRun) error {
+func (s *GormReportStore) Fail(ctx context.Context, id string, owner uint, claim string, reason string, run *types.AgentRun) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (s *GormReportStore) Fail(ctx context.Context, id string, owner uint, claim
 		if err := events.LockConversation(tx, owner); err != nil {
 			return err
 		}
-		var task store.SubagentTask
+		var task types.SubagentTask
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ?", id, owner).Take(&task).Error; err != nil {
 			return err
 		}
@@ -194,7 +194,7 @@ func (s *GormReportStore) Fail(ctx context.Context, id string, owner uint, claim
 		}
 		now := tx.NowFunc()
 		reason = clipReportError(reason)
-		result := tx.Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND report_claim = ?", id, owner, "processing", claim).Updates(map[string]any{"report_status": "failed", "report_claim": "", "report_run_id": runID, "report_error": reason, "updated_at": now})
+		result := tx.Model(&types.SubagentTask{}).Where("id = ? AND conversation_id = ? AND report_status = ? AND report_claim = ?", id, owner, "processing", claim).Updates(map[string]any{"report_status": "failed", "report_claim": "", "report_run_id": runID, "report_error": reason, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -205,7 +205,7 @@ func (s *GormReportStore) Fail(ctx context.Context, id string, owner uint, claim
 		if err != nil {
 			return err
 		}
-		return events.Append(tx, &store.ConversationEvent{ConversationID: owner, Kind: "report.failed", Key: "report:" + id + ":failed", Data: data})
+		return events.Append(tx, &types.ConversationEvent{ConversationID: owner, Kind: "report.failed", Key: "report:" + id + ":failed", Data: data})
 	})
 }
 func (s *GormReportStore) InterruptProcessing(ctx context.Context) error {
@@ -214,7 +214,7 @@ func (s *GormReportStore) InterruptProcessing(ctx context.Context) error {
 	}
 	var after string
 	for {
-		var rows []store.SubagentTask
+		var rows []types.SubagentTask
 		query := s.db.WithContext(ctx).Where("report_status = ?", "processing")
 		if after != "" {
 			query = query.Where("id > ?", after)
@@ -241,11 +241,11 @@ func (s *GormReportStore) AppendTurn(ctx context.Context, sessionID uint, questi
 		return fmt.Errorf("chat: session and bounded turn text are required")
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var session store.Session
+		var session types.Session
 		if err := tx.Where("id = ?", sessionID).Take(&session).Error; err != nil {
 			return err
 		}
-		if session.ConversationID == nil || *session.ConversationID == 0 || session.SourceTag != store.SourceChat {
+		if session.ConversationID == nil || *session.ConversationID == 0 || session.SourceTag != types.SourceChat {
 			return fmt.Errorf("chat: turn must belong to a chat session")
 		}
 		owner := *session.ConversationID
@@ -256,7 +256,7 @@ func (s *GormReportStore) AppendTurn(ctx context.Context, sessionID uint, questi
 			return err
 		}
 		for _, item := range []struct{ role, content string }{{"user", question}, {"assistant", answer}} {
-			message := store.Message{SourceTag: store.SourceChat, SessionID: session.ID, Role: item.role, Content: item.content}
+			message := types.Message{SourceTag: types.SourceChat, SessionID: session.ID, Role: item.role, Content: item.content}
 			if err := appendReportMessage(tx, &message); err != nil {
 				return err
 			}
@@ -267,17 +267,17 @@ func (s *GormReportStore) AppendTurn(ctx context.Context, sessionID uint, questi
 		return nil
 	})
 }
-func lockReportSession(tx *gorm.DB, session *store.Session, owner uint) error {
-	var locked store.Session
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ? AND source_tag = ?", session.ID, owner, store.SourceChat).Take(&locked).Error; err != nil {
+func lockReportSession(tx *gorm.DB, session *types.Session, owner uint) error {
+	var locked types.Session
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ? AND source_tag = ?", session.ID, owner, types.SourceChat).Take(&locked).Error; err != nil {
 		return err
 	}
 	*session = locked
 	return nil
 }
-func appendReportMessage(tx *gorm.DB, message *store.Message) error {
+func appendReportMessage(tx *gorm.DB, message *types.Message) error {
 	var last int
-	if err := tx.Model(&store.Message{}).Where("session_id = ?", message.SessionID).Select("COALESCE(MAX(seq), 0)").Scan(&last).Error; err != nil {
+	if err := tx.Model(&types.Message{}).Where("session_id = ?", message.SessionID).Select("COALESCE(MAX(seq), 0)").Scan(&last).Error; err != nil {
 		return err
 	}
 	message.Seq = last + 1
@@ -293,7 +293,7 @@ type messageEventMetadata struct {
 	Sources   []runtime.Source
 }
 
-func appendMessageEvent(tx *gorm.DB, owner uint, message store.Message, metadata messageEventMetadata) error {
+func appendMessageEvent(tx *gorm.DB, owner uint, message types.Message, metadata messageEventMetadata) error {
 	data, err := json.Marshal(struct {
 		ConversationID uint             `json:"conversation_id"`
 		TaskID         string           `json:"task_id,omitempty"`
@@ -301,12 +301,12 @@ func appendMessageEvent(tx *gorm.DB, owner uint, message store.Message, metadata
 		RunID          string           `json:"run_id,omitempty"`
 		TaskRunID      string           `json:"task_run_id,omitempty"`
 		Sources        []runtime.Source `json:"sources,omitempty"`
-		Message        store.Message    `json:"message"`
+		Message        types.Message    `json:"message"`
 	}{owner, metadata.TaskID, metadata.GroupID, metadata.RunID, metadata.TaskRunID, metadata.Sources, message})
 	if err != nil {
 		return err
 	}
-	return events.Append(tx, &store.ConversationEvent{ConversationID: owner, Kind: "message.created", Key: fmt.Sprintf("message:%d", message.ID), Data: data})
+	return events.Append(tx, &types.ConversationEvent{ConversationID: owner, Kind: "message.created", Key: fmt.Sprintf("message:%d", message.ID), Data: data})
 }
 func validReportText(value string) bool {
 	return strings.TrimSpace(value) != "" && len(value) <= 512<<10 && utf8.ValidString(value)

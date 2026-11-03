@@ -8,7 +8,7 @@ import (
 
 	"recallweave/internal/extract"
 	"recallweave/internal/parser"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 )
@@ -42,18 +42,18 @@ type importBind struct {
 
 // ImportText 把文本拆成会话并提炼成记忆，不挂到任何对话。
 // 这些记忆留在全库里，以后靠问题相似度被捞到。
-func (s *Service) ImportText(ctx context.Context, sourceTag store.SourceTag, name, text string) ([]ImportResult, error) {
+func (s *Service) ImportText(ctx context.Context, sourceTag types.SourceTag, name, text string) ([]ImportResult, error) {
 	return s.importText(ctx, sourceTag, name, text, importBind{})
 }
 
 // ImportIntoConversation 把文本挂到已有对话上，作为这次对话的 context。
-func (s *Service) ImportIntoConversation(ctx context.Context, conversationID uint, sourceTag store.SourceTag, name, text string) ([]ImportResult, error) {
-	if sourceTag == store.SourceChat {
+func (s *Service) ImportIntoConversation(ctx context.Context, conversationID uint, sourceTag types.SourceTag, name, text string) ([]ImportResult, error) {
+	if sourceTag == types.SourceChat {
 		return nil, ErrChatSource
 	}
 
 	var count int64
-	if err := s.db.WithContext(ctx).Model(&store.Conversation{}).Where("id = ?", conversationID).Count(&count).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&types.Conversation{}).Where("id = ?", conversationID).Count(&count).Error; err != nil {
 		return nil, err
 	}
 	if count == 0 {
@@ -64,8 +64,8 @@ func (s *Service) ImportIntoConversation(ctx context.Context, conversationID uin
 	return s.importText(ctx, sourceTag, name, text, importBind{conversationID: &id})
 }
 
-func (s *Service) importText(ctx context.Context, sourceTag store.SourceTag, name, text string, bind importBind) ([]ImportResult, error) {
-	if !store.IsValidSourceTag(sourceTag) {
+func (s *Service) importText(ctx context.Context, sourceTag types.SourceTag, name, text string, bind importBind) ([]ImportResult, error) {
+	if !types.IsValidSourceTag(sourceTag) {
 		return nil, ErrInvalidSource
 	}
 
@@ -84,12 +84,12 @@ func (s *Service) importText(ctx context.Context, sourceTag store.SourceTag, nam
 			if conv.Title != "" {
 				sessionName = conv.Title
 			}
-			session := &store.Session{
+			session := &types.Session{
 				SourceTag:      sourceTag,
 				Name:           sessionName,
 				RawText:        text,
 				ConversationID: bind.conversationID,
-				ExtractStatus:  store.ExtractPending,
+				ExtractStatus:  types.ExtractPending,
 			}
 			if err := insertSession(tx, session, conv.Messages); err != nil {
 				return err
@@ -97,7 +97,7 @@ func (s *Service) importText(ctx context.Context, sourceTag store.SourceTag, nam
 			results = append(results, ImportResult{
 				SessionID:     session.ID,
 				MessageCount:  len(conv.Messages),
-				ExtractStatus: store.ExtractPending,
+				ExtractStatus: types.ExtractPending,
 			})
 		}
 		return nil
@@ -109,10 +109,10 @@ func (s *Service) importText(ctx context.Context, sourceTag store.SourceTag, nam
 	// 没配 LLM（extractExcuter 为 nil）时不提炼，只入库。
 	if s.extractExcuter == nil {
 		for i := range results {
-			results[i].ExtractStatus = store.ExtractSkipped
-			if err := s.db.WithContext(ctx).Model(&store.Session{}).
+			results[i].ExtractStatus = types.ExtractSkipped
+			if err := s.db.WithContext(ctx).Model(&types.Session{}).
 				Where("id = ?", results[i].SessionID).
-				Update("extract_status", store.ExtractSkipped).Error; err != nil {
+				Update("extract_status", types.ExtractSkipped).Error; err != nil {
 				slog.Warn("mark extract skipped failed", "session_id", results[i].SessionID, "error", err)
 			}
 		}
@@ -133,7 +133,7 @@ func (s *Service) importText(ctx context.Context, sourceTag store.SourceTag, nam
 
 // insertSession 在调用方的事务里写入会话和它的消息。
 // session 插入后自增 ID 才可用，所以 SessionID 在这里回填。
-func insertSession(tx *gorm.DB, session *store.Session, messages []store.Message) error {
+func insertSession(tx *gorm.DB, session *types.Session, messages []types.Message) error {
 	if err := tx.Create(session).Error; err != nil {
 		return err
 	}

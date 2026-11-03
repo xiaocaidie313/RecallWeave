@@ -45,10 +45,10 @@ func (conv *Conversation) Snapshot() (*ConversationSnapshot, error) {
 	return snapshot, nil
 }
 
-// RestoreConversation replaces the first system message with current policy,
+// RetypesConversation replaces the first system message with current policy,
 // while preserving all remaining messages, including original tool-call ids
 // and result strings. Restoring never invokes any tool.
-func RestoreConversation(systemPrompt string, snapshot *ConversationSnapshot, opts ...ConvOption) (*Conversation, error) {
+func RetypesConversation(systemPrompt string, snapshot *ConversationSnapshot, opts ...ConvOption) (*Conversation, error) {
 	if !utf8.ValidString(systemPrompt) {
 		return nil, fmt.Errorf("llm: system prompt must be UTF-8")
 	}

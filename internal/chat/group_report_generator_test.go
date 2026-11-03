@@ -11,10 +11,10 @@ import (
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/delivery"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
-func groupReportFixture(t *testing.T) (store.TaskGroup, []store.SubagentTask) {
+func groupReportFixture(t *testing.T) (types.TaskGroup, []types.SubagentTask) {
 	t.Helper()
 	first := autoReportFixture(t)
 	var child runtime.RunResult
@@ -24,9 +24,9 @@ func groupReportFixture(t *testing.T) (store.TaskGroup, []store.SubagentTask) {
 	child.State.ConversationID = 9
 	first.ID, first.GroupID, first.ConversationID = "task-a", "group-id", 9
 	first.Result, _ = json.Marshal(child)
-	second := store.SubagentTask{ID: "task-b", GroupID: "group-id", ConversationID: 9, ParentRunID: first.ParentRunID, SubagentID: "child-b", AgentName: "researcher", Task: "check external evidence", Status: "failed", Error: "provider denied request"}
+	second := types.SubagentTask{ID: "task-b", GroupID: "group-id", ConversationID: 9, ParentRunID: first.ParentRunID, SubagentID: "child-b", AgentName: "researcher", Task: "check external evidence", Status: "failed", Error: "provider denied request"}
 	ids, _ := json.Marshal([]string{first.ID, second.ID})
-	return store.TaskGroup{ID: "group-id", ConversationID: 9, ParentRunID: first.ParentRunID, Goal: "compare personal and external evidence", ExpectedOutput: "cite sources and show contradictions", DeliveryMode: delivery.Synthesize, TaskIDs: ids, Status: "partial"}, []store.SubagentTask{first, second}
+	return types.TaskGroup{ID: "group-id", ConversationID: 9, ParentRunID: first.ParentRunID, Goal: "compare personal and external evidence", ExpectedOutput: "cite sources and show contradictions", DeliveryMode: delivery.Synthesize, TaskIDs: ids, Status: "partial"}, []types.SubagentTask{first, second}
 }
 
 func TestGenerateGroupReportCombinesSuccessfulEvidenceAndFailedMemberInOneRun(t *testing.T) {
@@ -92,7 +92,7 @@ func TestGenerateGroupReportCombinedPreservesOriginalsInDeclaredOrderWithoutMode
 				t.Fatal("combined delivery called model")
 				return llm.Turn{}, nil
 			}}
-			report, err := NewAgent(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, []store.SubagentTask{tasks[1], tasks[0]})
+			report, err := NewAgent(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, []types.SubagentTask{tasks[1], tasks[0]})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -171,7 +171,7 @@ func TestGenerateGroupReportRetainsBothSuccessfulSourceSets(t *testing.T) {
 	model := &reportTestModel{next: func(context.Context, *llm.Conversation, []llm.ToolSchema) (llm.Turn, error) {
 		return llm.Turn{Content: "两路资料对照完成。"}, nil
 	}}
-	report, err := NewAgent(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, []store.SubagentTask{tasks[1], tasks[0]})
+	report, err := NewAgent(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, []types.SubagentTask{tasks[1], tasks[0]})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,23 +15,23 @@ import (
 	"recallweave/internal/agent/ability"
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 type memoryTaskStore struct {
 	mu        sync.Mutex
-	rows      map[string]store.SubagentTask
-	runs      map[string]store.AgentRun
+	rows      map[string]types.SubagentTask
+	runs      map[string]types.AgentRun
 	createErr error
 	finishErr error
 }
 
-func cloneTask(row store.SubagentTask) store.SubagentTask {
+func cloneTask(row types.SubagentTask) types.SubagentTask {
 	row.Result = append(json.RawMessage(nil), row.Result...)
 	return row
 }
 
-func (s *memoryTaskStore) Create(ctx context.Context, row *store.SubagentTask) error {
+func (s *memoryTaskStore) Create(ctx context.Context, row *types.SubagentTask) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -41,7 +41,7 @@ func (s *memoryTaskStore) Create(ctx context.Context, row *store.SubagentTask) e
 		return s.createErr
 	}
 	if s.rows == nil {
-		s.rows = make(map[string]store.SubagentTask)
+		s.rows = make(map[string]types.SubagentTask)
 	}
 	if _, exists := s.rows[row.ID]; exists {
 		return errors.New("duplicate")
@@ -50,26 +50,26 @@ func (s *memoryTaskStore) Create(ctx context.Context, row *store.SubagentTask) e
 	return nil
 }
 
-func (s *memoryTaskStore) Load(ctx context.Context, id string, owner uint) (store.SubagentTask, error) {
+func (s *memoryTaskStore) Load(ctx context.Context, id string, owner uint) (types.SubagentTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return store.SubagentTask{}, err
+		return types.SubagentTask{}, err
 	}
 	row, exists := s.rows[id]
 	if !exists || owner == 0 || row.ConversationID != owner {
-		return store.SubagentTask{}, ErrTaskNotFound
+		return types.SubagentTask{}, ErrTaskNotFound
 	}
 	return cloneTask(row), nil
 }
 
-func (s *memoryTaskStore) List(ctx context.Context, owner uint, limit int) ([]store.SubagentTask, error) {
+func (s *memoryTaskStore) List(ctx context.Context, owner uint, limit int) ([]types.SubagentTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var rows []store.SubagentTask
+	var rows []types.SubagentTask
 	for _, row := range s.rows {
 		if row.ConversationID == owner {
 			rows = append(rows, cloneTask(row))
@@ -103,7 +103,7 @@ func (s *memoryTaskStore) Start(ctx context.Context, id string, owner uint) (boo
 	return true, nil
 }
 
-func (s *memoryTaskStore) Finish(ctx context.Context, row *store.SubagentTask, run *store.AgentRun) error {
+func (s *memoryTaskStore) Finish(ctx context.Context, row *types.SubagentTask, run *types.AgentRun) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -126,22 +126,22 @@ func (s *memoryTaskStore) Finish(ctx context.Context, row *store.SubagentTask, r
 	s.rows[row.ID] = cloneTask(*row)
 	if run != nil {
 		if s.runs == nil {
-			s.runs = make(map[string]store.AgentRun)
+			s.runs = make(map[string]types.AgentRun)
 		}
 		s.runs[run.RunID] = *run
 	}
 	return nil
 }
 
-func (s *memoryTaskStore) RequestCancel(ctx context.Context, id string, owner uint) (store.SubagentTask, error) {
+func (s *memoryTaskStore) RequestCancel(ctx context.Context, id string, owner uint) (types.SubagentTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return store.SubagentTask{}, err
+		return types.SubagentTask{}, err
 	}
 	row, exists := s.rows[id]
 	if !exists || row.ConversationID != owner {
-		return store.SubagentTask{}, ErrTaskNotFound
+		return types.SubagentTask{}, ErrTaskNotFound
 	}
 	if row.Status == "queued" || row.Status == "running" {
 		row.CancelRequested = true
@@ -174,7 +174,7 @@ func (s *memoryTaskStore) InterruptUnfinished(ctx context.Context) error {
 	return nil
 }
 
-func (s *memoryTaskStore) CheckTaskCheckpoint(ctx context.Context, session store.SubagentSession) error {
+func (s *memoryTaskStore) CheckTaskCheckpoint(ctx context.Context, session types.SubagentSession) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -309,7 +309,7 @@ func TestBackgroundBoundsQueueAndCancelsQueuedAndRunningWork(t *testing.T) {
 	}
 }
 
-func TestBackgroundFollowupRestoresHistoryAndSharesSessionLock(t *testing.T) {
+func TestBackgroundFollowupRetypessHistoryAndSharesSessionLock(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
 	model := &transcriptModel{next: func(ctx context.Context, conv *llm.Conversation, _ []llm.ToolSchema) (llm.Turn, error) {
@@ -440,7 +440,7 @@ func TestBackgroundRestartInterruptsAndDoesNotReplayUnfinishedFollowup(t *testin
 	}
 	now := time.Now()
 	id := strings.Repeat("a", 32)
-	tasks := &memoryTaskStore{rows: map[string]store.SubagentTask{id: {ID: id, SubagentID: first.State.SubagentID, PreviousRunID: first.State.RunID, ConversationID: parent.ConversationID, Status: "running", StartedAt: &now}}}
+	tasks := &memoryTaskStore{rows: map[string]types.SubagentTask{id: {ID: id, SubagentID: first.State.SubagentID, PreviousRunID: first.State.RunID, ConversationID: parent.ConversationID, Status: "running", StartedAt: &now}}}
 	m := backgroundManager(t, tasks, sessions)
 	view, err := m.GetTask(context.Background(), parent, id)
 	if err != nil || view.Status != "interrupted" {
@@ -535,7 +535,7 @@ func TestBackgroundKeepsBranchReadScopeAndPanicDoesNotKillWorker(t *testing.T) {
 	tasks := &memoryTaskStore{}
 	m := backgroundManager(t, tasks, &continuationMemoryStore{})
 	parent := managerParent(model)
-	parent.Agent.Abilities = []*agent.Ability{ability.NewBranchContextAbility([]store.ContextMessage{{SessionID: 10, Seq: 1, Role: "user", Content: "frozen prefix"}})}
+	parent.Agent.Abilities = []*agent.Ability{ability.NewBranchContextAbility([]types.ContextMessage{{SessionID: 10, Seq: 1, Role: "user", Content: "frozen prefix"}})}
 	handle, err := m.Submit(context.Background(), parent, runtime.DelegationRequest{Task: "branch research"})
 	if err != nil {
 		t.Fatal(err)

@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"recallweave/internal/delivery"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 )
@@ -37,20 +37,20 @@ func (s *GormReportStore) deliveryQueue(ctx context.Context, limit int, synthesi
 	return query.Order("finished_at ASC").Order("id ASC").Limit(limit)
 }
 
-func (s *GormReportStore) PendingDelivery(ctx context.Context, limit int, synthesize bool, excludedConversations []uint) ([]store.SubagentTask, error) {
+func (s *GormReportStore) PendingDelivery(ctx context.Context, limit int, synthesize bool, excludedConversations []uint) ([]types.SubagentTask, error) {
 	if err := s.check(ctx); err != nil {
 		return nil, err
 	}
-	rows := make([]store.SubagentTask, 0)
+	rows := make([]types.SubagentTask, 0)
 	err := s.deliveryQueue(ctx, limit, synthesize, excludedConversations, false).Find(&rows).Error
 	return rows, err
 }
 
-func (s *GormReportStore) PendingGroupDelivery(ctx context.Context, limit int, synthesize bool, excludedConversations []uint) ([]store.TaskGroup, error) {
+func (s *GormReportStore) PendingGroupDelivery(ctx context.Context, limit int, synthesize bool, excludedConversations []uint) ([]types.TaskGroup, error) {
 	if err := s.check(ctx); err != nil {
 		return nil, err
 	}
-	rows := make([]store.TaskGroup, 0)
+	rows := make([]types.TaskGroup, 0)
 	err := s.deliveryQueue(ctx, limit, synthesize, excludedConversations, true).Find(&rows).Error
 	return rows, err
 }

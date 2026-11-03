@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 )
@@ -20,15 +20,15 @@ var ErrInvalidFork = errors.New("invalid fork point or title")
 var ErrForkTooLarge = errors.New("fork snapshot exceeds 200 messages or 256 KiB")
 
 type ForkResult struct {
-	Conversation   store.Conversation `json:"conversation"`
+	Conversation   types.Conversation `json:"conversation"`
 	SessionID      uint               `json:"session_id"`
 	InheritedCount int                `json:"inherited_count"`
 }
 
-func (m *MemoryManger) GetConversation(ctx context.Context, id uint) (store.Conversation, error) {
-	var conversation store.Conversation
-	if err := m.db.WithContext(ctx).Model(&store.Conversation{}).Where("id = ?", id).First(&conversation).Error; err != nil {
-		return store.Conversation{}, err
+func (m *MemoryManger) GetConversation(ctx context.Context, id uint) (types.Conversation, error) {
+	var conversation types.Conversation
+	if err := m.db.WithContext(ctx).Model(&types.Conversation{}).Where("id = ?", id).First(&conversation).Error; err != nil {
+		return types.Conversation{}, err
 	}
 	return conversation, nil
 }
@@ -42,16 +42,16 @@ func (m *MemoryManger) ForkConversation(ctx context.Context, parentID uint, from
 	}
 	var result ForkResult
 	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var parent store.Conversation
+		var parent types.Conversation
 		if err := tx.First(&parent, parentID).Error; err != nil {
 			return err
 		}
 		// 找session 
-		var source store.Session
-		if err := tx.Where("conversation_id = ? AND source_tag = ?", parentID, store.SourceChat).First(&source).Error; err != nil {
+		var source types.Session
+		if err := tx.Where("conversation_id = ? AND source_tag = ?", parentID, types.SourceChat).First(&source).Error; err != nil {
 			return err
 		}
-		var messages []store.Message
+		var messages []types.Message
 		// Bound the read before constructing or writing a potentially large snapshot.
 		// 找message
 		if err := tx.Where("session_id = ? AND seq <= ?", source.ID, fromSeq).
@@ -73,7 +73,7 @@ func (m *MemoryManger) ForkConversation(ctx context.Context, parentID uint, from
 			if message.Role != "user" && message.Role != "assistant" {
 				return fmt.Errorf("%w: unsupported message role", ErrInvalidFork)
 			}
-			inherited = append(inherited, store.ContextMessage{
+			inherited = append(inherited, types.ContextMessage{
 				SessionID: source.ID, Seq: message.Seq, Role: message.Role, Content: message.Content,
 			})
 		}
@@ -91,14 +91,14 @@ func (m *MemoryManger) ForkConversation(ctx context.Context, parentID uint, from
 			title = "分支对话"
 		}
 		// 创建新对话
-		child := store.Conversation{Title: title, ParentConversationID: &parentID,
+		child := types.Conversation{Title: title, ParentConversationID: &parentID,
 			ForkSessionID: &source.ID, ForkSeq: fromSeq, ForkSnapshot: snapshot}
 		if err := tx.Create(&child).Error; err != nil {
 			return err
 		}
 		// 创建新session
-		session := store.Session{ConversationID: &child.ID, SourceTag: store.SourceChat,
-			Name: "chat", ExtractStatus: store.ExtractSkipped}
+		session := types.Session{ConversationID: &child.ID, SourceTag: types.SourceChat,
+			Name: "chat", ExtractStatus: types.ExtractSkipped}
 		if err := tx.Create(&session).Error; err != nil {
 			return err
 		}

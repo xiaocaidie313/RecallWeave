@@ -9,7 +9,7 @@ import (
 
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 // preloadedMemoriesLimit 混合检索预取的记忆条数。只放几条摘要进上下文，
@@ -29,7 +29,7 @@ const (
 //
 // 只作知识背景的导入不挂 conversation，不会出现在导入层，仍走第 1 层。
 // 没有记忆库或没有 conversation 时跳过，测试可以不连数据库。
-func (a *Agent) loadContext(ctx context.Context, conversationID uint, question string) (runtime.Preload, uint, *store.Conversation, []store.ContextMessage, error) {
+func (a *ChatService) loadContext(ctx context.Context, conversationID uint, question string) (runtime.Preload, uint, *types.Conversation, []types.ContextMessage, error) {
 	var preload runtime.Preload
 	if a.memory == nil || conversationID == 0 {
 		return preload, 0, nil, nil, nil
@@ -38,6 +38,7 @@ func (a *Agent) loadContext(ctx context.Context, conversationID uint, question s
 	if err != nil {
 		return preload, 0, nil, nil, err
 	}
+	//判断是否是分支， 分支不加背景
 	if !conversation.IsBranch() {
 		if background := a.relatedMemories(ctx, question); background != "" {
 			preload.Background = append(preload.Background, background)
@@ -50,30 +51,32 @@ func (a *Agent) loadContext(ctx context.Context, conversationID uint, question s
 			preload.Background = append(preload.Background, imported)
 		}
 	}
-
+	//默认 聊天会话的session
 	session, err := a.memory.ChatSession(ctx, conversationID)
 	if err != nil {
 		return preload, 0, nil, nil, err
 	}
-	visible, err := conversation.InheritedMessages()
+	// 子获取父分支的原文
+	inheritedMsg, err := conversation.InheritedMessages()
 	if err != nil {
 		return preload, 0, nil, nil, fmt.Errorf("invalid fork snapshot: %w", err)
 	}
-	for _, message := range visible {
+	for _, message := range inheritedMsg {
 		preload.History = append(preload.History, llm.Message{Seq: message.Seq, Role: message.Role,
 			Content: fmt.Sprintf("【继承原文：会话 %d，消息 %d】\n%s", message.SessionID, message.Seq, message.Content)})
 	}
+	// 获取摘要
 	brief, untilSeq := conversation.Brief, conversation.BriefUntilSeq
 	if brief != "" {
 		preload.Background = append(preload.Background, "此前对话摘要：\n"+brief)
 	}
-
+	//@todo  session
 	messages, err := a.memory.ListMessages(ctx, session.ID)
 	if err != nil {
 		return preload, 0, nil, nil, err
 	}
 	for _, msg := range messages {
-		visible = append(visible, store.ContextMessage{SessionID: session.ID, Seq: msg.Seq, Role: msg.Role, Content: msg.Content})
+		inheritedMsg = append(inheritedMsg, types.ContextMessage{SessionID: session.ID, Seq: msg.Seq, Role: msg.Role, Content: msg.Content})
 		if untilSeq > 0 && msg.Seq <= untilSeq {
 			continue
 		}
@@ -87,16 +90,17 @@ func (a *Agent) loadContext(ctx context.Context, conversationID uint, question s
 			Content: content,
 		})
 	}
-	return preload, session.ID, &conversation, visible, nil
+	return preload, session.ID, &conversation, inheritedMsg, nil
 }
 
 // relatedMemories 用当前问题从记忆库检索相关记忆，把 top-K 的标题+摘要拼成一段背景。
 // 这些预取的记忆不进 citations——它们是「可能的背景」，真正的引用依据走工具链。
 // 检索失败只记日志，不让预取失败拦截掉这一次提问。
-func (a *Agent) relatedMemories(ctx context.Context, question string) string {
+func (a *ChatService) relatedMemories(ctx context.Context, question string) string {
 	if question == "" {
 		return ""
 	}
+	// 向量检索的 2 路召回 选取top-k
 	hits, err := a.memory.FindMemories(ctx, question, "", preloadedMemoriesLimit)
 	if err != nil {
 		slog.Warn("preload memories failed", "error", err)
@@ -120,14 +124,14 @@ func (a *Agent) relatedMemories(ctx context.Context, question string) string {
 }
 
 type importedPiece struct {
-	session   store.Session
-	memories  []store.Memory
+	session   types.Session
+	memories  []types.Memory
 	truncated bool
 }
 
 // importedBackground 列出挂在这次对话上的导入会话。
 // 助手自己的 chat 会话跳过，它的原文已经在对话层。
-func (a *Agent) importedBackground(ctx context.Context, conversationID uint) (string, error) {
+func (a *ChatService) importedBackground(ctx context.Context, conversationID uint) (string, error) {
 	sessions, err := a.memory.GetSessions(ctx, conversationID)
 	if err != nil {
 		return "", err
@@ -139,7 +143,8 @@ func (a *Agent) importedBackground(ctx context.Context, conversationID uint) (st
 	pieces := make([]importedPiece, 0, len(sessions))
 	remaining := maxCatalogTotal
 	for _, session := range sessions {
-		if session.SourceTag == store.SourceChat {
+		//对话session直接跳过
+		if session.SourceTag == types.SourceChat {
 			continue
 		}
 
@@ -157,7 +162,7 @@ func (a *Agent) importedBackground(ctx context.Context, conversationID uint) (st
 	return formatImportedBackground(pieces), nil
 }
 
-func truncateMemories(memories []store.Memory, remaining int) (taken []store.Memory, left int, truncated bool) {
+func truncateMemories(memories []types.Memory, remaining int) (taken []types.Memory, left int, truncated bool) {
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -217,7 +222,7 @@ func formatImportedBackground(pieces []importedPiece) string {
 	return catalog.String()
 }
 
-func formatSessionHeading(session store.Session) string {
+func formatSessionHeading(session types.Session) string {
 	name := strings.TrimSpace(session.Name)
 	if name == "" {
 		return fmt.Sprintf("- 会话 %d「未命名」（%s）\n", session.ID, session.SourceTag)

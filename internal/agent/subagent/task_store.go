@@ -9,7 +9,7 @@ import (
 
 	"recallweave/internal/delivery"
 	"recallweave/internal/events"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -70,7 +70,7 @@ func checkTaskIdentity(id string, owner uint) error {
 func validTaskID(id string, optional bool) bool {
 	return (id != "" || optional) && len(id) <= 64 && strings.TrimSpace(id) == id && utf8.ValidString(id)
 }
-func checkTaskRecord(record *store.SubagentTask) error {
+func checkTaskRecord(record *types.SubagentTask) error {
 	if record == nil {
 		return fmt.Errorf("subagent: task record is required")
 	}
@@ -91,7 +91,7 @@ func checkTaskRecord(record *store.SubagentTask) error {
 	}
 	return nil
 }
-func (s *GormTaskStore) Create(ctx context.Context, task *store.SubagentTask) error {
+func (s *GormTaskStore) Create(ctx context.Context, task *types.SubagentTask) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
@@ -110,8 +110,8 @@ func (s *GormTaskStore) Create(ctx context.Context, task *store.SubagentTask) er
 	*task = record
 	return nil
 }
-func (s *GormTaskStore) Load(ctx context.Context, id string, owner uint) (store.SubagentTask, error) {
-	var record store.SubagentTask
+func (s *GormTaskStore) Load(ctx context.Context, id string, owner uint) (types.SubagentTask, error) {
+	var record types.SubagentTask
 	if err := s.check(ctx); err != nil {
 		return record, err
 	}
@@ -123,7 +123,7 @@ func (s *GormTaskStore) Load(ctx context.Context, id string, owner uint) (store.
 	}
 	return record, nil
 }
-func (s *GormTaskStore) List(ctx context.Context, owner uint, limit int) ([]store.SubagentTask, error) {
+func (s *GormTaskStore) List(ctx context.Context, owner uint, limit int) ([]types.SubagentTask, error) {
 	if err := s.check(ctx); err != nil {
 		return nil, err
 	}
@@ -136,7 +136,7 @@ func (s *GormTaskStore) List(ctx context.Context, owner uint, limit int) ([]stor
 	if limit > 50 {
 		limit = 50
 	}
-	records := make([]store.SubagentTask, 0)
+	records := make([]types.SubagentTask, 0)
 	err := s.db.WithContext(ctx).Where("conversation_id = ?", owner).Order("created_at DESC").Order("id DESC").Limit(limit).Find(&records).Error
 	return records, err
 }
@@ -148,7 +148,7 @@ func (s *GormTaskStore) Start(ctx context.Context, id string, owner uint) (bool,
 		return false, err
 	}
 	now := s.db.NowFunc()
-	result := s.db.WithContext(ctx).Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ? AND status = ? AND cancel_requested = ?", id, owner, "queued", false).Updates(map[string]any{"status": "running", "started_at": now, "updated_at": now})
+	result := s.db.WithContext(ctx).Model(&types.SubagentTask{}).Where("id = ? AND conversation_id = ? AND status = ? AND cancel_requested = ?", id, owner, "queued", false).Updates(map[string]any{"status": "running", "started_at": now, "updated_at": now})
 	if result.Error != nil {
 		return false, result.Error
 	}
@@ -170,7 +170,7 @@ func taskTerminalStatus(status string) bool {
 		return false
 	}
 }
-func (s *GormTaskStore) Finish(ctx context.Context, task *store.SubagentTask, run *store.AgentRun) error {
+func (s *GormTaskStore) Finish(ctx context.Context, task *types.SubagentTask, run *types.AgentRun) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func (s *GormTaskStore) Finish(ctx context.Context, task *store.SubagentTask, ru
 				return err
 			}
 		}
-		var group *store.TaskGroup
+		var group *types.TaskGroup
 		if record.GroupID != "" {
 			var err error
 			group, err = lockTaskGroup(tx, record.GroupID, record.ConversationID)
@@ -203,7 +203,7 @@ func (s *GormTaskStore) Finish(ctx context.Context, task *store.SubagentTask, ru
 				return err
 			}
 		}
-		var current store.SubagentTask
+		var current types.SubagentTask
 		//
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ?", record.ID, record.ConversationID).Take(&current).Error; err != nil {
 			return err
@@ -235,7 +235,7 @@ func (s *GormTaskStore) Finish(ctx context.Context, task *store.SubagentTask, ru
 			}
 			fields = append(fields, "report_status")
 		}
-		result := tx.Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ? AND status = ?", record.ID, record.ConversationID, current.Status).Select(fields).Updates(&record)
+		result := tx.Model(&types.SubagentTask{}).Where("id = ? AND conversation_id = ? AND status = ?", record.ID, record.ConversationID, current.Status).Select(fields).Updates(&record)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -263,8 +263,8 @@ func (s *GormTaskStore) Finish(ctx context.Context, task *store.SubagentTask, ru
 	}
 	return err
 }
-func (s *GormTaskStore) RequestCancel(ctx context.Context, id string, owner uint) (store.SubagentTask, error) {
-	var record store.SubagentTask
+func (s *GormTaskStore) RequestCancel(ctx context.Context, id string, owner uint) (types.SubagentTask, error) {
+	var record types.SubagentTask
 	if err := s.check(ctx); err != nil {
 		return record, err
 	}
@@ -277,7 +277,7 @@ func (s *GormTaskStore) RequestCancel(ctx context.Context, id string, owner uint
 				return err
 			}
 		}
-		var group *store.TaskGroup
+		var group *types.TaskGroup
 		if s.groupMode {
 			var err error
 			group, err = lockTaskGroupForMember(tx, id, owner)
@@ -295,7 +295,7 @@ func (s *GormTaskStore) RequestCancel(ctx context.Context, id string, owner uint
 			return nil
 		}
 		if record.Status != "queued" && record.Status != "running" {
-			return fmt.Errorf("subagent: invalid stored task state %q", record.Status)
+			return fmt.Errorf("subagent: invalid typesd task state %q", record.Status)
 		}
 		now := tx.NowFunc()
 		oldStatus := record.Status
@@ -313,7 +313,7 @@ func (s *GormTaskStore) RequestCancel(ctx context.Context, id string, owner uint
 				fields = append(fields, "report_status")
 			}
 		}
-		result := tx.Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ? AND status = ?", id, owner, oldStatus).Select(fields).Updates(&record)
+		result := tx.Model(&types.SubagentTask{}).Where("id = ? AND conversation_id = ? AND status = ?", id, owner, oldStatus).Select(fields).Updates(&record)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -331,7 +331,7 @@ func (s *GormTaskStore) RequestCancel(ctx context.Context, id string, owner uint
 		return nil
 	})
 	if err != nil {
-		return store.SubagentTask{}, err
+		return types.SubagentTask{}, err
 	}
 	return record, nil
 }
@@ -343,9 +343,9 @@ func (s *GormTaskStore) InterruptUnfinished(ctx context.Context) error {
 		return s.interruptWithEvents(ctx)
 	}
 	now := s.db.NowFunc()
-	return s.db.WithContext(ctx).Model(&store.SubagentTask{}).Where("status IN ?", []string{"queued", "running"}).Updates(map[string]any{"status": "interrupted", "error": "server stopped before task finished; automatic replay is disabled", "finished_at": now, "updated_at": now}).Error
+	return s.db.WithContext(ctx).Model(&types.SubagentTask{}).Where("status IN ?", []string{"queued", "running"}).Updates(map[string]any{"status": "interrupted", "error": "server stopped before task finished; automatic replay is disabled", "finished_at": now, "updated_at": now}).Error
 }
-func (s *GormTaskStore) CheckTaskCheckpoint(ctx context.Context, session store.SubagentSession) error {
+func (s *GormTaskStore) CheckTaskCheckpoint(ctx context.Context, session types.SubagentSession) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
@@ -356,7 +356,7 @@ func (s *GormTaskStore) CheckTaskCheckpoint(ctx context.Context, session store.S
 		return fmt.Errorf("subagent: checkpoint run id is required")
 	}
 	var interrupted int64
-	err := s.db.WithContext(ctx).Model(&store.SubagentTask{}).Where("subagent_id = ? AND conversation_id = ? AND previous_run_id = ? AND status = ? AND started_at IS NOT NULL", session.ID, session.ConversationID, session.LatestRunID, "interrupted").Count(&interrupted).Error
+	err := s.db.WithContext(ctx).Model(&types.SubagentTask{}).Where("subagent_id = ? AND conversation_id = ? AND previous_run_id = ? AND status = ? AND started_at IS NOT NULL", session.ID, session.ConversationID, session.LatestRunID, "interrupted").Count(&interrupted).Error
 	if err != nil {
 		return err
 	}

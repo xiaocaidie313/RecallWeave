@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"recallweave/internal/parser"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 type goldMemory struct {
@@ -36,7 +36,7 @@ func TestChatGPTFixtureHitsExpectedSpans(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	conversations, err := parser.Parse(string(raw), store.SourceChatGPT)
+	conversations, err := parser.Parse(string(raw), types.SourceChatGPT)
 	if err != nil {
 		t.Fatalf("parse fixture: %v", err)
 	}
@@ -49,11 +49,11 @@ func TestChatGPTFixtureHitsExpectedSpans(t *testing.T) {
 		t.Fatalf("expected 10 messages, got %d", len(messages))
 	}
 
-	bySeq := make(map[int]store.Message, len(messages))
+	bySeq := make(map[int]types.Message, len(messages))
 	for _, msg := range messages {
 		bySeq[msg.Seq] = msg
 	}
-	memories := make([]store.Memory, 0, len(goldMemories))
+	memories := make([]types.Memory, 0, len(goldMemories))
 	for _, gold := range goldMemories {
 		if _, ok := bySeq[gold.SeqStart]; !ok {
 			t.Fatalf("fixture missing seq %d", gold.SeqStart)
@@ -61,7 +61,7 @@ func TestChatGPTFixtureHitsExpectedSpans(t *testing.T) {
 		if _, ok := bySeq[gold.SeqEnd]; !ok {
 			t.Fatalf("fixture missing seq %d", gold.SeqEnd)
 		}
-		memories = append(memories, store.Memory{
+		memories = append(memories, types.Memory{
 			SessionID: 1,
 			SeqStart:  gold.SeqStart,
 			SeqEnd:    gold.SeqEnd,
@@ -90,9 +90,9 @@ func TestChatGPTFixtureHitsExpectedSpans(t *testing.T) {
 	}
 }
 
-func matchMemories(memories []store.Memory, keyword string) []store.Memory {
+func matchMemories(memories []types.Memory, keyword string) []types.Memory {
 	tokens := strings.Fields(keyword)
-	var hits []store.Memory
+	var hits []types.Memory
 	for _, item := range memories {
 		if len(tokens) == 0 {
 			hits = append(hits, item)
@@ -108,7 +108,7 @@ func matchMemories(memories []store.Memory, keyword string) []store.Memory {
 	return hits
 }
 
-func covers(hits []store.Memory, seqStart, seqEnd int) bool {
+func covers(hits []types.Memory, seqStart, seqEnd int) bool {
 	for _, hit := range hits {
 		if hit.SessionID == 1 && hit.SeqStart <= seqStart && hit.SeqEnd >= seqEnd {
 			return true

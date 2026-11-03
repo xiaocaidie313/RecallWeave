@@ -9,7 +9,7 @@ import (
 
 	"recallweave/internal/delivery"
 	"recallweave/internal/events"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -18,7 +18,7 @@ import (
 var _ GroupTaskStore = (*GormTaskStore)(nil)
 
 // direct 成员独立交付；历史空模式的组仍保留原本等待全部成员的交付方式。
-func (s *GormTaskStore) memberReportStatus(group *store.TaskGroup) (string, error) {
+func (s *GormTaskStore) memberReportStatus(group *types.TaskGroup) (string, error) {
 	if group != nil {
 		mode, err := delivery.ResolveStoredGroupMode(group.DeliveryMode)
 		if err != nil {
@@ -34,7 +34,7 @@ func (s *GormTaskStore) memberReportStatus(group *store.TaskGroup) (string, erro
 	return "", nil
 }
 
-func groupTaskIDs(group store.TaskGroup) ([]string, error) {
+func groupTaskIDs(group types.TaskGroup) ([]string, error) {
 	var ids []string
 	if json.Unmarshal(group.TaskIDs, &ids) != nil || len(ids) != 2 || ids[0] == ids[1] {
 		return nil, fmt.Errorf("subagent: a task group must contain two distinct executions")
@@ -60,8 +60,8 @@ func (s *GormTaskStore) checkGroup(ctx context.Context, id string, owner uint) e
 	return nil
 }
 
-func lockTaskGroup(tx *gorm.DB, id string, owner uint) (*store.TaskGroup, error) {
-	var group store.TaskGroup
+func lockTaskGroup(tx *gorm.DB, id string, owner uint) (*types.TaskGroup, error) {
+	var group types.TaskGroup
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ?", id, owner).Take(&group).Error; err != nil {
 		return nil, err
 	}
@@ -71,8 +71,8 @@ func lockTaskGroup(tx *gorm.DB, id string, owner uint) (*store.TaskGroup, error)
 	return &group, nil
 }
 
-func lockTaskGroupForMember(tx *gorm.DB, id string, owner uint) (*store.TaskGroup, error) {
-	var member store.SubagentTask
+func lockTaskGroupForMember(tx *gorm.DB, id string, owner uint) (*types.TaskGroup, error) {
+	var member types.SubagentTask
 	if err := tx.Select("id", "group_id").Where("id = ? AND conversation_id = ?", id, owner).Take(&member).Error; err != nil {
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func lockTaskGroupForMember(tx *gorm.DB, id string, owner uint) (*store.TaskGrou
 	return lockTaskGroup(tx, member.GroupID, owner)
 }
 
-func loadTaskGroupMembers(tx *gorm.DB, group store.TaskGroup, lock bool) ([]store.SubagentTask, error) {
+func loadTaskGroupMembers(tx *gorm.DB, group types.TaskGroup, lock bool) ([]types.SubagentTask, error) {
 	ids, err := groupTaskIDs(group)
 	if err != nil {
 		return nil, err
@@ -91,14 +91,14 @@ func loadTaskGroupMembers(tx *gorm.DB, group store.TaskGroup, lock bool) ([]stor
 	if lock {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
-	var rows []store.SubagentTask
+	var rows []types.SubagentTask
 	if err := query.Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	if len(rows) != 2 {
 		return nil, fmt.Errorf("subagent: group membership is incomplete")
 	}
-	byID := make(map[string]store.SubagentTask, 2)
+	byID := make(map[string]types.SubagentTask, 2)
 	for _, row := range rows {
 		if row.GroupID != group.ID || row.ConversationID != group.ConversationID || row.ParentRunID != group.ParentRunID {
 			return nil, fmt.Errorf("subagent: group member ownership mismatch")
@@ -108,7 +108,7 @@ func loadTaskGroupMembers(tx *gorm.DB, group store.TaskGroup, lock bool) ([]stor
 		}
 		byID[row.ID] = row
 	}
-	ordered := make([]store.SubagentTask, 0, 2)
+	ordered := make([]types.SubagentTask, 0, 2)
 	for _, id := range ids {
 		row, ok := byID[id]
 		if !ok {
@@ -119,7 +119,7 @@ func loadTaskGroupMembers(tx *gorm.DB, group store.TaskGroup, lock bool) ([]stor
 	return ordered, nil
 }
 
-func aggregateGroupStatus(members []store.SubagentTask, cancellationRequested bool) (string, bool) {
+func aggregateGroupStatus(members []types.SubagentTask, cancellationRequested bool) (string, bool) {
 	if len(members) != 2 {
 		return "", false
 	}
@@ -151,7 +151,7 @@ func aggregateGroupStatus(members []store.SubagentTask, cancellationRequested bo
 
 // The caller holds the conversation and group locks. Member executions have
 // immutable identities, and their terminal updates take this same group lock.
-func (s *GormTaskStore) refreshTaskGroup(tx *gorm.DB, group *store.TaskGroup) error {
+func (s *GormTaskStore) refreshTaskGroup(tx *gorm.DB, group *types.TaskGroup) error {
 	mode, err := delivery.ResolveStoredGroupMode(group.DeliveryMode)
 	if err != nil {
 		return err
@@ -186,7 +186,7 @@ func (s *GormTaskStore) refreshTaskGroup(tx *gorm.DB, group *store.TaskGroup) er
 		updated.ReportStatus = "pending"
 		fields = append(fields, "report_status")
 	}
-	result := tx.Model(&store.TaskGroup{}).Where("id = ? AND conversation_id = ? AND status = ?", group.ID, group.ConversationID, "running").Select(fields).Updates(&updated)
+	result := tx.Model(&types.TaskGroup{}).Where("id = ? AND conversation_id = ? AND status = ?", group.ID, group.ConversationID, "running").Select(fields).Updates(&updated)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -204,7 +204,7 @@ func (s *GormTaskStore) refreshTaskGroup(tx *gorm.DB, group *store.TaskGroup) er
 		if err != nil {
 			return err
 		}
-		if err := events.Append(tx, &store.ConversationEvent{ConversationID: updated.ConversationID, Kind: "task_group.finished", Key: "group:" + updated.ID + ":finished", Data: data}); err != nil {
+		if err := events.Append(tx, &types.ConversationEvent{ConversationID: updated.ConversationID, Kind: "task_group.finished", Key: "group:" + updated.ID + ":finished", Data: data}); err != nil {
 			return err
 		}
 	}
@@ -212,7 +212,7 @@ func (s *GormTaskStore) refreshTaskGroup(tx *gorm.DB, group *store.TaskGroup) er
 	return nil
 }
 
-func (s *GormTaskStore) CreateGroup(ctx context.Context, group *store.TaskGroup, members []store.SubagentTask) error {
+func (s *GormTaskStore) CreateGroup(ctx context.Context, group *types.TaskGroup, members []types.SubagentTask) error {
 	if group == nil {
 		return fmt.Errorf("subagent: group is required")
 	}
@@ -237,7 +237,7 @@ func (s *GormTaskStore) CreateGroup(ctx context.Context, group *store.TaskGroup,
 	if len(members) != 2 {
 		return fmt.Errorf("subagent: exactly two members are required")
 	}
-	copyMembers := append([]store.SubagentTask(nil), members...)
+	copyMembers := append([]types.SubagentTask(nil), members...)
 	for index, member := range copyMembers {
 		if err := checkTaskRecord(&member); err != nil {
 			return err
@@ -277,9 +277,9 @@ func (s *GormTaskStore) CreateGroup(ctx context.Context, group *store.TaskGroup,
 	return err
 }
 
-func (s *GormTaskStore) LoadGroup(ctx context.Context, id string, owner uint) (store.TaskGroup, []store.SubagentTask, error) {
-	var group store.TaskGroup
-	var members []store.SubagentTask
+func (s *GormTaskStore) LoadGroup(ctx context.Context, id string, owner uint) (types.TaskGroup, []types.SubagentTask, error) {
+	var group types.TaskGroup
+	var members []types.SubagentTask
 	if err := s.checkGroup(ctx, id, owner); err != nil {
 		return group, nil, err
 	}
@@ -297,7 +297,7 @@ func (s *GormTaskStore) LoadGroup(ctx context.Context, id string, owner uint) (s
 	return group, members, err
 }
 
-func (s *GormTaskStore) ListGroups(ctx context.Context, owner uint, limit int) ([]store.TaskGroup, error) {
+func (s *GormTaskStore) ListGroups(ctx context.Context, owner uint, limit int) ([]types.TaskGroup, error) {
 	if err := s.check(ctx); err != nil {
 		return nil, err
 	}
@@ -307,14 +307,14 @@ func (s *GormTaskStore) ListGroups(ctx context.Context, owner uint, limit int) (
 	if limit <= 0 || limit > 20 {
 		limit = 10
 	}
-	rows := make([]store.TaskGroup, 0)
+	rows := make([]types.TaskGroup, 0)
 	err := s.db.WithContext(ctx).Where("conversation_id = ?", owner).Order("created_at DESC").Order("id DESC").Limit(limit).Find(&rows).Error
 	return rows, err
 }
 
-func (s *GormTaskStore) RequestCancelGroup(ctx context.Context, id string, owner uint) (store.TaskGroup, []store.SubagentTask, error) {
-	var group store.TaskGroup
-	var members []store.SubagentTask
+func (s *GormTaskStore) RequestCancelGroup(ctx context.Context, id string, owner uint) (types.TaskGroup, []types.SubagentTask, error) {
+	var group types.TaskGroup
+	var members []types.SubagentTask
 	if err := s.checkGroup(ctx, id, owner); err != nil {
 		return group, nil, err
 	}
@@ -335,12 +335,12 @@ func (s *GormTaskStore) RequestCancelGroup(ctx context.Context, id string, owner
 			return nil
 		}
 		if group.Status != "running" {
-			return fmt.Errorf("subagent: invalid stored group state")
+			return fmt.Errorf("subagent: invalid typesd group state")
 		}
 		now := tx.NowFunc()
 		group.CancelRequested = true
 		group.UpdatedAt = now
-		result := tx.Model(&store.TaskGroup{}).Where("id = ? AND conversation_id = ? AND status = ?", id, owner, "running").Updates(map[string]any{"cancel_requested": true, "updated_at": now})
+		result := tx.Model(&types.TaskGroup{}).Where("id = ? AND conversation_id = ? AND status = ?", id, owner, "running").Updates(map[string]any{"cancel_requested": true, "updated_at": now})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -367,7 +367,7 @@ func (s *GormTaskStore) RequestCancelGroup(ctx context.Context, id string, owner
 				}
 				fields = append(fields, "status", "finished_at", "report_status")
 			}
-			result := tx.Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ? AND group_id = ? AND status = ?", member.ID, owner, id, oldStatus).Select(fields).Updates(&member)
+			result := tx.Model(&types.SubagentTask{}).Where("id = ? AND conversation_id = ? AND group_id = ? AND status = ?", member.ID, owner, id, oldStatus).Select(fields).Updates(&member)
 			if result.Error != nil {
 				return result.Error
 			}

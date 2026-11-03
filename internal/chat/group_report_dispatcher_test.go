@@ -16,15 +16,16 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/chat"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
+
+	apphttp "recallweave/internal/http"
 
 	"github.com/gin-gonic/gin"
-	apphttp "recallweave/internal/http"
 )
 
 type groupLedger struct {
 	dispatchLedger
-	groups            map[string]store.TaskGroup
+	groups            map[string]types.TaskGroup
 	groupDeliverError error
 }
 
@@ -38,19 +39,19 @@ func newGroupLedger() (*groupLedger, string, []string) {
 	first.ReportStatus, second.ReportStatus = "grouped", "grouped"
 	second.Status, second.Result, second.RunID = "running", nil, ""
 	raw, _ := json.Marshal(ids)
-	group := store.TaskGroup{ID: id, ConversationID: 1, ParentRunID: "parent", Goal: "GROUP_GOAL", ExpectedOutput: "Compare both findings and explicitly state failures", DeliveryMode: "synthesize", TaskIDs: raw, Status: "running"}
-	return &groupLedger{dispatchLedger: dispatchLedger{rows: map[string]store.SubagentTask{ids[0]: first, ids[1]: second}}, groups: map[string]store.TaskGroup{id: group}}, id, ids
+	group := types.TaskGroup{ID: id, ConversationID: 1, ParentRunID: "parent", Goal: "GROUP_GOAL", ExpectedOutput: "Compare both findings and explicitly state failures", DeliveryMode: "synthesize", TaskIDs: raw, Status: "running"}
+	return &groupLedger{dispatchLedger: dispatchLedger{rows: map[string]types.SubagentTask{ids[0]: first, ids[1]: second}}, groups: map[string]types.TaskGroup{id: group}}, id, ids
 }
-func (l *groupLedger) PendingGroups(ctx context.Context, limit int) ([]store.TaskGroup, error) {
+func (l *groupLedger) PendingGroups(ctx context.Context, limit int) ([]types.TaskGroup, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var rows []store.TaskGroup
+	var rows []types.TaskGroup
 	for _, group := range l.groups {
 		if group.ReportStatus == "pending" {
-			rows = append(rows, store.TaskGroup{ID: group.ID, ConversationID: group.ConversationID, DeliveryMode: group.DeliveryMode})
+			rows = append(rows, types.TaskGroup{ID: group.ID, ConversationID: group.ConversationID, DeliveryMode: group.DeliveryMode})
 			if len(rows) == limit {
 				break
 			}
@@ -58,13 +59,13 @@ func (l *groupLedger) PendingGroups(ctx context.Context, limit int) ([]store.Tas
 	}
 	return rows, nil
 }
-func (l *groupLedger) PendingGroupDelivery(ctx context.Context, limit int, synthesize bool, excluded []uint) ([]store.TaskGroup, error) {
+func (l *groupLedger) PendingGroupDelivery(ctx context.Context, limit int, synthesize bool, excluded []uint) ([]types.TaskGroup, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var rows []store.TaskGroup
+	var rows []types.TaskGroup
 	for _, row := range l.groups {
 		if row.ReportStatus != "pending" || row.DeliveryMode == "direct" || (row.DeliveryMode == "synthesize") != synthesize {
 			continue
@@ -86,11 +87,11 @@ func (l *groupLedger) PendingGroupDelivery(ctx context.Context, limit int, synth
 	}
 	return rows, nil
 }
-func (l *groupLedger) ClaimGroup(ctx context.Context, id string, owner uint, claim string) (store.TaskGroup, []store.SubagentTask, bool, error) {
+func (l *groupLedger) ClaimGroup(ctx context.Context, id string, owner uint, claim string) (types.TaskGroup, []types.SubagentTask, bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return store.TaskGroup{}, nil, false, err
+		return types.TaskGroup{}, nil, false, err
 	}
 	group, ok := l.groups[id]
 	if !ok || group.ConversationID != owner {
@@ -103,7 +104,7 @@ func (l *groupLedger) ClaimGroup(ctx context.Context, id string, owner uint, cla
 	l.groups[id] = group
 	var ids []string
 	_ = json.Unmarshal(group.TaskIDs, &ids)
-	members := make([]store.SubagentTask, 0, len(ids))
+	members := make([]types.SubagentTask, 0, len(ids))
 	for _, taskID := range ids {
 		members = append(members, l.rows[taskID])
 	}
@@ -129,10 +130,10 @@ func (l *groupLedger) DeliverGroup(ctx context.Context, id string, owner uint, c
 		return errors.New("claim mismatch")
 	}
 	if l.messages == nil {
-		l.messages = make(map[uint][]store.Message)
+		l.messages = make(map[uint][]types.Message)
 	}
 	if l.runs == nil {
-		l.runs = make(map[string]store.AgentRun)
+		l.runs = make(map[string]types.AgentRun)
 	}
 	message := report.Message
 	message.ID = uint(len(l.events) + 100)
@@ -150,7 +151,7 @@ func (l *groupLedger) DeliverGroup(ctx context.Context, id string, owner uint, c
 	l.appendEvent(owner, "message.created", map[string]any{"group_id": id, "sources": report.Sources, "message": message})
 	return nil
 }
-func (l *groupLedger) FailGroup(ctx context.Context, id string, owner uint, claim, reason string, run *store.AgentRun) error {
+func (l *groupLedger) FailGroup(ctx context.Context, id string, owner uint, claim, reason string, run *types.AgentRun) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -170,7 +171,7 @@ func (l *groupLedger) FailGroup(ctx context.Context, id string, owner uint, clai
 	l.groups[id] = group
 	if run != nil {
 		if l.runs == nil {
-			l.runs = make(map[string]store.AgentRun)
+			l.runs = make(map[string]types.AgentRun)
 		}
 		l.runs[run.RunID] = *run
 	}
@@ -211,7 +212,7 @@ func startGroupDispatcher(t *testing.T, service *chat.Agent, ledger *groupLedger
 	})
 	return dispatcher
 }
-func waitGroupReport(t *testing.T, ledger *groupLedger, id, status string) store.TaskGroup {
+func waitGroupReport(t *testing.T, ledger *groupLedger, id, status string) types.TaskGroup {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -224,7 +225,7 @@ func waitGroupReport(t *testing.T, ledger *groupLedger, id, status string) store
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("group report did not become %s", status)
-	return store.TaskGroup{}
+	return types.TaskGroup{}
 }
 
 func TestGroupDispatcherWaitsForLastMemberAndSendsOneCombinedSSEMessage(t *testing.T) {

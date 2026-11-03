@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 func TestGetSessionRejectsBadID(t *testing.T) {
@@ -45,11 +45,11 @@ func TestListConversationMessagesRejectsBadID(t *testing.T) {
 }
 
 func TestMemoryViewsExposeContentType(t *testing.T) {
-	views := memoryViews([]store.Memory{
-		{ID: 1, ContentType: store.ContentPreference},
+	views := memoryViews([]types.Memory{
+		{ID: 1, ContentType: types.ContentPreference},
 		{ID: 2}, // Existing memories without a classification remain unknown.
 	})
-	if len(views) != 2 || views[0].ContentType != store.ContentPreference || views[1].ContentType != store.ContentOther {
+	if len(views) != 2 || views[0].ContentType != types.ContentPreference || views[1].ContentType != types.ContentOther {
 		t.Fatalf("unexpected content types: %+v", views)
 	}
 }

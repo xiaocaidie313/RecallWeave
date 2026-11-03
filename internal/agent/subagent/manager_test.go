@@ -15,7 +15,7 @@ import (
 	"recallweave/internal/agent/ability"
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 type managerTestModel struct {
@@ -208,7 +208,7 @@ func TestDelegatePreservesBranchSnapshotReadScope(t *testing.T) {
 		}
 	}}
 	parent := managerParent(model)
-	parent.Agent.Abilities = []*agent.Ability{ability.NewBranchContextAbility([]store.ContextMessage{
+	parent.Agent.Abilities = []*agent.Ability{ability.NewBranchContextAbility([]types.ContextMessage{
 		{SessionID: 10, Seq: 1, Role: "user", Content: "frozen prefix"},
 	})}
 	result, err := testManager(t, Config{}).Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "核查分支"})

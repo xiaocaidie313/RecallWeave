@@ -41,7 +41,7 @@ func conversationInstructions(a *agent.Agent, req Request) string {
 // A resumed child gets current server instructions and its own saved history.
 // Parent Preload is deliberately ignored when restoring a child context.
 func resumeConversation(a *agent.Agent, req Request) (*llm.Conversation, error) {
-	conv, err := llm.RestoreConversation(conversationInstructions(a, req), req.ContextSnapshot,
+	conv, err := llm.RetypesConversation(conversationInstructions(a, req), req.ContextSnapshot,
 		llm.WithConversationID(req.ConversationID))
 	if err != nil {
 		return nil, err

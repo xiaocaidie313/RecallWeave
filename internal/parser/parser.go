@@ -10,20 +10,20 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 // Conversation 是一次导入里的一段对话。
 // ChatGPT 官方导出的一个文件里有很多段，每段各自成为一条会话。
 type Conversation struct {
 	Title    string
-	Messages []store.Message
+	Messages []types.Message
 }
 
 // 切割对话
 // 目前只对chatgpt 的对话做了单独的支持  其他都是 依照段落 块区分 \r\n
 type Parser interface {
-	Parse(raw string, sourceTag store.SourceTag) ([]Conversation, error)
+	Parse(raw string, sourceTag types.SourceTag) ([]Conversation, error)
 	ReadFile(content []byte) (string, error)
 	DetectFileType(content []byte) string
 }
@@ -108,9 +108,9 @@ func DetectFileType(content []byte) string {
 
 // Parse 按来源把文本拆成一段或多段对话，并填上 user / assistant。
 // 拆成Message
-func Parse(raw string, sourceTag store.SourceTag) ([]Conversation, error) {
+func Parse(raw string, sourceTag types.SourceTag) ([]Conversation, error) {
 	switch sourceTag {
-	case store.SourceChatGPT:
+	case types.SourceChatGPT:
 		return parseChatGPT(raw)
 	default:
 		messages := splitPlain(raw, sourceTag)
@@ -121,15 +121,15 @@ func Parse(raw string, sourceTag store.SourceTag) ([]Conversation, error) {
 	}
 }
 
-func splitPlain(raw string, sourceTag store.SourceTag) []store.Message {
+func splitPlain(raw string, sourceTag types.SourceTag) []types.Message {
 	normalized := strings.ReplaceAll(raw, "\r\n", "\n")
-	var messages []store.Message
+	var messages []types.Message
 	for _, block := range strings.Split(normalized, "\n\n") {
 		block = strings.TrimSpace(block)
 		if block == "" {
 			continue
 		}
-		messages = append(messages, store.Message{
+		messages = append(messages, types.Message{
 			Seq:       len(messages) + 1,
 			Role:      "user",
 			SourceTag: sourceTag,
@@ -189,8 +189,8 @@ func parseChatGPT(raw string) ([]Conversation, error) {
 	return parsed, nil
 }
 
-func messagesFromChatGPT(conv chatGPTConversation) []store.Message {
-	var messages []store.Message
+func messagesFromChatGPT(conv chatGPTConversation) []types.Message {
+	var messages []types.Message
 	for _, node := range orderedChatGPTNodes(conv) {
 		if node.Message == nil {
 			continue
@@ -203,10 +203,10 @@ func messagesFromChatGPT(conv chatGPTConversation) []store.Message {
 		if text == "" {
 			continue
 		}
-		messages = append(messages, store.Message{
+		messages = append(messages, types.Message{
 			Seq:       len(messages) + 1,
 			Role:      role,
-			SourceTag: store.SourceChatGPT,
+			SourceTag: types.SourceChatGPT,
 			Content:   text,
 		})
 	}

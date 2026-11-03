@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 func TestProjectDecisionFixturePreservesAttribution(t *testing.T) {
@@ -13,7 +13,7 @@ func TestProjectDecisionFixturePreservesAttribution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conversations, err := Parse(string(data), store.SourceChatGPT)
+	conversations, err := Parse(string(data), types.SourceChatGPT)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestParseChatGPTKeepsRoles(t *testing.T) {
 		}
 	}`
 
-	conversations, err := Parse(raw, store.SourceChatGPT)
+	conversations, err := Parse(raw, types.SourceChatGPT)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

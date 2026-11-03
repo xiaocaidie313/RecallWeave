@@ -4,17 +4,17 @@ import (
 	"context"
 
 	"recallweave/internal/delivery"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 // Mode-filtered queues keep pending synthesis work from hiding ready deliveries
 // behind a limited page. Existing ReportStore adapters remain supported.
 type deliveryQueue interface {
-	PendingDelivery(context.Context, int, bool, []uint) ([]store.SubagentTask, error)
+	PendingDelivery(context.Context, int, bool, []uint) ([]types.SubagentTask, error)
 }
 
 type groupDeliveryQueue interface {
-	PendingGroupDelivery(context.Context, int, bool, []uint) ([]store.TaskGroup, error)
+	PendingGroupDelivery(context.Context, int, bool, []uint) ([]types.TaskGroup, error)
 }
 
 func requiresSynthesis(mode string) bool { return mode == delivery.Synthesize }
@@ -100,15 +100,15 @@ func excludedOwner(owners []uint, owner uint) bool {
 	return false
 }
 
-func (d *ReportDispatcher) pendingReports(ctx context.Context, synthesize bool, excluded []uint) ([]store.SubagentTask, error) {
-	if queue, ok := d.store.(deliveryQueue); ok {
+func (d *ReportDispatcher) pendingReports(ctx context.Context, synthesize bool, excluded []uint) ([]types.SubagentTask, error) {
+	if queue, ok := d.types.(deliveryQueue); ok {
 		return queue.PendingDelivery(ctx, 20, synthesize, excluded)
 	}
-	rows, err := d.store.Pending(ctx, 100)
+	rows, err := d.types.Pending(ctx, 100)
 	if err != nil {
 		return nil, err
 	}
-	filtered := make([]store.SubagentTask, 0, len(rows))
+	filtered := make([]types.SubagentTask, 0, len(rows))
 	for _, row := range rows {
 		if requiresSynthesis(row.DeliveryMode) == synthesize && !excludedOwner(excluded, row.ConversationID) {
 			filtered = append(filtered, row)
@@ -117,7 +117,7 @@ func (d *ReportDispatcher) pendingReports(ctx context.Context, synthesize bool, 
 	return filtered, nil
 }
 
-func (d *ReportDispatcher) pendingGroups(ctx context.Context, synthesize bool, excluded []uint) ([]store.TaskGroup, error) {
+func (d *ReportDispatcher) pendingGroups(ctx context.Context, synthesize bool, excluded []uint) ([]types.TaskGroup, error) {
 	if queue, ok := d.groups.(groupDeliveryQueue); ok {
 		return queue.PendingGroupDelivery(ctx, 20, synthesize, excluded)
 	}
@@ -125,7 +125,7 @@ func (d *ReportDispatcher) pendingGroups(ctx context.Context, synthesize bool, e
 	if err != nil {
 		return nil, err
 	}
-	filtered := make([]store.TaskGroup, 0, len(rows))
+	filtered := make([]types.TaskGroup, 0, len(rows))
 	for _, row := range rows {
 		if row.DeliveryMode != delivery.Direct && requiresSynthesis(row.DeliveryMode) == synthesize && !excludedOwner(excluded, row.ConversationID) {
 			filtered = append(filtered, row)

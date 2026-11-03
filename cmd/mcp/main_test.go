@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	appmcp "recallweave/internal/mcp"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -16,17 +16,17 @@ type fakeFinder struct {
 	sessionID       uint
 	seqStart        int
 	seqEnd          int
-	messages        []store.Message
+	messages        []types.Message
 	includeInactive bool
 }
 
-func (f *fakeFinder) FindMemories(_ context.Context, keyword string, _ store.MemoryTag, limit int, includeInactive ...bool) ([]store.Memory, error) {
+func (f *fakeFinder) FindMemories(_ context.Context, keyword string, _ types.MemoryTag, limit int, includeInactive ...bool) ([]types.Memory, error) {
 	f.keyword, f.limit = keyword, limit
 	f.includeInactive = len(includeInactive) > 0 && includeInactive[0]
-	return []store.Memory{{ID: 7, SessionID: 3, SeqStart: 4, SeqEnd: 5, Title: "数据库决定", Content: "使用 PostgreSQL", ContentType: store.ContentDecision}}, nil
+	return []types.Memory{{ID: 7, SessionID: 3, SeqStart: 4, SeqEnd: 5, Title: "数据库决定", Content: "使用 PostgreSQL", ContentType: types.ContentDecision}}, nil
 }
 
-func (f *fakeFinder) GetMessages(_ context.Context, sessionID uint, seqStart, seqEnd int) ([]store.Message, error) {
+func (f *fakeFinder) GetMessages(_ context.Context, sessionID uint, seqStart, seqEnd int) ([]types.Message, error) {
 	f.sessionID, f.seqStart, f.seqEnd = sessionID, seqStart, seqEnd
 	return f.messages, nil
 }
@@ -92,7 +92,7 @@ func TestSearchMemoriesOverMCP(t *testing.T) {
 
 func TestGetMessagesOverMCP(t *testing.T) {
 	ctx := context.Background()
-	finder := &fakeFinder{messages: []store.Message{{SessionID: 3, Seq: 4, Role: "user", Content: "使用 PostgreSQL"}}}
+	finder := &fakeFinder{messages: []types.Message{{SessionID: 3, Seq: 4, Role: "user", Content: "使用 PostgreSQL"}}}
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := appmcp.NewMcpMemoryReaderServer(finder).Connect(ctx, serverTransport, nil)
 	if err != nil {

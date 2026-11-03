@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"recallweave/internal/agent/runtime"
+	"recallweave/internal/types"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"recallweave/internal/agent/runtime"
-	"recallweave/internal/store"
 )
 
 var reportStoreNow = time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
@@ -36,18 +37,18 @@ func reportTaskRows(status, claim string) *sqlmock.Rows {
 	return sqlmock.NewRows([]string{"id", "subagent_id", "parent_run_id", "run_id", "conversation_id", "agent_name", "task", "status", "report_status", "report_claim", "delivery_mode"}).AddRow("task-1", "child-1", "parent-1", "child-run", uint(9), "researcher", "check sources", "completed", status, claim, "synthesize")
 }
 func reportSessionRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "conversation_id", "source_tag", "name"}).AddRow(uint(5), uint(9), store.SourceChat, "chat")
+	return sqlmock.NewRows([]string{"id", "conversation_id", "source_tag", "name"}).AddRow(uint(5), uint(9), types.SourceChat, "chat")
 }
 func expectReportLock(mock sqlmock.Sqlmock, reportStatus, claim string) {
 	mock.ExpectQuery(`SELECT .* FROM "conversations" WHERE id = \$1 LIMIT \$2 FOR UPDATE`).WithArgs(uint(9), 1).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uint(9)))
 	mock.ExpectQuery(`SELECT .* FROM "subagent_tasks" WHERE id = \$1 AND conversation_id = \$2 LIMIT \$3 FOR UPDATE`).WithArgs("task-1", uint(9), 1).WillReturnRows(reportTaskRows(reportStatus, claim))
 }
 func reportGenerated() GeneratedReport {
-	return GeneratedReport{Message: store.Message{Role: "assistant", Content: "The research is finished; source is message 3."}, Run: &store.AgentRun{RunID: "report-run", ConversationID: 9, Status: "completed", Content: "summary", State: json.RawMessage(`{"status":"completed"}`)}}
+	return GeneratedReport{Message: types.Message{Role: "assistant", Content: "The research is finished; source is message 3."}, Run: &types.AgentRun{RunID: "report-run", ConversationID: 9, Status: "completed", Content: "summary", State: json.RawMessage(`{"status":"completed"}`)}}
 }
 func expectReportMessage(mock sqlmock.Sqlmock) {
-	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE conversation_id = \$1 AND source_tag = \$2 .* LIMIT \$3`).WithArgs(uint(9), store.SourceChat, 1).WillReturnRows(reportSessionRows())
-	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE id = \$1 AND conversation_id = \$2 AND source_tag = \$3 LIMIT \$4 FOR UPDATE`).WithArgs(uint(5), uint(9), store.SourceChat, 1).WillReturnRows(reportSessionRows())
+	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE conversation_id = \$1 AND source_tag = \$2 .* LIMIT \$3`).WithArgs(uint(9), types.SourceChat, 1).WillReturnRows(reportSessionRows())
+	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE id = \$1 AND conversation_id = \$2 AND source_tag = \$3 LIMIT \$4 FOR UPDATE`).WithArgs(uint(5), uint(9), types.SourceChat, 1).WillReturnRows(reportSessionRows())
 	mock.ExpectQuery(`SELECT COALESCE\(MAX\(seq\), 0\) FROM "messages" WHERE session_id = \$1`).WithArgs(uint(5)).WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(4))
 	mock.ExpectQuery(`INSERT INTO "messages" .* RETURNING "id"`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uint(6)))
 }
@@ -176,7 +177,7 @@ func TestReportStoreOrdinaryTurnAppendsOrderedMessagesAndEvents(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE id = \$1 LIMIT \$2`).WithArgs(uint(5), 1).WillReturnRows(reportSessionRows())
 	mock.ExpectQuery(`SELECT .* FROM "conversations" WHERE id = \$1 LIMIT \$2 FOR UPDATE`).WithArgs(uint(9), 1).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uint(9)))
-	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE id = \$1 AND conversation_id = \$2 AND source_tag = \$3 LIMIT \$4 FOR UPDATE`).WithArgs(uint(5), uint(9), store.SourceChat, 1).WillReturnRows(reportSessionRows())
+	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE id = \$1 AND conversation_id = \$2 AND source_tag = \$3 LIMIT \$4 FOR UPDATE`).WithArgs(uint(5), uint(9), types.SourceChat, 1).WillReturnRows(reportSessionRows())
 	for index := 0; index < 2; index++ {
 		mock.ExpectQuery(`SELECT COALESCE\(MAX\(seq\), 0\) FROM "messages" WHERE session_id = \$1`).WithArgs(uint(5)).WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(index + 4))
 		mock.ExpectQuery(`INSERT INTO "messages" .* RETURNING "id"`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(index + 6))
@@ -227,7 +228,7 @@ func (want deliveryMessageEventArgument) Match(value driver.Value) bool {
 		TaskRunID      string           `json:"task_run_id"`
 		RunID          string           `json:"run_id"`
 		Sources        []runtime.Source `json:"sources"`
-		Message        store.Message    `json:"message"`
+		Message        types.Message    `json:"message"`
 	}
 	if json.Unmarshal([]byte(text), &data) != nil {
 		return false
@@ -239,7 +240,7 @@ func TestReportStoreDirectGroupMemberCommitsOriginalSourcesWithoutNewRun(t *test
 	for _, failEvent := range []bool{false, true} {
 		t.Run(map[bool]string{false: "commit", true: "rollback"}[failEvent], func(t *testing.T) {
 			repo, mock := reportTestDB(t)
-			report := GeneratedReport{Message: store.Message{Role: "assistant", Content: "Original child answer"}, Sources: []runtime.Source{{SourceRunID: "child-run", Kind: "web", Tool: "tavily_search", URL: "https://example.com/evidence", Title: "Original evidence"}}}
+			report := GeneratedReport{Message: types.Message{Role: "assistant", Content: "Original child answer"}, Sources: []runtime.Source{{SourceRunID: "child-run", Kind: "web", Tool: "tavily_search", URL: "https://example.com/evidence", Title: "Original evidence"}}}
 			mock.ExpectBegin()
 			mock.ExpectQuery(`SELECT .* FROM "conversations" WHERE id = .* FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uint(9)))
 			mock.ExpectQuery(`SELECT .* FROM "subagent_tasks" WHERE id = .* AND conversation_id = .* FOR UPDATE`).WillReturnRows(sqlmock.NewRows([]string{"id", "group_id", "run_id", "conversation_id", "delivery_mode", "status", "report_status", "report_claim"}).AddRow("task-1", "group-1", "child-run", uint(9), "direct", "completed", "processing", "claim-1"))

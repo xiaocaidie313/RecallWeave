@@ -7,7 +7,7 @@ import (
 
 	"recallweave/internal/agent"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 const SearchMemoriesToolName = "search_memories"
@@ -25,10 +25,10 @@ const memoryInstructions = `涉及用户过去的经历时，先引用系统消�
 - 只有工具返回 inactive 后才能确认已停用；停用保留原文，不代表删除聊天记录`
 
 type memoryBackend interface {
-	SearchMemories(context.Context, string, store.MemoryTag, int, ...bool) ([]store.Memory, error)
-	GetMessages(context.Context, uint, int, int) ([]store.Message, error)
-	GetSessions(context.Context, uint) ([]store.Session, error)
-	DeactivateMemory(context.Context, uint, string) (store.Memory, error)
+	SearchMemories(context.Context, string, types.MemoryTag, int, ...bool) ([]types.Memory, error)
+	GetMessages(context.Context, uint, int, int) ([]types.Message, error)
+	GetSessions(context.Context, uint) ([]types.Session, error)
+	DeactivateMemory(context.Context, uint, string) (types.Memory, error)
 }
 
 // MemoryHit 是回灌给模型的一条记忆。带上 session_id 和 seq 区间，
@@ -42,7 +42,7 @@ type MemoryHit struct {
 	Title       string             `json:"title"`
 	Content     string             `json:"content"`
 	ContentType string             `json:"content_type"`
-	Status      store.MemoryStatus `json:"status"`
+	Status      types.MemoryStatus `json:"status"`
 }
 
 type SearchMemoriesResult struct {
@@ -111,9 +111,9 @@ func searchMemoriesTool(manager memoryBackend) llm.Tool {
 				return "", err
 			}
 
-			var tag store.MemoryTag
+			var tag types.MemoryTag
 			if args.Tag != "" {
-				tag = store.NormalizeMemoryTag(args.Tag)
+				tag = types.NormalizeMemoryTag(args.Tag)
 			}
 
 			memories, err := manager.SearchMemories(ctx, args.Keyword, tag, args.Limit, args.IncludeInactive)
@@ -131,7 +131,7 @@ func searchMemoriesTool(manager memoryBackend) llm.Tool {
 					Tag:         string(item.Tag),
 					Title:       item.Title,
 					Content:     item.Content,
-					ContentType: string(store.NormalizeContentType(string(item.ContentType))),
+					ContentType: string(types.NormalizeContentType(string(item.ContentType))),
 					Status:      item.Status,
 				})
 			}
@@ -260,8 +260,8 @@ func ResultToString(value any) (string, error) {
 }
 
 func allowedTags() []string {
-	tags := make([]string, 0, len(store.MemoryTags))
-	for _, tag := range store.MemoryTags {
+	tags := make([]string, 0, len(types.MemoryTags))
+	for _, tag := range types.MemoryTags {
 		tags = append(tags, string(tag))
 	}
 	return tags

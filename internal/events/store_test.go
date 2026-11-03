@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
@@ -31,7 +31,7 @@ func eventDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 
 func TestAppendUsesCallerTransactionAndConversationLockBeforeIDAllocation(t *testing.T) {
 	db, mock := eventDB(t)
-	event := store.ConversationEvent{ConversationID: 17, Kind: "message.created", Key: "report:task-1", Data: json.RawMessage(`{"message_id":4}`)}
+	event := types.ConversationEvent{ConversationID: 17, Kind: "message.created", Key: "report:task-1", Data: json.RawMessage(`{"message_id":4}`)}
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT "id" FROM "conversations" WHERE id = \$1 LIMIT \$2 FOR UPDATE`).WithArgs(uint(17), 1).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(17))
 	mock.ExpectQuery(`INSERT INTO "conversation_events" .*RETURNING "id"`).WithArgs(uint(17), "message.created", "report:task-1", `{"message_id":4}`, sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(8))
@@ -93,7 +93,7 @@ func TestEventsRejectMalformedAndCancelledOperationsBeforeSQL(t *testing.T) {
 	if _, err := reader.List(context.Background(), 0, 0, 10); err == nil {
 		t.Fatal("unscoped read accepted")
 	}
-	for _, event := range []store.ConversationEvent{{ConversationID: 17, Kind: "message.created\ninjected", Key: "k", Data: json.RawMessage(`{}`)}, {ConversationID: 17, Kind: "message.created", Key: "k", Data: json.RawMessage(`broken`)}, {ConversationID: 0, Kind: "message.created", Key: "k", Data: json.RawMessage(`{}`)}} {
+	for _, event := range []types.ConversationEvent{{ConversationID: 17, Kind: "message.created\ninjected", Key: "k", Data: json.RawMessage(`{}`)}, {ConversationID: 17, Kind: "message.created", Key: "k", Data: json.RawMessage(`broken`)}, {ConversationID: 0, Kind: "message.created", Key: "k", Data: json.RawMessage(`{}`)}} {
 		if err := Append(db, &event); err == nil {
 			t.Fatal("malformed event accepted")
 		}

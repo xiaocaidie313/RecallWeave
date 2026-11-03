@@ -257,7 +257,7 @@ func (m *snapshotRuntimeModel) Next(_ context.Context, conv *llm.Conversation, _
 	return turn, nil
 }
 
-func TestResumedRunRestoresHistoryWithoutReplayingToolsOrCountingOldUsage(t *testing.T) {
+func TestResumedRunRetypessHistoryWithoutReplayingToolsOrCountingOldUsage(t *testing.T) {
 	reads := 0
 	read := agent.NewAbility("read", "", "", agent.ToolBox{{Schema: llm.ToolSchema{Name: "get_messages"}, Run: func(context.Context, string) (string, error) {
 		reads++
@@ -275,8 +275,8 @@ func TestResumedRunRestoresHistoryWithoutReplayingToolsOrCountingOldUsage(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	var restored llm.ConversationSnapshot
-	if err := json.Unmarshal(encoded, &restored); err != nil {
+	var retypesd llm.ConversationSnapshot
+	if err := json.Unmarshal(encoded, &retypesd); err != nil {
 		t.Fatal(err)
 	}
 	secondModel := &snapshotRuntimeModel{turns: []llm.Turn{{Content: "supplemental answer", Usage: llm.Usage{PromptTokens: 7}}}, before: func(conv *llm.Conversation) {
@@ -287,18 +287,18 @@ func TestResumedRunRestoresHistoryWithoutReplayingToolsOrCountingOldUsage(t *tes
 		body := string(checkpoint.Messages)
 		for _, wanted := range []string{"CURRENT_ROLE_POLICY", "read_original", "ORIGINAL_TOOL_EVIDENCE", "first findings", "follow-up question"} {
 			if !strings.Contains(body, wanted) {
-				t.Fatalf("restored context lost %q", wanted)
+				t.Fatalf("retypesd context lost %q", wanted)
 			}
 		}
 		for _, unwanted := range []string{"OLD_ROLE_POLICY", "PRIVATE_PARENT_PRELOAD"} {
 			if strings.Contains(body, unwanted) {
-				t.Fatalf("restored context leaked %q", unwanted)
+				t.Fatalf("retypesd context leaked %q", unwanted)
 			}
 		}
 	}}
 	second, err := Run(context.Background(), agent.NewAgent(2, "researcher", secondModel, "CURRENT_ROLE_POLICY", 3, read), Request{
 		Input: "follow-up question", ParentRunID: "parent-two", SubagentID: testSubagentID, PreviousRunID: first.State.RunID, ConversationID: 9,
-		ContextSnapshot: &restored, CaptureContext: true, InheritedSources: SourcesForRun(first.State),
+		ContextSnapshot: &retypesd, CaptureContext: true, InheritedSources: SourcesForRun(first.State),
 		Preload: Preload{Background: []string{"PRIVATE_PARENT_PRELOAD"}},
 	})
 	if err != nil {

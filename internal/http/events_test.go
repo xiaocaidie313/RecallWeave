@@ -12,19 +12,19 @@ import (
 	"time"
 
 	"recallweave/internal/events"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/gin-gonic/gin"
 )
 
 type fakeEventReader struct {
-	rows   []store.ConversationEvent
+	rows   []types.ConversationEvent
 	exists bool
 	err    error
 	owner  uint
 	cursor uint64
 	lists  int
-	list   func(context.Context, uint, uint64, int) ([]store.ConversationEvent, error)
+	list   func(context.Context, uint, uint64, int) ([]types.ConversationEvent, error)
 }
 
 func (f *fakeEventReader) ConversationExists(_ context.Context, owner uint) (bool, error) {
@@ -43,12 +43,12 @@ func (f *fakeEventReader) ValidateCursor(_ context.Context, owner uint, after ui
 	}
 	return events.ErrInvalidCursor
 }
-func (f *fakeEventReader) List(ctx context.Context, owner uint, after uint64, limit int) ([]store.ConversationEvent, error) {
+func (f *fakeEventReader) List(ctx context.Context, owner uint, after uint64, limit int) ([]types.ConversationEvent, error) {
 	f.lists++
 	if f.list != nil {
 		return f.list(ctx, owner, after, limit)
 	}
-	var rows []store.ConversationEvent
+	var rows []types.ConversationEvent
 	for _, row := range f.rows {
 		if row.ConversationID == owner && row.ID > after {
 			rows = append(rows, row)
@@ -94,7 +94,7 @@ func eventRouter(reader ConversationEventReader) (*gin.Engine, *EventsHandler) {
 }
 
 func TestConversationEventsReplayUsesLatestHeaderCursorAndKeepsOwnerScope(t *testing.T) {
-	reader := &fakeEventReader{exists: true, rows: []store.ConversationEvent{
+	reader := &fakeEventReader{exists: true, rows: []types.ConversationEvent{
 		{ID: 1, ConversationID: 17, Kind: "task.finished", Data: json.RawMessage(`{"status":"completed"}`)},
 		{ID: 2, ConversationID: 18, Kind: "message.created", Data: json.RawMessage(`{"content":"OTHER_PRIVATE_CONVERSATION"}`)},
 		{ID: 3, ConversationID: 17, Kind: "message.created", Data: json.RawMessage("{\n  \"content\": \"saved reply\"\n}")},
@@ -134,7 +134,7 @@ func TestConversationEventsRejectInvalidScopeCursorAndStorageErrorsBeforeStreami
 		{"storage failure", "/api/conversations/17/events", "", true, errors.New("PRIVATE_SQL_ERROR"), 500},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reader := &fakeEventReader{exists: tc.exists, err: tc.err, rows: []store.ConversationEvent{{ID: 9, ConversationID: 18}}}
+			reader := &fakeEventReader{exists: tc.exists, err: tc.err, rows: []types.ConversationEvent{{ID: 9, ConversationID: 18}}}
 			router, _ := eventRouter(reader)
 			request := httptest.NewRequest(http.MethodGet, tc.path, nil)
 			request.Header.Set("Last-Event-ID", tc.header)
@@ -164,14 +164,14 @@ func TestConversationEventsHeartbeatAndDisconnectDoNotWaitForNextPoll(t *testing
 
 func TestConversationEventsPollsNewDurableMessages(t *testing.T) {
 	reader := &fakeEventReader{exists: true}
-	reader.list = func(ctx context.Context, owner uint, after uint64, limit int) ([]store.ConversationEvent, error) {
+	reader.list = func(ctx context.Context, owner uint, after uint64, limit int) ([]types.ConversationEvent, error) {
 		if owner != 17 || after != 0 || limit != 100 {
 			return nil, fmt.Errorf("wrong poll scope")
 		}
 		if reader.lists == 1 {
 			return nil, nil
 		}
-		return []store.ConversationEvent{{ID: 5, ConversationID: 17, Kind: "message.created", Data: json.RawMessage(`{"content":"new durable report"}`)}}, nil
+		return []types.ConversationEvent{{ID: 5, ConversationID: 17, Kind: "message.created", Data: json.RawMessage(`{"content":"new durable report"}`)}}, nil
 	}
 	router, handler := eventRouter(reader)
 	handler.pollInterval = time.Millisecond
@@ -185,9 +185,9 @@ func TestConversationEventsPollsNewDurableMessages(t *testing.T) {
 }
 
 func TestConversationEventsRejectsMalformedOrForeignReaderResults(t *testing.T) {
-	for _, row := range []store.ConversationEvent{{ID: 1, ConversationID: 18, Kind: "message.created", Data: json.RawMessage(`{}`)}, {ID: 1, ConversationID: 17, Kind: "message.created\ninjected", Data: json.RawMessage(`{}`)}, {ID: 1, ConversationID: 17, Kind: "message.created", Data: json.RawMessage(`broken`)}} {
-		reader := &fakeEventReader{exists: true, list: func(context.Context, uint, uint64, int) ([]store.ConversationEvent, error) {
-			return []store.ConversationEvent{row}, nil
+	for _, row := range []types.ConversationEvent{{ID: 1, ConversationID: 18, Kind: "message.created", Data: json.RawMessage(`{}`)}, {ID: 1, ConversationID: 17, Kind: "message.created\ninjected", Data: json.RawMessage(`{}`)}, {ID: 1, ConversationID: 17, Kind: "message.created", Data: json.RawMessage(`broken`)}} {
+		reader := &fakeEventReader{exists: true, list: func(context.Context, uint, uint64, int) ([]types.ConversationEvent, error) {
+			return []types.ConversationEvent{row}, nil
 		}}
 		router, _ := eventRouter(reader)
 		writer := httptest.NewRecorder()
@@ -201,7 +201,7 @@ func TestConversationEventsRejectsMalformedOrForeignReaderResults(t *testing.T) 
 func TestConversationEventsCatchUpAcrossBatchesWithoutWaitingForPoll(t *testing.T) {
 	reader := &fakeEventReader{exists: true}
 	for i := 1; i <= 101; i++ {
-		reader.rows = append(reader.rows, store.ConversationEvent{ID: uint64(i), ConversationID: 17, Kind: "task.finished", Data: json.RawMessage(`{}`)})
+		reader.rows = append(reader.rows, types.ConversationEvent{ID: uint64(i), ConversationID: 17, Kind: "task.finished", Data: json.RawMessage(`{}`)})
 	}
 	router, handler := eventRouter(reader)
 	handler.pollInterval = time.Hour
@@ -219,14 +219,14 @@ func TestConversationEventsClearWriteDeadlineBeforeIdlePolling(t *testing.T) {
 	defer cancel()
 	writer := &deadlineEventWriter{cancellingEventWriter: &cancellingEventWriter{ResponseRecorder: httptest.NewRecorder(), when: "id: 5\n", cancel: cancel}}
 	reader := &fakeEventReader{exists: true}
-	reader.list = func(context.Context, uint, uint64, int) ([]store.ConversationEvent, error) {
+	reader.list = func(context.Context, uint, uint64, int) ([]types.ConversationEvent, error) {
 		if !writer.current.IsZero() {
 			return nil, fmt.Errorf("write deadline leaked into idle polling")
 		}
 		if reader.lists == 1 {
 			return nil, nil
 		}
-		return []store.ConversationEvent{{ID: 5, ConversationID: 17, Kind: "message.created", Data: json.RawMessage(`{}`)}}, nil
+		return []types.ConversationEvent{{ID: 5, ConversationID: 17, Kind: "message.created", Data: json.RawMessage(`{}`)}}, nil
 	}
 	router, handler := eventRouter(reader)
 	handler.pollInterval = time.Millisecond

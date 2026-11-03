@@ -9,13 +9,13 @@ import (
 	"strings"
 	"testing"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/gorm"
 )
 
-type forkSnapshotArg []store.ContextMessage
+type forkSnapshotArg []types.ContextMessage
 
 func (want forkSnapshotArg) Match(value driver.Value) bool {
 	var raw []byte
@@ -27,11 +27,11 @@ func (want forkSnapshotArg) Match(value driver.Value) bool {
 	default:
 		return false
 	}
-	var got []store.ContextMessage
-	return json.Unmarshal(raw, &got) == nil && reflect.DeepEqual(got, []store.ContextMessage(want))
+	var got []types.ContextMessage
+	return json.Unmarshal(raw, &got) == nil && reflect.DeepEqual(got, []types.ContextMessage(want))
 }
 
-func expectForkParent(mock sqlmock.Sqlmock, inherited []store.ContextMessage) {
+func expectForkParent(mock sqlmock.Sqlmock, inherited []types.ContextMessage) {
 	var parentID any
 	var snapshot any
 	if inherited != nil {
@@ -43,7 +43,7 @@ func expectForkParent(mock sqlmock.Sqlmock, inherited []store.ContextMessage) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "brief", "brief_until_seq", "parent_conversation_id", "fork_snapshot"}).
 			AddRow(7, "主线", "不得复制的分叉后摘要", 100, parentID, snapshot))
 	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE conversation_id = .*source_tag = .*ORDER BY .*LIMIT`).
-		WithArgs(7, store.SourceChat, 1).
+		WithArgs(7, types.SourceChat, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(70, 7, "chat"))
 }
 
@@ -52,12 +52,12 @@ func expectForkMessages(mock sqlmock.Sqlmock, cutoff int, rows *sqlmock.Rows) {
 		WithArgs(70, cutoff, MaxForkMessages+1).WillReturnRows(rows)
 }
 
-func expectForkInserts(mock sqlmock.Sqlmock, title string, snapshot []store.ContextMessage, sessionErr error) {
+func expectForkInserts(mock sqlmock.Sqlmock, title string, snapshot []types.ContextMessage, sessionErr error) {
 	mock.ExpectQuery(`INSERT INTO "conversations"`).
 		WithArgs(title, "", 0, 7, 70, 2, forkSnapshotArg(snapshot), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(8))
 	query := mock.ExpectQuery(`INSERT INTO "sessions"`).
-		WithArgs(8, store.SourceChat, "chat", "", store.ExtractSkipped, "", nil, sqlmock.AnyArg(), sqlmock.AnyArg())
+		WithArgs(8, types.SourceChat, "chat", "", types.ExtractSkipped, "", nil, sqlmock.AnyArg(), sqlmock.AnyArg())
 	if sessionErr != nil {
 		query.WillReturnError(sessionErr)
 	} else {
@@ -73,13 +73,13 @@ func TestForkConversationFreezesSourcePrefix(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			manager, mock := lifecycleTestManager(t)
-			var inherited []store.ContextMessage
+			var inherited []types.ContextMessage
 			if nested {
-				inherited = []store.ContextMessage{{SessionID: 10, Seq: 5, Role: "user", Content: "祖先原文"}}
+				inherited = []types.ContextMessage{{SessionID: 10, Seq: 5, Role: "user", Content: "祖先原文"}}
 			}
-			want := append(append([]store.ContextMessage{}, inherited...),
-				store.ContextMessage{SessionID: 70, Seq: 1, Role: "user", Content: "讨论 Go"},
-				store.ContextMessage{SessionID: 70, Seq: 2, Role: "assistant", Content: "相关建议"})
+			want := append(append([]types.ContextMessage{}, inherited...),
+				types.ContextMessage{SessionID: 70, Seq: 1, Role: "user", Content: "讨论 Go"},
+				types.ContextMessage{SessionID: 70, Seq: 2, Role: "assistant", Content: "相关建议"})
 			mock.ExpectBegin()
 			expectForkParent(mock, inherited)
 			expectForkMessages(mock, 2, sqlmock.NewRows([]string{"seq", "role", "content"}).
@@ -170,7 +170,7 @@ func TestForkConversationRollsBackInvalidPrefix(t *testing.T) {
 
 func TestForkConversationSessionFailureReturnsNoPartialBranch(t *testing.T) {
 	manager, mock := lifecycleTestManager(t)
-	want := []store.ContextMessage{{SessionID: 70, Seq: 2, Role: "user", Content: "source"}}
+	want := []types.ContextMessage{{SessionID: 70, Seq: 2, Role: "user", Content: "source"}}
 	mock.ExpectBegin()
 	expectForkParent(mock, nil)
 	expectForkMessages(mock, 2, sqlmock.NewRows([]string{"seq", "role", "content"}).AddRow(2, "user", "source"))

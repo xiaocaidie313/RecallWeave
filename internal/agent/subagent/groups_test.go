@@ -12,18 +12,18 @@ import (
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/delivery"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 type memoryGroupStore struct {
 	memoryTaskStore
-	groups           map[string]store.TaskGroup
+	groups           map[string]types.TaskGroup
 	announced        map[string]int
 	groupCreateError error
 }
 
 func (s *memoryGroupStore) GroupsEnabled() bool { return true }
-func (s *memoryGroupStore) CreateGroup(ctx context.Context, group *store.TaskGroup, rows []store.SubagentTask) error {
+func (s *memoryGroupStore) CreateGroup(ctx context.Context, group *types.TaskGroup, rows []types.SubagentTask) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -36,10 +36,10 @@ func (s *memoryGroupStore) CreateGroup(ctx context.Context, group *store.TaskGro
 		return errors.New("two members required")
 	}
 	if s.groups == nil {
-		s.groups = make(map[string]store.TaskGroup)
+		s.groups = make(map[string]types.TaskGroup)
 	}
 	if s.rows == nil {
-		s.rows = make(map[string]store.SubagentTask)
+		s.rows = make(map[string]types.SubagentTask)
 	}
 	if _, exists := s.groups[group.ID]; exists {
 		return errors.New("duplicate")
@@ -53,16 +53,16 @@ func (s *memoryGroupStore) CreateGroup(ctx context.Context, group *store.TaskGro
 	}
 	return nil
 }
-func (s *memoryGroupStore) groupLocked(id string, owner uint) (store.TaskGroup, []store.SubagentTask, error) {
+func (s *memoryGroupStore) groupLocked(id string, owner uint) (types.TaskGroup, []types.SubagentTask, error) {
 	group, ok := s.groups[id]
 	if !ok || group.ConversationID != owner {
-		return store.TaskGroup{}, nil, ErrTaskNotFound
+		return types.TaskGroup{}, nil, ErrTaskNotFound
 	}
 	var ids []string
 	if json.Unmarshal(group.TaskIDs, &ids) != nil {
 		return group, nil, errors.New("bad membership")
 	}
-	rows := make([]store.SubagentTask, 0, len(ids))
+	rows := make([]types.SubagentTask, 0, len(ids))
 	for _, taskID := range ids {
 		row, ok := s.rows[taskID]
 		if !ok || row.GroupID != id || row.ConversationID != owner {
@@ -72,21 +72,21 @@ func (s *memoryGroupStore) groupLocked(id string, owner uint) (store.TaskGroup, 
 	}
 	return group, rows, nil
 }
-func (s *memoryGroupStore) LoadGroup(ctx context.Context, id string, owner uint) (store.TaskGroup, []store.SubagentTask, error) {
+func (s *memoryGroupStore) LoadGroup(ctx context.Context, id string, owner uint) (types.TaskGroup, []types.SubagentTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return store.TaskGroup{}, nil, err
+		return types.TaskGroup{}, nil, err
 	}
 	return s.groupLocked(id, owner)
 }
-func (s *memoryGroupStore) ListGroups(ctx context.Context, owner uint, limit int) ([]store.TaskGroup, error) {
+func (s *memoryGroupStore) ListGroups(ctx context.Context, owner uint, limit int) ([]types.TaskGroup, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var rows []store.TaskGroup
+	var rows []types.TaskGroup
 	for _, group := range s.groups {
 		if group.ConversationID == owner {
 			rows = append(rows, group)
@@ -151,7 +151,7 @@ func (s *memoryGroupStore) refreshLocked(id string) {
 	}
 	s.announced[id]++
 }
-func (s *memoryGroupStore) Finish(ctx context.Context, row *store.SubagentTask, run *store.AgentRun) error {
+func (s *memoryGroupStore) Finish(ctx context.Context, row *types.SubagentTask, run *types.AgentRun) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -181,18 +181,18 @@ func (s *memoryGroupStore) Finish(ctx context.Context, row *store.SubagentTask, 
 	s.rows[row.ID] = cloneTask(*row)
 	if run != nil {
 		if s.runs == nil {
-			s.runs = make(map[string]store.AgentRun)
+			s.runs = make(map[string]types.AgentRun)
 		}
 		s.runs[run.RunID] = *run
 	}
 	s.refreshLocked(row.GroupID)
 	return nil
 }
-func (s *memoryGroupStore) RequestCancelGroup(ctx context.Context, id string, owner uint) (store.TaskGroup, []store.SubagentTask, error) {
+func (s *memoryGroupStore) RequestCancelGroup(ctx context.Context, id string, owner uint) (types.TaskGroup, []types.SubagentTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return store.TaskGroup{}, nil, err
+		return types.TaskGroup{}, nil, err
 	}
 	group, rows, err := s.groupLocked(id, owner)
 	if err != nil {

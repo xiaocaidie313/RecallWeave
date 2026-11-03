@@ -117,7 +117,7 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 		conversation, err = resumeConversation(a, req)
 		if err != nil {
 			state.ContextError = err.Error()
-			return fail(0, fmt.Errorf("runtime: restore context: %w", err), RunFailed)
+			return fail(0, fmt.Errorf("runtime: retypes context: %w", err), RunFailed)
 		}
 	}
 

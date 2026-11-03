@@ -14,7 +14,7 @@ import (
 	"recallweave/internal/delivery"
 	"recallweave/internal/llm"
 	"recallweave/internal/memory"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 	"recallweave/internal/watch/useage"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -36,7 +36,7 @@ func (m *reportTestModel) Next(ctx context.Context, conversation *llm.Conversati
 	return m.next(ctx, conversation, tools)
 }
 
-func autoReportFixture(t *testing.T) store.SubagentTask {
+func autoReportFixture(t *testing.T) types.SubagentTask {
 	t.Helper()
 	child := runtime.RunResult{Content: "KNOWN_FINDING", State: runtime.RunState{RunID: "child-run", SubagentID: "child-id", ConversationID: 7, Status: runtime.RunCompleted,
 		ContextSnapshot:  &llm.ConversationSnapshot{Version: 1, Messages: json.RawMessage(`[{"role":"user","content":"PRIVATE_CHILD_HISTORY"}]`)},
@@ -47,7 +47,7 @@ func autoReportFixture(t *testing.T) store.SubagentTask {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return store.SubagentTask{ID: "task-id", SubagentID: "child-id", RunID: "child-run", ParentRunID: "original-parent", ConversationID: 7, AgentName: "researcher", Task: "check history", DeliveryMode: delivery.Synthesize, Status: "completed", Result: encoded}
+	return types.SubagentTask{ID: "task-id", SubagentID: "child-id", RunID: "child-run", ParentRunID: "original-parent", ConversationID: 7, AgentName: "researcher", Task: "check history", DeliveryMode: delivery.Synthesize, Status: "completed", Result: encoded}
 }
 
 func TestGenerateReportUsesOneIsolatedMainRunAndVerifiedSources(t *testing.T) {
@@ -222,7 +222,7 @@ func TestGenerateReportRejectsForeignOrUnfinishedResultsBeforeModel(t *testing.T
 	service := NewAgent(agent.NewAgent(1, "recall", &reportTestModel{next: func(context.Context, *llm.Conversation, []llm.ToolSchema) (llm.Turn, error) {
 		panic("unexpected model call")
 	}}, "", 6), nil, nil)
-	for _, mutate := range []func(*store.SubagentTask){func(task *store.SubagentTask) { task.ConversationID = 8 }, func(task *store.SubagentTask) { task.SubagentID = "other" }, func(task *store.SubagentTask) { task.RunID = "other" }, func(task *store.SubagentTask) { task.Status = "running" }, func(task *store.SubagentTask) { task.Result = json.RawMessage(`null`) }} {
+	for _, mutate := range []func(*types.SubagentTask){func(task *types.SubagentTask) { task.ConversationID = 8 }, func(task *types.SubagentTask) { task.SubagentID = "other" }, func(task *types.SubagentTask) { task.RunID = "other" }, func(task *types.SubagentTask) { task.Status = "running" }, func(task *types.SubagentTask) { task.Result = json.RawMessage(`null`) }} {
 		task := autoReportFixture(t)
 		mutate(&task)
 		if _, err := service.GenerateReport(context.Background(), task); err == nil {
@@ -241,7 +241,7 @@ func TestGenerateReportLoadsOnlyCurrentConversationRecentHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE conversation_id = .* AND source_tag = .* ORDER BY .* LIMIT`).WithArgs(uint(7), store.SourceChat, 1).WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(11, 7, store.SourceChat))
+	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE conversation_id = .* AND source_tag = .* ORDER BY .* LIMIT`).WithArgs(uint(7), types.SourceChat, 1).WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(11, 7, types.SourceChat))
 	rows := sqlmock.NewRows([]string{"session_id", "seq", "role", "content"})
 	for i := 1; i <= 25; i++ {
 		rows.AddRow(11, i, "user", fmt.Sprintf("OWN_MESSAGE_%02d", i))

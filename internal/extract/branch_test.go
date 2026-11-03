@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
@@ -54,7 +54,7 @@ func TestBranchExtractionBlockedAtBothPublicEntrypoints(t *testing.T) {
 			mock.ExpectQuery(scopeQuery).WithArgs(10, 1).WillReturnRows(scopeRows().AddRow(10, 3, 3, 1))
 			mock.ExpectBegin()
 			mock.ExpectExec(`UPDATE "sessions" SET `).
-				WithArgs("", store.ExtractSkipped, sqlmock.AnyArg(), 10).
+				WithArgs("", types.ExtractSkipped, sqlmock.AnyArg(), 10).
 				WillReturnResult(sqlmock.NewResult(0, 1))
 			mock.ExpectCommit()
 			var count int
@@ -64,7 +64,7 @@ func TestBranchExtractionBlockedAtBothPublicEntrypoints(t *testing.T) {
 			} else {
 				count, err = extractor.ExtractNewToMemory(context.Background(), 10)
 			}
-			if count != 0 || !errors.Is(err, store.ErrBranchMemoryPrivate) || probe.calls != 0 {
+			if count != 0 || !errors.Is(err, types.ErrBranchMemoryPrivate) || probe.calls != 0 {
 				t.Fatalf("branch extraction escaped guard: count=%d err=%v model_calls=%d", count, err, probe.calls)
 			}
 			// No messages read, embedding call, memory delete or insert is expected.
@@ -130,7 +130,7 @@ func TestScopeFailureDoesNotReachExtraction(t *testing.T) {
 	mock.ExpectQuery(scopeQuery).WithArgs(10, 1).WillReturnError(errors.New("database unavailable"))
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE "sessions" SET `).
-		WithArgs(sqlmock.AnyArg(), store.ExtractFailed, sqlmock.AnyArg(), 10).
+		WithArgs(sqlmock.AnyArg(), types.ExtractFailed, sqlmock.AnyArg(), 10).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if count, err := extractor.ExtractNewToMemory(context.Background(), 10); count != 0 || err == nil || probe.calls != 0 {

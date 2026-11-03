@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
@@ -38,8 +38,8 @@ func sessionStoreTestDB(t *testing.T) (*GormSubagentSessionStore, sqlmock.Sqlmoc
 	return NewSubagentSessionStore(database), mock
 }
 
-func sessionStoreRecord() store.SubagentSession {
-	return store.SubagentSession{
+func sessionStoreRecord() types.SubagentSession {
+	return types.SubagentSession{
 		ID: "child-session", ConversationID: 9, AgentName: "researcher", Task: "Check original sources",
 		LatestRunID: "run-1", Status: "completed",
 		Snapshot:    json.RawMessage(`{"version":1,"messages":[{"role":"user","content":"task"}]}`),
@@ -100,7 +100,7 @@ func TestSessionStoreCreateDoesNotOverwriteExistingSession(t *testing.T) {
 	}
 }
 
-func sessionStoreRows(records ...store.SubagentSession) *sqlmock.Rows {
+func sessionStoreRows(records ...types.SubagentSession) *sqlmock.Rows {
 	rows := sqlmock.NewRows([]string{"id", "conversation_id", "agent_name", "task", "latest_run_id", "status", "snapshot", "PresetAgent", "sources", "revision", "created_at", "updated_at"})
 	for _, record := range records {
 		rows.AddRow(record.ID, record.ConversationID, record.AgentName, record.Task, record.LatestRunID, record.Status,
@@ -121,7 +121,7 @@ func TestSessionStoreLoadRequiresOwnerAndReadsJSONStrings(t *testing.T) {
 	}
 	if got.ID != want.ID || got.ConversationID != want.ConversationID || got.Revision != 3 ||
 		!reflect.DeepEqual(got.Snapshot, want.Snapshot) || !reflect.DeepEqual(got.PresetAgent, want.PresetAgent) || !reflect.DeepEqual(got.Sources, want.Sources) {
-		t.Fatalf("stored JSON was not restored: %+v", got)
+		t.Fatalf("typesd JSON was not retypesd: %+v", got)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestSessionStoreLoadCannotFallBackOutsideConversation(t *testing.T) {
 	}
 }
 
-func expectSessionUpdate(mock sqlmock.Sqlmock, record store.SubagentSession, expected uint64, affected int64) {
+func expectSessionUpdate(mock sqlmock.Sqlmock, record types.SubagentSession, expected uint64, affected int64) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE "subagent_sessions" SET .* WHERE id = \$10 AND conversation_id = \$11 AND revision = \$12`).WithArgs(
 		record.AgentName, record.Task, record.LatestRunID, record.Status,
@@ -309,7 +309,7 @@ func TestSessionStoreUnavailableAndCancellationFailClosed(t *testing.T) {
 	}
 }
 
-func expectCheckpointQuery(mock sqlmock.Sqlmock, record store.SubagentSession) *sqlmock.ExpectedQuery {
+func expectCheckpointQuery(mock sqlmock.Sqlmock, record types.SubagentSession) *sqlmock.ExpectedQuery {
 	return mock.ExpectQuery(`SELECT count\(\*\) FROM "agent_runs" WHERE .*subagent_id = \$1 AND conversation_id = \$2 AND previous_run_id = \$3 AND run_id <> \$4.*COALESCE\(state->>'context_persist_failed', 'false'\) = 'true'`).
 		WithArgs(record.ID, record.ConversationID, record.LatestRunID, record.LatestRunID)
 }
@@ -356,11 +356,11 @@ func TestSessionStoreCheckpointVerifierPropagatesDatabaseFailure(t *testing.T) {
 
 func TestSessionStoreCheckpointVerifierRejectsInvalidOrUnavailableScope(t *testing.T) {
 	repository, mock := sessionStoreTestDB(t)
-	for _, change := range []func(*store.SubagentSession){
-		func(record *store.SubagentSession) { record.ID = "" },
-		func(record *store.SubagentSession) { record.ConversationID = 0 },
-		func(record *store.SubagentSession) { record.LatestRunID = "" },
-		func(record *store.SubagentSession) { record.LatestRunID = " run " },
+	for _, change := range []func(*types.SubagentSession){
+		func(record *types.SubagentSession) { record.ID = "" },
+		func(record *types.SubagentSession) { record.ConversationID = 0 },
+		func(record *types.SubagentSession) { record.LatestRunID = "" },
+		func(record *types.SubagentSession) { record.LatestRunID = " run " },
 	} {
 		record := sessionStoreRecord()
 		change(&record)

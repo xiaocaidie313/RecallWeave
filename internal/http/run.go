@@ -3,20 +3,28 @@ package http
 import (
 	"errors"
 	"net/http"
+	"recallweave/internal/run"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-func (h *ConversationHandler) GetRun(c *gin.Context) {
+var ErrConversationNotFound = errors.New("run: conversation not found")
+
+type RunHandler struct {
+	RM *run.RunManager
+}
+
+// 主要负责 一次  runtime 的记录的 获取 和 列表
+func (h *RunHandler) GetRun(c *gin.Context) {
 	runID := strings.TrimSpace(c.Param("run_id"))
 	if runID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid run id"})
 		return
 	}
 
-	run, err := h.memory.GetAgentRun(c.Request.Context(), runID)
+	run, err := h.RM.GetAgentRun(c.Request.Context(), runID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
@@ -28,24 +36,18 @@ func (h *ConversationHandler) GetRun(c *gin.Context) {
 	c.JSON(http.StatusOK, run)
 }
 
-func (h *ConversationHandler) ListRuns(c *gin.Context) {
+func (h *RunHandler) ListRuns(c *gin.Context) {
 	conversationID, ok := conversationIDFromPath(c)
 	if !ok {
 		return
 	}
 
-	exists, err := h.memory.ConversationExists(c.Request.Context(), conversationID)
+	runs, err := h.RM.ListAgentRuns(c.Request.Context(), conversationID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load conversation"})
-		return
-	}
-	if !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
-		return
-	}
-
-	runs, err := h.memory.ListAgentRuns(c.Request.Context(), conversationID)
-	if err != nil {
+		if errors.Is(err, ErrConversationNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list runs"})
 		return
 	}

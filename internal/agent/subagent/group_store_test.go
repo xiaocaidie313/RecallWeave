@@ -8,30 +8,30 @@ import (
 	"strings"
 	"testing"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-func groupStoreFixture() (store.TaskGroup, []store.SubagentTask) {
+func groupStoreFixture() (types.TaskGroup, []types.SubagentTask) {
 	ids := []string{strings.Repeat("a", 32), strings.Repeat("b", 32)}
 	raw, _ := json.Marshal(ids)
-	group := store.TaskGroup{ID: strings.Repeat("f", 32), ConversationID: 9, ParentRunID: "parent-1", Goal: "Compare original history and external sources", DeliveryMode: "combined", TaskIDs: raw, Status: "running"}
-	members := make([]store.SubagentTask, 2)
+	group := types.TaskGroup{ID: strings.Repeat("f", 32), ConversationID: 9, ParentRunID: "parent-1", Goal: "Compare original history and external sources", DeliveryMode: "combined", TaskIDs: raw, Status: "running"}
+	members := make([]types.SubagentTask, 2)
 	for i, id := range ids {
-		members[i] = store.SubagentTask{ID: id, GroupID: group.ID, SubagentID: strings.Repeat(string(rune('c'+i)), 32), ParentRunID: group.ParentRunID, ConversationID: 9, AgentName: "researcher", Task: "independent research", Status: "queued", ReportStatus: "grouped"}
+		members[i] = types.SubagentTask{ID: id, GroupID: group.ID, SubagentID: strings.Repeat(string(rune('c'+i)), 32), ParentRunID: group.ParentRunID, ConversationID: 9, AgentName: "researcher", Task: "independent research", Status: "queued", ReportStatus: "grouped"}
 	}
 	return group, members
 }
 
-func groupStoreRows(groups ...store.TaskGroup) *sqlmock.Rows {
+func groupStoreRows(groups ...types.TaskGroup) *sqlmock.Rows {
 	rows := sqlmock.NewRows([]string{"id", "conversation_id", "parent_run_id", "goal", "expected_output", "delivery_mode", "task_ids", "status", "cancel_requested", "report_status", "report_claim", "report_run_id", "report_message_id", "report_error", "reported_at", "created_at", "updated_at", "finished_at"})
 	for _, g := range groups {
 		rows.AddRow(g.ID, g.ConversationID, g.ParentRunID, g.Goal, g.ExpectedOutput, g.DeliveryMode, string(g.TaskIDs), g.Status, g.CancelRequested, g.ReportStatus, g.ReportClaim, g.ReportRunID, g.ReportMessageID, g.ReportError, g.ReportedAt, taskStoreNow, taskStoreNow, g.FinishedAt)
 	}
 	return rows
 }
-func groupMemberRows(members ...store.SubagentTask) *sqlmock.Rows {
+func groupMemberRows(members ...types.SubagentTask) *sqlmock.Rows {
 	rows := sqlmock.NewRows([]string{"id", "group_id", "subagent_id", "parent_run_id", "run_id", "previous_run_id", "conversation_id", "agent_name", "task", "delivery_mode", "status", "cancel_requested", "result", "error", "created_at", "updated_at", "started_at", "finished_at", "report_status"})
 	for _, r := range members {
 		var raw any
@@ -62,10 +62,10 @@ func (w groupEventArg) Match(value driver.Value) bool {
 	}
 	return data["conversation_id"] == float64(9) && data["group_id"] == w.groupID && data["status"] == w.status
 }
-func expectGroupLock(mock sqlmock.Sqlmock, group store.TaskGroup) {
+func expectGroupLock(mock sqlmock.Sqlmock, group types.TaskGroup) {
 	mock.ExpectQuery(groupLockSQL).WithArgs(group.ID, group.ConversationID, 1).WillReturnRows(groupStoreRows(group))
 }
-func expectGroupEvent(mock sqlmock.Sqlmock, group store.TaskGroup, status string) {
+func expectGroupEvent(mock sqlmock.Sqlmock, group types.TaskGroup, status string) {
 	mock.ExpectQuery(`INSERT INTO "conversation_events" .* RETURNING "id"`).WithArgs(uint(9), "task_group.finished", "group:"+group.ID+":finished", groupEventArg{status: status, groupID: group.ID}, taskStoreNow).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(90))
 }
 
@@ -244,7 +244,7 @@ func TestGroupStoreCancellationWaitsForRunningMemberToExit(t *testing.T) {
 	mock.ExpectExec(`UPDATE "subagent_tasks" SET .*status.*`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`INSERT INTO "conversation_events" .* RETURNING "id"`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(10))
 	mock.ExpectExec(`UPDATE "subagent_tasks" SET .*cancel_requested.*`).WillReturnResult(sqlmock.NewResult(0, 1))
-	after := append([]store.SubagentTask(nil), members...)
+	after := append([]types.SubagentTask(nil), members...)
 	after[0].Status = "cancelled"
 	after[0].CancelRequested = true
 	after[1].CancelRequested = true

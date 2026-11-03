@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 // checkGlobalExtraction is shared by full and incremental extraction, including
@@ -31,7 +31,7 @@ func (e *ExtractExcuter) checkGlobalExtraction(ctx context.Context, sessionID ui
 		return errors.New("extract: conversation memory scope is unavailable")
 	}
 	if scope.ParentConversationID != nil {
-		return store.ErrBranchMemoryPrivate
+		return types.ErrBranchMemoryPrivate
 	}
 	return nil
 }

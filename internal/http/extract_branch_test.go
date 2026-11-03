@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"recallweave/internal/extract"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
@@ -29,7 +29,7 @@ func TestManualBranchExtractionReturnsConflict(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"session_id", "conversation_id", "found_conversation_id", "parent_conversation_id"}).AddRow(10, 3, 3, 1))
 	mock.ExpectBegin()
 	mock.ExpectExec(`UPDATE "sessions" SET `).
-		WithArgs("", store.ExtractSkipped, sqlmock.AnyArg(), 10).
+		WithArgs("", types.ExtractSkipped, sqlmock.AnyArg(), 10).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	router := NewRouter(nil, NewExtractHandler(extract.NewExtractExcuter(db, nil, nil)), nil, nil)

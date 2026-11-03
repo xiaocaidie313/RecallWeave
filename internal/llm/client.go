@@ -15,7 +15,7 @@ import (
 
 const defaultTimeout = 30 * time.Second
 
-// Message 是交给模型切分的一条消息。这里不用 store.Message，
+// Message 是交给模型切分的一条消息。这里不用 types.Message，
 // 是为了让 llm 包不依赖数据库层。
 type Message struct {
 	Seq     int

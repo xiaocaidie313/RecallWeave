@@ -12,28 +12,28 @@ import (
 
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 type continuationMemoryStore struct {
 	mu              sync.Mutex
-	rows            map[string]store.SubagentSession
+	rows            map[string]types.SubagentSession
 	updateError     error
 	checkpointError error
 }
 
-func cloneSession(row store.SubagentSession) store.SubagentSession {
+func cloneSession(row types.SubagentSession) types.SubagentSession {
 	row.Snapshot = append(json.RawMessage(nil), row.Snapshot...)
 	row.PresetAgent = append(json.RawMessage(nil), row.PresetAgent...)
 	row.Sources = append(json.RawMessage(nil), row.Sources...)
 	return row
 }
 
-func (s *continuationMemoryStore) Create(_ context.Context, row *store.SubagentSession) error {
+func (s *continuationMemoryStore) Create(_ context.Context, row *types.SubagentSession) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.rows == nil {
-		s.rows = make(map[string]store.SubagentSession)
+		s.rows = make(map[string]types.SubagentSession)
 	}
 	if _, ok := s.rows[row.ID]; ok {
 		return errors.New("duplicate session")
@@ -42,16 +42,16 @@ func (s *continuationMemoryStore) Create(_ context.Context, row *store.SubagentS
 	s.rows[row.ID] = cloneSession(*row)
 	return nil
 }
-func (s *continuationMemoryStore) Load(_ context.Context, id string, owner uint) (store.SubagentSession, error) {
+func (s *continuationMemoryStore) Load(_ context.Context, id string, owner uint) (types.SubagentSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row, ok := s.rows[id]
 	if !ok || row.ConversationID != owner {
-		return store.SubagentSession{}, errors.New("not found")
+		return types.SubagentSession{}, errors.New("not found")
 	}
 	return cloneSession(row), nil
 }
-func (s *continuationMemoryStore) Update(_ context.Context, row *store.SubagentSession, revision uint64) error {
+func (s *continuationMemoryStore) Update(_ context.Context, row *types.SubagentSession, revision uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.updateError != nil {
@@ -65,10 +65,10 @@ func (s *continuationMemoryStore) Update(_ context.Context, row *store.SubagentS
 	s.rows[row.ID] = cloneSession(*row)
 	return nil
 }
-func (s *continuationMemoryStore) List(_ context.Context, owner uint, _ int) ([]store.SubagentSession, error) {
+func (s *continuationMemoryStore) List(_ context.Context, owner uint, _ int) ([]types.SubagentSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var rows []store.SubagentSession
+	var rows []types.SubagentSession
 	for _, row := range s.rows {
 		if row.ConversationID == owner {
 			rows = append(rows, cloneSession(row))
@@ -76,7 +76,7 @@ func (s *continuationMemoryStore) List(_ context.Context, owner uint, _ int) ([]
 	}
 	return rows, nil
 }
-func (s *continuationMemoryStore) CheckCheckpoint(context.Context, store.SubagentSession) error {
+func (s *continuationMemoryStore) CheckCheckpoint(context.Context, types.SubagentSession) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.checkpointError
@@ -97,7 +97,7 @@ func (m *transcriptModel) Next(ctx context.Context, conv *llm.Conversation, tool
 	return turn, err
 }
 
-func TestContinuationRestoresRealHistoryAcrossManagersWithoutRepeatingToolsOrUsage(t *testing.T) {
+func TestContinuationRetypessRealHistoryAcrossManagersWithoutRepeatingToolsOrUsage(t *testing.T) {
 	repository := &continuationMemoryStore{}
 	modelCalls, reads := 0, 0
 	model := &transcriptModel{next: func(_ context.Context, conv *llm.Conversation, _ []llm.ToolSchema) (llm.Turn, error) {

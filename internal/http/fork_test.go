@@ -11,7 +11,7 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/chat"
 	"recallweave/internal/memory"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
@@ -62,7 +62,7 @@ func expectHTTPForkSource(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery(`SELECT .* FROM "conversations" WHERE .*id.*ORDER BY .*LIMIT`).WithArgs(7, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "title", "brief", "brief_until_seq"}).AddRow(7, "主线", "不能继承的未来摘要", 100))
 	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE conversation_id = .*source_tag = .*ORDER BY .*LIMIT`).
-		WithArgs(7, store.SourceChat, 1).
+		WithArgs(7, types.SourceChat, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(70, 7, "chat"))
 }
 
@@ -77,7 +77,7 @@ func TestForkCreatesBranchAndReturnsMetadata(t *testing.T) {
 		WithArgs("选型分支", "", 0, 7, 70, 2, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(8))
 	mock.ExpectQuery(`INSERT INTO "sessions"`).
-		WithArgs(8, store.SourceChat, "chat", "", store.ExtractSkipped, "", nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(8, types.SourceChat, "chat", "", types.ExtractSkipped, "", nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(80))
 	mock.ExpectCommit()
 	router := NewRouter(nil, nil, nil, NewConversationHandler(manager))
@@ -159,7 +159,7 @@ func TestChatRouteUsesRenamedService(t *testing.T) {
 
 func TestBranchHistoryKeepsInheritedSourceLocations(t *testing.T) {
 	manager, mock := forkHTTPManager(t)
-	inherited := []store.ContextMessage{{SessionID: 70, Seq: 2, Role: "assistant", Content: "冻结的父会话原文"}}
+	inherited := []types.ContextMessage{{SessionID: 70, Seq: 2, Role: "assistant", Content: "冻结的父会话原文"}}
 	snapshot, err := json.Marshal(inherited)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestBranchHistoryKeepsInheritedSourceLocations(t *testing.T) {
 	mock.ExpectQuery(`SELECT .* FROM "conversations" WHERE .*id.*ORDER BY .*LIMIT`).WithArgs(8, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "parent_conversation_id", "fork_snapshot"}).AddRow(8, 7, snapshot))
 	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE conversation_id = .*source_tag = .*ORDER BY .*LIMIT`).
-		WithArgs(8, store.SourceChat, 1).
+		WithArgs(8, types.SourceChat, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(80, 8, "chat"))
 	mock.ExpectQuery(`SELECT .* FROM "messages" WHERE session_id = .*ORDER BY seq`).WithArgs(80).
 		WillReturnRows(sqlmock.NewRows([]string{"seq", "role", "content"}).AddRow(1, "user", "支线自己的新消息"))
@@ -179,7 +179,7 @@ func TestBranchHistoryKeepsInheritedSourceLocations(t *testing.T) {
 	}
 	var result struct {
 		SessionID uint                   `json:"session_id"`
-		Inherited []store.ContextMessage `json:"inherited_messages"`
+		Inherited []types.ContextMessage `json:"inherited_messages"`
 		Messages  []struct {
 			Seq     int    `json:"seq"`
 			Role    string `json:"role"`

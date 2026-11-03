@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -27,13 +27,13 @@ func LockConversation(tx *gorm.DB, owner uint) error {
 	if tx == nil || owner == 0 {
 		return fmt.Errorf("events: transaction and conversation are required")
 	}
-	var conversation store.Conversation
+	var conversation types.Conversation
 	// 单行锁住  id 为 owner 的 conversation
 	return tx.Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", owner).Take(&conversation).Error
 }
 
 // Append participates in the caller's transaction, whose conversation lock is held.
-func Append(tx *gorm.DB, event *store.ConversationEvent) error {
+func Append(tx *gorm.DB, event *types.ConversationEvent) error {
 	if tx == nil || event == nil || event.ConversationID == 0 || event.ID != 0 || !kindPattern.MatchString(event.Kind) || strings.TrimSpace(event.Key) == "" || len(event.Key) > 191 || !utf8.ValidString(event.Key) || len(event.Data) == 0 || !utf8.Valid(event.Data) || !json.Valid(event.Data) {
 		return fmt.Errorf("events: invalid event")
 	}
@@ -57,7 +57,7 @@ func (s *Store) ConversationExists(ctx context.Context, owner uint) (bool, error
 		return false, err
 	}
 	var count int64
-	err := s.db.WithContext(ctx).Model(&store.Conversation{}).Where("id = ?", owner).Count(&count).Error
+	err := s.db.WithContext(ctx).Model(&types.Conversation{}).Where("id = ?", owner).Count(&count).Error
 	return count != 0, err
 }
 
@@ -69,7 +69,7 @@ func (s *Store) ValidateCursor(ctx context.Context, owner uint, after uint64) er
 		return nil
 	}
 	var count int64
-	if err := s.db.WithContext(ctx).Model(&store.ConversationEvent{}).Where("id = ? AND conversation_id = ?", after, owner).Count(&count).Error; err != nil {
+	if err := s.db.WithContext(ctx).Model(&types.ConversationEvent{}).Where("id = ? AND conversation_id = ?", after, owner).Count(&count).Error; err != nil {
 		return err
 	}
 	if count == 0 {
@@ -78,14 +78,14 @@ func (s *Store) ValidateCursor(ctx context.Context, owner uint, after uint64) er
 	return nil
 }
 
-func (s *Store) List(ctx context.Context, owner uint, after uint64, limit int) ([]store.ConversationEvent, error) {
+func (s *Store) List(ctx context.Context, owner uint, after uint64, limit int) ([]types.ConversationEvent, error) {
 	if err := s.check(ctx, owner); err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	rows := make([]store.ConversationEvent, 0)
+	rows := make([]types.ConversationEvent, 0)
 	err := s.db.WithContext(ctx).Where("conversation_id = ? AND id > ?", owner, after).Order("id ASC").Limit(limit).Find(&rows).Error
 	return rows, err
 }

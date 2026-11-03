@@ -7,20 +7,20 @@ import (
 	"testing"
 
 	"recallweave/internal/retrieval"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-func fusionMemories(ids ...uint) []store.Memory {
-	items := make([]store.Memory, len(ids))
+func fusionMemories(ids ...uint) []types.Memory {
+	items := make([]types.Memory, len(ids))
 	for i, id := range ids {
-		items[i] = store.Memory{ID: id}
+		items[i] = types.Memory{ID: id}
 	}
 	return items
 }
 
-func fusionIDs(items []store.Memory) []uint {
+func fusionIDs(items []types.Memory) []uint {
 	ids := make([]uint, len(items))
 	for i, item := range items {
 		ids[i] = item.ID
@@ -66,8 +66,8 @@ func TestMergeMemoriesRRF(t *testing.T) {
 }
 
 func TestFusionPreservesSourceLocation(t *testing.T) {
-	item := store.Memory{ID: 7, SessionID: 3, SeqStart: 23, SeqEnd: 24, Title: "偏好", Content: "我喜欢马思唯", Status: store.MemoryActive}
-	got := mergeMemories([]store.Memory{item}, []store.Memory{item}, 5)
+	item := types.Memory{ID: 7, SessionID: 3, SeqStart: 23, SeqEnd: 24, Title: "偏好", Content: "我喜欢马思唯", Status: types.MemoryActive}
+	got := mergeMemories([]types.Memory{item}, []types.Memory{item}, 5)
 	if len(got) != 1 || got[0].SessionID != 3 || got[0].SeqStart != 23 || got[0].SeqEnd != 24 || got[0].Content != item.Content || got[0].Status != item.Status {
 		t.Fatalf("source location or content changed: %+v", got)
 	}
@@ -80,7 +80,7 @@ type fusionEmbedder struct {
 
 func (e *fusionEmbedder) Embed(context.Context, string) ([]float64, error) {
 	e.calls++
-	values := make([]float64, store.EmbeddingDim)
+	values := make([]float64, types.EmbeddingDim)
 	values[0] = 1
 	return values, e.err
 }
@@ -95,27 +95,27 @@ func TestFindMemoriesFusesCandidateWindowsWithFilters(t *testing.T) {
 			manager, mock := lifecycleTestManager(t)
 			embedder := &fusionEmbedder{}
 			manager.retriever = retrieval.New(manager.db, embedder)
-			tag := store.MemoryTag("people")
+			tag := types.MemoryTag("people")
 			keywordRows := sqlmock.NewRows([]string{"id"}).AddRow(50).AddRow(49).AddRow(48).AddRow(42)
 			if history {
 				mock.ExpectQuery(`SELECT .* FROM "memories" WHERE .*tag = \$3 ORDER BY id DESC LIMIT \$4`).
 					WithArgs("%说唱%", "%说唱%", tag, 10).WillReturnRows(keywordRows)
 			} else {
 				mock.ExpectQuery(`SELECT .* FROM "memories" WHERE status = \$1.*tag = \$4 ORDER BY id DESC LIMIT \$5`).
-					WithArgs(store.MemoryActive, "%说唱%", "%说唱%", tag, 10).WillReturnRows(keywordRows)
+					WithArgs(types.MemoryActive, "%说唱%", "%说唱%", tag, 10).WillReturnRows(keywordRows)
 			}
 			vectorRows := sqlmock.NewRows([]string{"id", "embedding"})
 			for i, id := range []uint{1, 2, 3, 42} {
-				values := make([]float64, store.EmbeddingDim)
+				values := make([]float64, types.EmbeddingDim)
 				values[0], values[1] = 1, float64(i)/2
-				vectorRows.AddRow(id, store.NewEmbedding(values))
+				vectorRows.AddRow(id, types.NewEmbedding(values))
 			}
 			if history {
 				mock.ExpectQuery(`SELECT .* FROM "memories" WHERE embedding IS NOT NULL AND tag = \$1 ORDER BY embedding <=> \$2 LIMIT \$3`).
 					WithArgs(tag, sqlmock.AnyArg(), 10).WillReturnRows(vectorRows)
 			} else {
 				mock.ExpectQuery(`SELECT .* FROM "memories" WHERE embedding IS NOT NULL AND status = \$1 AND tag = \$2 ORDER BY embedding <=> \$3 LIMIT \$4`).
-					WithArgs(store.MemoryActive, tag, sqlmock.AnyArg(), 10).WillReturnRows(vectorRows)
+					WithArgs(types.MemoryActive, tag, sqlmock.AnyArg(), 10).WillReturnRows(vectorRows)
 			}
 			got, err := manager.FindMemories(context.Background(), "说唱", tag, 2, history)
 			if err != nil || !slices.Equal(fusionIDs(got), []uint{42, 50}) {
@@ -136,7 +136,7 @@ func TestFindMemoriesVectorFailureFallsBackToKeywords(t *testing.T) {
 	embedder := &fusionEmbedder{err: errors.New("embedding unavailable")}
 	manager.retriever = retrieval.New(manager.db, embedder)
 	mock.ExpectQuery(`SELECT .* FROM "memories" WHERE status = \$1.*LIMIT \$4`).
-		WithArgs(store.MemoryActive, "%偏好%", "%偏好%", 10).
+		WithArgs(types.MemoryActive, "%偏好%", "%偏好%", 10).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(9).AddRow(8).AddRow(7))
 	got, err := manager.FindMemories(context.Background(), "偏好", "", 2)
 	if err != nil || !slices.Equal(fusionIDs(got), []uint{9, 8}) || embedder.calls != 1 {
@@ -151,7 +151,7 @@ func TestFindMemoriesBoundsCandidateLimit(t *testing.T) {
 	for _, tc := range []struct{ limit, candidates int }{{0, 25}, {-1, 25}, {1000, 100}} {
 		manager, mock := lifecycleTestManager(t)
 		mock.ExpectQuery(`SELECT .* FROM "memories" WHERE status = \$1.*LIMIT \$4`).
-			WithArgs(store.MemoryActive, "%偏好%", "%偏好%", tc.candidates).
+			WithArgs(types.MemoryActive, "%偏好%", "%偏好%", tc.candidates).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}))
 		if _, err := manager.FindMemories(context.Background(), "偏好", "", tc.limit); err != nil {
 			t.Fatal(err)

@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"recallweave/internal/events"
+	"recallweave/internal/types"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"recallweave/internal/events"
-	"recallweave/internal/store"
 )
 
-func appendTaskFinished(tx *gorm.DB, task store.SubagentTask) error {
+func appendTaskFinished(tx *gorm.DB, task types.SubagentTask) error {
 	data, err := json.Marshal(struct {
 		ConversationID uint   `json:"conversation_id"`
 		TaskID         string `json:"task_id"`
@@ -23,12 +24,12 @@ func appendTaskFinished(tx *gorm.DB, task store.SubagentTask) error {
 	if err != nil {
 		return err
 	}
-	return events.Append(tx, &store.ConversationEvent{ConversationID: task.ConversationID, Kind: "task.finished", Key: "task:" + task.ID + ":finished", Data: data})
+	return events.Append(tx, &types.ConversationEvent{ConversationID: task.ConversationID, Kind: "task.finished", Key: "task:" + task.ID + ":finished", Data: data})
 }
 
 func (s *GormTaskStore) interruptWithEvents(ctx context.Context) error {
 	for {
-		var batch []store.SubagentTask
+		var batch []types.SubagentTask
 		if err := s.db.WithContext(ctx).Where("status IN ?", []string{"queued", "running"}).Order("id").Limit(100).Find(&batch).Error; err != nil {
 			return err
 		}
@@ -40,7 +41,7 @@ func (s *GormTaskStore) interruptWithEvents(ctx context.Context) error {
 				if err := events.LockConversation(tx, item.ConversationID); err != nil {
 					return err
 				}
-				var group *store.TaskGroup
+				var group *types.TaskGroup
 				if item.GroupID != "" {
 					if !s.groupMode {
 						return fmt.Errorf("subagent: task groups are unavailable during recovery")
@@ -51,7 +52,7 @@ func (s *GormTaskStore) interruptWithEvents(ctx context.Context) error {
 						return err
 					}
 				}
-				var current store.SubagentTask
+				var current types.SubagentTask
 				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ?", item.ID, item.ConversationID).Take(&current).Error; err != nil {
 					return err
 				}
@@ -71,7 +72,7 @@ func (s *GormTaskStore) interruptWithEvents(ctx context.Context) error {
 				}
 				current.FinishedAt = &now
 				current.UpdatedAt = now
-				if err := tx.Model(&store.SubagentTask{}).Where("id = ? AND conversation_id = ?", current.ID, current.ConversationID).Select("status", "error", "report_status", "finished_at", "updated_at").Updates(&current).Error; err != nil {
+				if err := tx.Model(&types.SubagentTask{}).Where("id = ? AND conversation_id = ?", current.ID, current.ConversationID).Select("status", "error", "report_status", "finished_at", "updated_at").Updates(&current).Error; err != nil {
 					return err
 				}
 				if s.events {

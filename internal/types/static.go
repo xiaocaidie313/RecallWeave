@@ -1,4 +1,4 @@
-package store
+package types
 
 // ---------- 来源分类 ----------
 

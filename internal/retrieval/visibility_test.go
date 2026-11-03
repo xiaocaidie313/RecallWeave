@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
@@ -15,7 +15,7 @@ import (
 type visibilityEmbedder struct{}
 
 func (visibilityEmbedder) Embed(context.Context, string) ([]float64, error) {
-	values := make([]float64, store.EmbeddingDim)
+	values := make([]float64, types.EmbeddingDim)
 	values[0] = 1
 	return values, nil
 }
@@ -32,7 +32,7 @@ func TestVectorSearchFiltersBeforeLimit(t *testing.T) {
 	}
 	retriever := New(db, visibilityEmbedder{})
 	mock.ExpectQuery(`SELECT .* FROM "memories" WHERE embedding IS NOT NULL AND status = \$1 ORDER BY embedding <=> \$2 LIMIT \$3`).
-		WithArgs(store.MemoryActive, sqlmock.AnyArg(), 5).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		WithArgs(types.MemoryActive, sqlmock.AnyArg(), 5).WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	if _, err := retriever.Search(context.Background(), "方案", "", 5); err != nil {
 		t.Fatal(err)
 	}

@@ -6,10 +6,10 @@ import (
 )
 
 type conversationEntry struct {
-	busy    bool
-	users   int
-	refs    int
-	changed chan struct{}
+	busy    bool          //	当前用户对应的锁是否被占用---业务锁
+	users   int           //	正在等待锁的用户聊天请求数量
+	refs    int           //	正在持有或等待该锁的请求总数
+	changed chan struct{} //	状态变化通知
 }
 
 type conversationGate struct {
@@ -30,11 +30,13 @@ func (g *conversationGate) entry(owner uint) *conversationEntry {
 }
 
 func (g *conversationGate) cleanup(owner uint, entry *conversationEntry) {
+	// 没有人在等待或者使用锁
 	if entry.refs == 0 {
 		delete(g.entries, owner)
 	}
 }
 
+// 使用的锁引用减少， 等待锁的不变
 func (g *conversationGate) unlock(owner uint, entry *conversationEntry) func() {
 	var once sync.Once
 	return func() {
@@ -43,8 +45,8 @@ func (g *conversationGate) unlock(owner uint, entry *conversationEntry) func() {
 			defer g.mu.Unlock()
 			entry.busy = false
 			entry.refs--
-			close(entry.changed)
-			entry.changed = make(chan struct{})
+			close(entry.changed)                //通知其他等待的
+			entry.changed = make(chan struct{}) // 重置通知通道
 			g.cleanup(owner, entry)
 		})
 	}
@@ -53,9 +55,10 @@ func (g *conversationGate) unlock(owner uint, entry *conversationEntry) func() {
 func (g *conversationGate) acquire(ctx context.Context, owner uint) (func(), error) {
 	g.mu.Lock()
 	entry := g.entry(owner)
-	entry.refs++
-	entry.users++
+	entry.refs++  // 先持有锁/等待用锁 有意向用锁
+	entry.users++ // 先排队
 	for {
+		// 外部中断
 		if err := ctx.Err(); err != nil {
 			entry.users--
 			entry.refs--
@@ -63,16 +66,18 @@ func (g *conversationGate) acquire(ctx context.Context, owner uint) (func(), err
 			g.mu.Unlock()
 			return nil, err
 		}
+		// 锁空闲
 		if !entry.busy {
 			entry.users--
-			entry.busy = true
+			entry.busy = true // 设置业务锁占用
 			g.mu.Unlock()
 			return g.unlock(owner, entry), nil
 		}
+		//锁被占用， 等待锁状态变化
 		changed := entry.changed
 		g.mu.Unlock()
 		select {
-		case <-changed:
+		case <-changed: //等待释放
 		case <-ctx.Done():
 		}
 		g.mu.Lock()
@@ -80,7 +85,7 @@ func (g *conversationGate) acquire(ctx context.Context, owner uint) (func(), err
 }
 
 // Reports yield to active or already-waiting user turns in this process.
-func (a *Agent) TryReportLock(owner uint) (func(), bool) {
+func (a *ChatService) TryReportLock(owner uint) (func(), bool) {
 	if a == nil || owner == 0 {
 		return nil, false
 	}

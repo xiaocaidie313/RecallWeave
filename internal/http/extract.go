@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"recallweave/internal/extract"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,7 +30,7 @@ func (h *ExtractHandler) ExtractSession(c *gin.Context) {
 	}
 
 	count, err := h.excuter.ExtractSessionToMemory(c.Request.Context(), uint(sessionID))
-	if errors.Is(err, store.ErrMemoryHistoryProtected) || errors.Is(err, store.ErrBranchMemoryPrivate) {
+	if errors.Is(err, types.ErrMemoryHistoryProtected) || errors.Is(err, types.ErrBranchMemoryPrivate) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}

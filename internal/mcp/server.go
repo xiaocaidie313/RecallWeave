@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -26,7 +26,7 @@ type memoryHit struct {
 	Title       string             `json:"title"`
 	Content     string             `json:"content"`
 	ContentType string             `json:"content_type"`
-	Status      store.MemoryStatus `json:"status"`
+	Status      types.MemoryStatus `json:"status"`
 }
 
 type searchOutput struct {
@@ -51,8 +51,8 @@ type getMessagesOutput struct {
 }
 
 type memoryReader interface {
-	FindMemories(context.Context, string, store.MemoryTag, int, ...bool) ([]store.Memory, error)
-	GetMessages(context.Context, uint, int, int) ([]store.Message, error)
+	FindMemories(context.Context, string, types.MemoryTag, int, ...bool) ([]types.Memory, error)
+	GetMessages(context.Context, uint, int, int) ([]types.Message, error)
 }
 
 type McpToolSet struct {
@@ -87,9 +87,9 @@ func RegisterTools(server *mcp.Server, reader memoryReader) {
 		if input.Limit < 0 || input.Limit > 20 {
 			return nil, searchOutput{}, fmt.Errorf("limit must be between 1 and 20")
 		}
-		var tag store.MemoryTag
+		var tag types.MemoryTag
 		if input.Tag != "" {
-			for _, allowed := range store.MemoryTags {
+			for _, allowed := range types.MemoryTags {
 				if input.Tag == string(allowed) {
 					tag = allowed
 					break
@@ -109,7 +109,7 @@ func RegisterTools(server *mcp.Server, reader memoryReader) {
 				MemoryID: item.ID, SessionID: item.SessionID,
 				SeqStart: item.SeqStart, SeqEnd: item.SeqEnd,
 				Tag: string(item.Tag), Title: item.Title, Content: item.Content,
-				ContentType: string(store.NormalizeContentType(string(item.ContentType))),
+				ContentType: string(types.NormalizeContentType(string(item.ContentType))),
 				Status:      item.Status,
 			})
 		}

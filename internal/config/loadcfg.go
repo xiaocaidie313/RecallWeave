@@ -20,6 +20,8 @@ type Config struct {
 // ExternalMCPConfig enables one remote Streamable HTTP MCP server. Empty URL
 // disables it; Tools is an explicit allowlist of remote tool names.
 type ExternalMCPConfig struct {
+	Name     string   `yaml:"name"`
+	Version  string   `yaml:"version"`
 	URL      string   `yaml:"url"`
 	TokenEnv string   `yaml:"token_env"`
 	Tools    []string `yaml:"tools"`

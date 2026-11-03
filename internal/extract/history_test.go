@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
@@ -16,11 +16,11 @@ import (
 func TestFullReextractionPreservesReplacementHistory(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		status    store.MemoryStatus
+		status    types.MemoryStatus
 		protected bool
 	}{
-		{"inactive memory", store.MemoryInactive, true},
-		{"active memory", store.MemoryActive, false},
+		{"inactive memory", types.MemoryInactive, true},
+		{"active memory", types.MemoryActive, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			conn, mock, err := sqlmock.New()
@@ -42,7 +42,7 @@ func TestFullReextractionPreservesReplacementHistory(t *testing.T) {
 				mock.ExpectCommit()
 			}
 			err = NewExtractExcuter(db, nil, nil).replaceMemories(context.Background(), 10, nil)
-			if tc.protected && !errors.Is(err, store.ErrMemoryHistoryProtected) {
+			if tc.protected && !errors.Is(err, types.ErrMemoryHistoryProtected) {
 				t.Fatalf("history was not protected: %v", err)
 			}
 			if !tc.protected && err != nil {

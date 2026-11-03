@@ -41,19 +41,19 @@ func TestConversationSnapshotPreservesActualSDKToolExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var stored ConversationSnapshot
-	if err := json.Unmarshal(serialized, &stored); err != nil {
+	var typesd ConversationSnapshot
+	if err := json.Unmarshal(serialized, &typesd); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := RestoreConversation("CURRENT_SYSTEM_POLICY", &stored, WithConversationID(17))
+	retypesd, err := RetypesConversation("CURRENT_SYSTEM_POLICY", &typesd, WithConversationID(17))
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored.AddUserMessage("再核对后来是否改了方案")
+	retypesd.AddUserMessage("再核对后来是否改了方案")
 
 	// The next real SDK request must contain the original matched tool calls
 	// and replies. Restoring has no executor and cannot replay these tools.
-	payload, err := json.Marshal(openai.ChatCompletionNewParams{Model: "test-model", Messages: restored.messages})
+	payload, err := json.Marshal(openai.ChatCompletionNewParams{Model: "test-model", Messages: retypesd.messages})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,17 +69,17 @@ func TestConversationSnapshotPreservesActualSDKToolExchange(t *testing.T) {
 	if got := snapshotMessages(t, request.Messages); !reflect.DeepEqual(got, want) {
 		t.Fatalf("SDK request lost original history:\ngot=%s\nwant=%+v", request.Messages, want)
 	}
-	if restored.ID != 17 || strings.Contains(string(payload), "OLD_SYSTEM_POLICY") {
+	if retypesd.ID != 17 || strings.Contains(string(payload), "OLD_SYSTEM_POLICY") {
 		t.Fatal("conversation association or current policy was lost")
 	}
 
 	beforeMutation := string(payload)
-	for i := range stored.Messages {
-		stored.Messages[i] = ' '
+	for i := range typesd.Messages {
+		typesd.Messages[i] = ' '
 	}
-	afterMutation, err := json.Marshal(openai.ChatCompletionNewParams{Model: "test-model", Messages: restored.messages})
+	afterMutation, err := json.Marshal(openai.ChatCompletionNewParams{Model: "test-model", Messages: retypesd.messages})
 	if err != nil || string(afterMutation) != beforeMutation {
-		t.Fatal("restored SDK messages borrow mutable snapshot bytes")
+		t.Fatal("retypesd SDK messages borrow mutable snapshot bytes")
 	}
 }
 
@@ -107,23 +107,23 @@ func TestConversationSnapshotAllowsPendingUserAfterModelFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := RestoreConversation("new policy", snapshot)
+	retypesd, err := RetypesConversation("new policy", snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored.AddUserMessage("按已有信息继续")
-	if _, err := restored.Snapshot(); err != nil {
+	retypesd.AddUserMessage("按已有信息继续")
+	if _, err := retypesd.Snapshot(); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestConversationSnapshotPreservesAssistantRefusalAndName(t *testing.T) {
 	snapshot := &ConversationSnapshot{Version: 1, Messages: json.RawMessage(`[{"role":"system","content":"policy"},{"role":"user","content":"question"},{"role":"assistant","name":"reviewer","refusal":"Cannot perform that operation"}]`)}
-	restored, err := RestoreConversation("new policy", snapshot)
+	retypesd, err := RetypesConversation("new policy", snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	copy, err := restored.Snapshot()
+	copy, err := retypesd.Snapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,18 +161,18 @@ func TestConversationSnapshotRejectsInvalidHistory(t *testing.T) {
 		{"unknown_nested_field", `[{"role":"system","content":"p"},{"role":"assistant","tool_calls":[{"id":"a","type":"function","function":{"name":"read","arguments":"{}","extra":true}}]}]`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := RestoreConversation("new policy", &ConversationSnapshot{Version: 1, Messages: json.RawMessage(test.messages)}); err == nil {
+			if _, err := RetypesConversation("new policy", &ConversationSnapshot{Version: 1, Messages: json.RawMessage(test.messages)}); err == nil {
 				t.Fatal("invalid history accepted")
 			}
 		})
 	}
-	if _, err := RestoreConversation("policy", nil); err == nil {
+	if _, err := RetypesConversation("policy", nil); err == nil {
 		t.Fatal("nil snapshot accepted")
 	}
-	if _, err := RestoreConversation("policy", &ConversationSnapshot{Version: 2, Messages: json.RawMessage(`[{"role":"system","content":"p"}]`)}); err == nil {
+	if _, err := RetypesConversation("policy", &ConversationSnapshot{Version: 2, Messages: json.RawMessage(`[{"role":"system","content":"p"}]`)}); err == nil {
 		t.Fatal("unknown version accepted")
 	}
-	if _, err := RestoreConversation(string([]byte{0xff}), &ConversationSnapshot{Version: 1, Messages: json.RawMessage(`[{"role":"system","content":"p"}]`)}); err == nil {
+	if _, err := RetypesConversation(string([]byte{0xff}), &ConversationSnapshot{Version: 1, Messages: json.RawMessage(`[{"role":"system","content":"p"}]`)}); err == nil {
 		t.Fatal("invalid system UTF-8 accepted")
 	}
 }
@@ -199,11 +199,11 @@ func TestConversationSnapshotEnforcesSizeAndCountLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RestoreConversation(strings.Repeat("y", MaxConversationSnapshotBytes), valid); err == nil {
+	if _, err := RetypesConversation(strings.Repeat("y", MaxConversationSnapshotBytes), valid); err == nil {
 		t.Fatal("replacement policy bypassed snapshot size limit")
 	}
 	invalid := &ConversationSnapshot{Version: 1, Messages: json.RawMessage([]byte{'[', '"', 0xff, '"', ']'})}
-	if _, err := RestoreConversation("policy", invalid); err == nil {
+	if _, err := RetypesConversation("policy", invalid); err == nil {
 		t.Fatal("invalid message UTF-8 accepted")
 	}
 }

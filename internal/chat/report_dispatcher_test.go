@@ -22,7 +22,7 @@ import (
 	"recallweave/internal/events"
 	apphttp "recallweave/internal/http"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 	"recallweave/internal/watch/useage"
 
 	"github.com/gin-gonic/gin"
@@ -30,27 +30,27 @@ import (
 
 type dispatchLedger struct {
 	mu           sync.Mutex
-	rows         map[string]store.SubagentTask
-	messages     map[uint][]store.Message
-	runs         map[string]store.AgentRun
-	events       []store.ConversationEvent
+	rows         map[string]types.SubagentTask
+	messages     map[uint][]types.Message
+	runs         map[string]types.AgentRun
+	events       []types.ConversationEvent
 	deliverError error
 	claimError   error
 }
 
-func dispatchTask(owner uint, id string) store.SubagentTask {
+func dispatchTask(owner uint, id string) types.SubagentTask {
 	child := runtime.RunResult{Content: "VERIFIED_FINDINGS", State: runtime.RunState{RunID: strings.Repeat("c", 32), SubagentID: strings.Repeat("d", 32), ConversationID: owner, AgentName: "researcher", Status: runtime.RunCompleted, Calls: []useage.ModelCallStats{{Usage: useage.TokenUsage{PromptTokens: 100}}}, InheritedSources: []runtime.Source{{Kind: "web", Tool: "mcp_tavily_search", URL: "https://example.test/source"}}}}
 	raw, _ := json.Marshal(child)
-	return store.SubagentTask{ID: id, SubagentID: child.State.SubagentID, RunID: child.State.RunID, ConversationID: owner, Task: "research", AgentName: "researcher", DeliveryMode: "synthesize", Status: "completed", Result: raw, ReportStatus: "pending"}
+	return types.SubagentTask{ID: id, SubagentID: child.State.SubagentID, RunID: child.State.RunID, ConversationID: owner, Task: "research", AgentName: "researcher", DeliveryMode: "synthesize", Status: "completed", Result: raw, ReportStatus: "pending"}
 }
 
-func (l *dispatchLedger) Pending(ctx context.Context, limit int) ([]store.SubagentTask, error) {
+func (l *dispatchLedger) Pending(ctx context.Context, limit int) ([]types.SubagentTask, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var rows []store.SubagentTask
+	var rows []types.SubagentTask
 	for _, row := range l.rows {
 		if row.ReportStatus == "pending" {
 			rows = append(rows, row)
@@ -62,13 +62,13 @@ func (l *dispatchLedger) Pending(ctx context.Context, limit int) ([]store.Subage
 	}
 	return rows, nil
 }
-func (l *dispatchLedger) PendingDelivery(ctx context.Context, limit int, synthesize bool, excluded []uint) ([]store.SubagentTask, error) {
+func (l *dispatchLedger) PendingDelivery(ctx context.Context, limit int, synthesize bool, excluded []uint) ([]types.SubagentTask, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var rows []store.SubagentTask
+	var rows []types.SubagentTask
 	for _, row := range l.rows {
 		if row.ReportStatus != "pending" || (row.DeliveryMode == "synthesize") != synthesize {
 			continue
@@ -90,15 +90,15 @@ func (l *dispatchLedger) PendingDelivery(ctx context.Context, limit int, synthes
 	}
 	return rows, nil
 }
-func (l *dispatchLedger) Claim(ctx context.Context, id string, owner uint, claim string) (store.SubagentTask, bool, error) {
+func (l *dispatchLedger) Claim(ctx context.Context, id string, owner uint, claim string) (types.SubagentTask, bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return store.SubagentTask{}, false, err
+		return types.SubagentTask{}, false, err
 	}
 	row, ok := l.rows[id]
 	if !ok || row.ConversationID != owner {
-		return store.SubagentTask{}, false, errors.New("not found")
+		return types.SubagentTask{}, false, errors.New("not found")
 	}
 	if row.ReportStatus != "pending" {
 		return row, false, nil
@@ -106,13 +106,13 @@ func (l *dispatchLedger) Claim(ctx context.Context, id string, owner uint, claim
 	row.ReportStatus, row.ReportClaim = "processing", claim
 	l.rows[id] = row
 	if l.claimError != nil {
-		return store.SubagentTask{}, false, l.claimError
+		return types.SubagentTask{}, false, l.claimError
 	}
 	return row, true, nil
 }
 func (l *dispatchLedger) appendEvent(owner uint, kind string, data any) {
 	raw, _ := json.Marshal(data)
-	l.events = append(l.events, store.ConversationEvent{ID: uint64(len(l.events) + 1), ConversationID: owner, Kind: kind, Data: raw})
+	l.events = append(l.events, types.ConversationEvent{ID: uint64(len(l.events) + 1), ConversationID: owner, Kind: kind, Data: raw})
 }
 func (l *dispatchLedger) Deliver(ctx context.Context, id string, owner uint, claim string, report chat.GeneratedReport) error {
 	l.mu.Lock()
@@ -134,10 +134,10 @@ func (l *dispatchLedger) Deliver(ctx context.Context, id string, owner uint, cla
 		return errors.New("claim mismatch")
 	}
 	if l.messages == nil {
-		l.messages = make(map[uint][]store.Message)
+		l.messages = make(map[uint][]types.Message)
 	}
 	if l.runs == nil {
-		l.runs = make(map[string]store.AgentRun)
+		l.runs = make(map[string]types.AgentRun)
 	}
 	message := report.Message
 	message.ID = uint(len(l.events) + 100)
@@ -155,7 +155,7 @@ func (l *dispatchLedger) Deliver(ctx context.Context, id string, owner uint, cla
 	l.appendEvent(owner, "message.created", map[string]any{"task_id": id, "group_id": row.GroupID, "task_run_id": row.RunID, "sources": report.Sources, "message": message})
 	return nil
 }
-func (l *dispatchLedger) Fail(ctx context.Context, id string, owner uint, claim, reason string, run *store.AgentRun) error {
+func (l *dispatchLedger) Fail(ctx context.Context, id string, owner uint, claim, reason string, run *types.AgentRun) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -175,7 +175,7 @@ func (l *dispatchLedger) Fail(ctx context.Context, id string, owner uint, claim,
 	l.rows[id] = row
 	if run != nil {
 		if l.runs == nil {
-			l.runs = make(map[string]store.AgentRun)
+			l.runs = make(map[string]types.AgentRun)
 		}
 		l.runs[run.RunID] = *run
 	}
@@ -217,13 +217,13 @@ func (l *dispatchLedger) ValidateCursor(_ context.Context, owner uint, after uin
 	}
 	return events.ErrInvalidCursor
 }
-func (l *dispatchLedger) List(ctx context.Context, owner uint, after uint64, limit int) ([]store.ConversationEvent, error) {
+func (l *dispatchLedger) List(ctx context.Context, owner uint, after uint64, limit int) ([]types.ConversationEvent, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var rows []store.ConversationEvent
+	var rows []types.ConversationEvent
 	for _, event := range l.events {
 		if event.ConversationID == owner && event.ID > after {
 			rows = append(rows, event)
@@ -265,7 +265,7 @@ func startDispatcher(t *testing.T, service *chat.Agent, ledger *dispatchLedger) 
 	})
 	return d
 }
-func waitReport(t *testing.T, ledger *dispatchLedger, id, status string) store.SubagentTask {
+func waitReport(t *testing.T, ledger *dispatchLedger, id, status string) types.SubagentTask {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -278,7 +278,7 @@ func waitReport(t *testing.T, ledger *dispatchLedger, id, status string) store.S
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("report %s did not become %s", id, status)
-	return store.SubagentTask{}
+	return types.SubagentTask{}
 }
 
 func TestReportDispatcherWaitsForUserAndDoesNotBlockOtherConversation(t *testing.T) {
@@ -306,7 +306,7 @@ func TestReportDispatcherWaitsForUserAndDoesNotBlockOtherConversation(t *testing
 	}}
 	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	id1, id2 := strings.Repeat("a", 32), strings.Repeat("b", 32)
-	ledger := &dispatchLedger{rows: map[string]store.SubagentTask{id1: dispatchTask(1, id1), id2: dispatchTask(2, id2)}}
+	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id1: dispatchTask(1, id1), id2: dispatchTask(2, id2)}}
 	userDone := make(chan error, 1)
 	go func() { _, err := service.Chat(context.Background(), "BLOCK_USER", 1); userDone <- err }()
 	select {
@@ -344,7 +344,7 @@ func TestReportDispatcherDoesNotRetryModelAfterDeliveryFailureOrRestart(t *testi
 	}}
 	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	id := strings.Repeat("a", 32)
-	ledger := &dispatchLedger{rows: map[string]store.SubagentTask{id: dispatchTask(1, id)}, deliverError: errors.New("disk unavailable")}
+	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id: dispatchTask(1, id)}, deliverError: errors.New("disk unavailable")}
 	d := startDispatcher(t, service, ledger)
 	waitReport(t, ledger, id, "failed")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -375,7 +375,7 @@ func TestReportDispatcherAndSSEDeliverOnceAcrossTwoTabsAndReplay(t *testing.T) {
 	}}
 	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	id := strings.Repeat("a", 32)
-	ledger := &dispatchLedger{rows: map[string]store.SubagentTask{id: dispatchTask(1, id)}}
+	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id: dispatchTask(1, id)}}
 	ledger.mu.Lock()
 	ledger.appendEvent(1, "task.finished", map[string]string{"task_id": id})
 	ledger.mu.Unlock()
@@ -457,7 +457,7 @@ func TestReportDispatcherShutdownRecordsInterruptedGenerationWithoutRetry(t *tes
 	}}
 	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	id := strings.Repeat("a", 32)
-	ledger := &dispatchLedger{rows: map[string]store.SubagentTask{id: dispatchTask(1, id)}}
+	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id: dispatchTask(1, id)}}
 	d := startDispatcher(t, service, ledger)
 	select {
 	case <-entered:
@@ -490,7 +490,7 @@ func TestReportDispatcherResolvesAmbiguousClaimWithoutCallingModel(t *testing.T)
 	}}
 	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	id := strings.Repeat("a", 32)
-	ledger := &dispatchLedger{rows: map[string]store.SubagentTask{id: dispatchTask(1, id)}, claimError: errors.New("commit acknowledgement lost")}
+	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id: dispatchTask(1, id)}, claimError: errors.New("commit acknowledgement lost")}
 	startDispatcher(t, service, ledger)
 	row := waitReport(t, ledger, id, "failed")
 	if calls.Load() != 0 || !strings.Contains(row.ReportError, "领取回报") {

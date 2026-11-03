@@ -15,7 +15,7 @@ import (
 	"recallweave/internal/chat"
 	apphttp "recallweave/internal/http"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -35,7 +35,7 @@ func TestDefaultDirectDeliveryPublishesOriginalResultAndSourcesOverSSE(t *testin
 	id := strings.Repeat("a", 32)
 	task := dispatchTask(1, id)
 	task.DeliveryMode = ""
-	ledger := &dispatchLedger{rows: map[string]store.SubagentTask{id: task}}
+	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id: task}}
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	apphttp.MountConversationEvents(router, apphttp.NewEventsHandler(ledger))

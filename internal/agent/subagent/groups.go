@@ -11,7 +11,7 @@ import (
 
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/delivery"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 var _ runtime.GroupDelegator = (*Manager)(nil)
@@ -20,7 +20,7 @@ func (m *Manager) GroupsEnabled() bool {
 	if !m.BackgroundEnabled() {
 		return false
 	}
-	repository, ok := m.backgroundRunner.store.(GroupTaskStore)
+	repository, ok := m.backgroundRunner.types.(GroupTaskStore)
 	return ok && repository.GroupsEnabled()
 }
 
@@ -28,7 +28,7 @@ func (m *Manager) groupRepository() (GroupTaskStore, error) {
 	if !m.GroupsEnabled() {
 		return nil, ErrBackgroundUnavailable
 	}
-	return m.backgroundRunner.store.(GroupTaskStore), nil
+	return m.backgroundRunner.types.(GroupTaskStore), nil
 }
 
 func (r *backgroundRunner) reserveGroup(ctx context.Context, count int) error {
@@ -115,8 +115,8 @@ func (m *Manager) SubmitGroup(ctx context.Context, parent runtime.DelegationPare
 		return runtime.TaskGroup{}, err
 	}
 	now := time.Now()
-	group := store.TaskGroup{ID: groupID, ConversationID: parent.ConversationID, ParentRunID: parent.RunID, Goal: strings.TrimSpace(request.Goal), ExpectedOutput: request.ExpectedOutput, DeliveryMode: mode, Status: "running", CreatedAt: now, UpdatedAt: now}
-	rows := make([]store.SubagentTask, 0, 2)
+	group := types.TaskGroup{ID: groupID, ConversationID: parent.ConversationID, ParentRunID: parent.RunID, Goal: strings.TrimSpace(request.Goal), ExpectedOutput: request.ExpectedOutput, DeliveryMode: mode, Status: "running", CreatedAt: now, UpdatedAt: now}
+	rows := make([]types.SubagentTask, 0, 2)
 	ids := make([]string, 0, 2)
 	for i, task := range request.Tasks {
 		id, err := newSubagentID()
@@ -137,7 +137,7 @@ func (m *Manager) SubmitGroup(ctx context.Context, parent runtime.DelegationPare
 		if mode == delivery.Direct {
 			memberReportStatus = ""
 		}
-		row := store.SubagentTask{ID: taskID, GroupID: groupID, SubagentID: id, ConversationID: parent.ConversationID, ParentRunID: parent.RunID, AgentName: presets[i].Name, Task: strings.TrimSpace(task.Task), DeliveryMode: delivery.Direct, Status: "queued", ReportStatus: memberReportStatus, CreatedAt: now, UpdatedAt: now}
+		row := types.SubagentTask{ID: taskID, GroupID: groupID, SubagentID: id, ConversationID: parent.ConversationID, ParentRunID: parent.RunID, AgentName: presets[i].Name, Task: strings.TrimSpace(task.Task), DeliveryMode: delivery.Direct, Status: "queued", ReportStatus: memberReportStatus, CreatedAt: now, UpdatedAt: now}
 		job := &backgroundJob{record: row, parent: runtime.DelegationParent{RunID: parent.RunID, ConversationID: parent.ConversationID}, child: m.newChild(parent.Agent, presets[i]), presetAgent: presets[i], input: inputs[i], ctx: jobCtx, cancel: cancel, release: func() { once.Do(release) }}
 		jobs = append(jobs, job)
 		rows = append(rows, row)
@@ -159,7 +159,7 @@ func (m *Manager) SubmitGroup(ctx context.Context, parent runtime.DelegationPare
 	return m.groupView(group, rows)
 }
 
-func (m *Manager) groupView(group store.TaskGroup, members []store.SubagentTask) (runtime.TaskGroup, error) {
+func (m *Manager) groupView(group types.TaskGroup, members []types.SubagentTask) (runtime.TaskGroup, error) {
 	mode, err := delivery.ResolveStoredGroupMode(group.DeliveryMode)
 	if err != nil {
 		return runtime.TaskGroup{}, err
@@ -167,7 +167,7 @@ func (m *Manager) groupView(group store.TaskGroup, members []store.SubagentTask)
 	view := runtime.TaskGroup{GroupID: group.ID, ConversationID: group.ConversationID, ParentRunID: group.ParentRunID, Goal: group.Goal, ExpectedOutput: group.ExpectedOutput, Status: group.Status, CancelRequested: group.CancelRequested, ReportStatus: group.ReportStatus, ReportRunID: group.ReportRunID, ReportMessageID: group.ReportMessageID, ReportError: group.ReportError, ReportedAt: group.ReportedAt, CreatedAt: group.CreatedAt, UpdatedAt: group.UpdatedAt, FinishedAt: group.FinishedAt}
 	view.DeliveryMode = mode
 	if json.Unmarshal(group.TaskIDs, &view.TaskIDs) != nil || len(view.TaskIDs) != 2 || view.TaskIDs[0] == view.TaskIDs[1] {
-		return view, fmt.Errorf("subagent: invalid stored group membership")
+		return view, fmt.Errorf("subagent: invalid typesd group membership")
 	}
 	if members == nil {
 		return view, nil
@@ -175,10 +175,10 @@ func (m *Manager) groupView(group store.TaskGroup, members []store.SubagentTask)
 	if len(members) != 2 {
 		return view, fmt.Errorf("subagent: group membership is incomplete")
 	}
-	byID := make(map[string]store.SubagentTask, 2)
+	byID := make(map[string]types.SubagentTask, 2)
 	for _, row := range members {
 		if row.GroupID != group.ID || row.ConversationID != group.ConversationID || row.ParentRunID != group.ParentRunID {
-			return view, fmt.Errorf("subagent: stored group ownership mismatch")
+			return view, fmt.Errorf("subagent: typesd group ownership mismatch")
 		}
 		if _, exists := byID[row.ID]; exists {
 			return view, fmt.Errorf("subagent: duplicate group member")
@@ -215,7 +215,7 @@ func (m *Manager) GetGroup(ctx context.Context, parent runtime.DelegationParent,
 		return runtime.TaskGroup{}, err
 	}
 	if group.ID != id || group.ConversationID != parent.ConversationID {
-		return runtime.TaskGroup{}, fmt.Errorf("subagent: stored group ownership mismatch")
+		return runtime.TaskGroup{}, fmt.Errorf("subagent: typesd group ownership mismatch")
 	}
 	return m.groupView(group, rows)
 }
@@ -232,7 +232,7 @@ func (m *Manager) ListGroups(ctx context.Context, owner uint) ([]runtime.TaskGro
 	items := make([]runtime.TaskGroup, 0, len(rows))
 	for _, row := range rows {
 		if row.ConversationID != owner {
-			return nil, fmt.Errorf("subagent: stored group ownership mismatch")
+			return nil, fmt.Errorf("subagent: typesd group ownership mismatch")
 		}
 		view, err := m.groupView(row, nil)
 		if err != nil {
@@ -253,14 +253,14 @@ func (m *Manager) CancelGroup(ctx context.Context, parent runtime.DelegationPare
 		return runtime.TaskGroup{}, err
 	}
 	if group.ID != id || group.ConversationID != parent.ConversationID {
-		return runtime.TaskGroup{}, fmt.Errorf("subagent: stored group ownership mismatch")
+		return runtime.TaskGroup{}, fmt.Errorf("subagent: typesd group ownership mismatch")
 	}
 	r := m.backgroundRunner
 	r.mu.Lock()
 	for _, row := range rows {
 		if row.GroupID != id || row.ConversationID != parent.ConversationID {
 			r.mu.Unlock()
-			return runtime.TaskGroup{}, fmt.Errorf("subagent: stored member ownership mismatch")
+			return runtime.TaskGroup{}, fmt.Errorf("subagent: typesd member ownership mismatch")
 		}
 		if row.CancelRequested {
 			if job := r.jobs[row.ID]; job != nil && job.record.ConversationID == parent.ConversationID {

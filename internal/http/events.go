@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 
 	"recallweave/internal/events"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -22,7 +22,7 @@ import (
 type ConversationEventReader interface {
 	ConversationExists(context.Context, uint) (bool, error)
 	ValidateCursor(context.Context, uint, uint64) error
-	List(context.Context, uint, uint64, int) ([]store.ConversationEvent, error)
+	List(context.Context, uint, uint64, int) ([]types.ConversationEvent, error)
 }
 
 type EventsHandler struct {
@@ -104,7 +104,7 @@ func (h *EventsHandler) Stream(c *gin.Context) {
 		}
 		return
 	}
-	load := func() ([]store.ConversationEvent, error) {
+	load := func() ([]types.ConversationEvent, error) {
 		batch, err := h.reader.List(ctx, owner, after, 100)
 		if err != nil {
 			return nil, err
@@ -112,7 +112,7 @@ func (h *EventsHandler) Stream(c *gin.Context) {
 		previous := after
 		for _, event := range batch {
 			if event.ConversationID != owner || event.ID <= previous || !eventKindPattern.MatchString(event.Kind) || !utf8.Valid(event.Data) || !json.Valid(event.Data) {
-				return nil, fmt.Errorf("invalid stored event")
+				return nil, fmt.Errorf("invalid typesd event")
 			}
 			previous = event.ID
 		}

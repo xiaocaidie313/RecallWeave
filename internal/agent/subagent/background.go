@@ -14,7 +14,7 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/delivery"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 	"recallweave/internal/watch/useage"
 )
 
@@ -29,25 +29,25 @@ type BackgroundConfig struct {
 type backgroundRunner struct {
 	ctx      context.Context // 上下文
 	cancel   context.CancelFunc
-	store    TaskStore           // 任务存储
+	types    TaskStore           // 任务存储
 	queue    chan *backgroundJob // 队列
 	slots    chan struct{}       // 占位符
 	mu       sync.Mutex
 	closing  bool
 	jobs     map[string]*backgroundJob     // 工人实体正在执行的任务
-	failures map[string]store.SubagentTask // 失败任务
+	failures map[string]types.SubagentTask // 失败任务
 	pending  sync.WaitGroup                // 排队情况
 	workers  sync.WaitGroup                // 工人
 	done     chan struct{}
 }
 
 type backgroundJob struct {
-	record      store.SubagentTask       // 子agent 任务记录
+	record      types.SubagentTask       // 子agent 任务记录
 	parent      runtime.DelegationParent // 父亲
 	child       *agent.Agent             // 子agent
 	presetAgent PresetAgent              // 预设agent
 	input       string                   // 输入
-	previous    *store.SubagentSession   // 前一个任务
+	previous    *types.SubagentSession   // 前一个任务
 	ctx         context.Context
 	cancel      context.CancelFunc // 取消
 	release     func()             // 释放
@@ -83,10 +83,10 @@ func (m *Manager) StartBackground(ctx context.Context, repository TaskStore, con
 	runnerCtx, cancel := context.WithCancel(ctx)
 	// 总容量
 	capacity := config.Workers + config.QueueCapacity
-	r := &backgroundRunner{ctx: runnerCtx, cancel: cancel, store: repository,
+	r := &backgroundRunner{ctx: runnerCtx, cancel: cancel, types: repository,
 		queue: make(chan *backgroundJob, capacity),
 		slots: make(chan struct{}, capacity), // 占位符容量 和queue 容量一样
-		jobs:  make(map[string]*backgroundJob), failures: make(map[string]store.SubagentTask), done: make(chan struct{})}
+		jobs:  make(map[string]*backgroundJob), failures: make(map[string]types.SubagentTask), done: make(chan struct{})}
 	m.backgroundRunner = r
 	for i := 0; i < config.Workers; i++ {
 		r.workers.Add(1)
@@ -212,7 +212,7 @@ func (m *Manager) abortReservation() {
 	m.backgroundRunner.pending.Done()
 }
 
-func (m *Manager) enqueue(ctx context.Context, parent runtime.DelegationParent, input, task string, PresetAgentConfig PresetAgent, mode, id string, previous *store.SubagentSession, release func()) (runtime.BackgroundTask, error) {
+func (m *Manager) enqueue(ctx context.Context, parent runtime.DelegationParent, input, task string, PresetAgentConfig PresetAgent, mode, id string, previous *types.SubagentSession, release func()) (runtime.BackgroundTask, error) {
 	r := m.backgroundRunner
 	accepted := false
 	defer func() {
@@ -228,7 +228,7 @@ func (m *Manager) enqueue(ctx context.Context, parent runtime.DelegationParent, 
 		return runtime.BackgroundTask{}, err
 	}
 	now := time.Now()
-	record := store.SubagentTask{ID: taskID, SubagentID: id, ParentRunID: parent.RunID,
+	record := types.SubagentTask{ID: taskID, SubagentID: id, ParentRunID: parent.RunID,
 		ConversationID: parent.ConversationID, AgentName: PresetAgentConfig.Name, Task: task, DeliveryMode: mode, Status: "queued", CreatedAt: now, UpdatedAt: now}
 	if previous != nil {
 		record.PreviousRunID = previous.LatestRunID
@@ -236,7 +236,7 @@ func (m *Manager) enqueue(ctx context.Context, parent runtime.DelegationParent, 
 	// Freeze the scoped tools before the parent Run returns. The child never
 	// receives the parent's mutable RunState, history, or preloaded memories.
 	child := m.newChild(parent.Agent, PresetAgentConfig)
-	if err := r.store.Create(ctx, &record); err != nil {
+	if err := r.types.Create(ctx, &record); err != nil {
 		return runtime.BackgroundTask{}, err
 	}
 	// 继承runner的 ctx
@@ -302,10 +302,10 @@ func (m *Manager) runBackgroundJob(r *backgroundRunner, job *backgroundJob) {
 	}()
 	// 单独写库
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	started, err := r.store.Start(ctx, job.record.ID, job.record.ConversationID)
+	started, err := r.types.Start(ctx, job.record.ID, job.record.ConversationID)
 	cancel()
 	if err != nil {
-		var row store.SubagentTask
+		var row types.SubagentTask
 		row = job.record
 		row.Status, row.Error = "failed", "could not start task: "+err.Error()
 		m.finishBackground(r, row, runtime.RunResult{})
@@ -356,8 +356,8 @@ func clipError(value string) string {
 }
 
 // 完成整个后台任务--收尾
-func (m *Manager) finishBackground(r *backgroundRunner, row store.SubagentTask, result runtime.RunResult) {
-	var run *store.AgentRun
+func (m *Manager) finishBackground(r *backgroundRunner, row types.SubagentTask, result runtime.RunResult) {
+	var run *types.AgentRun
 	if result.State.RunID != "" {
 		var err error
 		row.Result, err = json.Marshal(result)
@@ -367,7 +367,7 @@ func (m *Manager) finishBackground(r *backgroundRunner, row store.SubagentTask, 
 			state, stateErr := json.Marshal(result.State)
 			if stateErr == nil {
 				total := useage.Sum(result.State.AllCalls())
-				run = &store.AgentRun{RunID: result.State.RunID, ParentRunID: result.State.ParentRunID,
+				run = &types.AgentRun{RunID: result.State.RunID, ParentRunID: result.State.ParentRunID,
 					SubagentID: result.State.SubagentID, PreviousRunID: result.State.PreviousRunID, ConversationID: result.State.ConversationID,
 					Status: string(result.State.Status), Input: result.State.Input, Content: result.Content, State: state,
 					PromptTokens: total.Usage.PromptTokens, CompletionTokens: total.Usage.CompletionTokens,
@@ -378,7 +378,7 @@ func (m *Manager) finishBackground(r *backgroundRunner, row store.SubagentTask, 
 	now := time.Now()
 	row.FinishedAt, row.UpdatedAt = &now, now
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	err := r.store.Finish(ctx, &row, run)
+	err := r.types.Finish(ctx, &row, run)
 	cancel()
 	if err == nil || errors.Is(err, ErrTaskConflict) {
 		return
@@ -400,7 +400,7 @@ func (m *Manager) finishBackground(r *backgroundRunner, row store.SubagentTask, 
 }
 
 // 将 委派任务格式 转化成 后台任务视图
-func (m *Manager) taskView(row store.SubagentTask) (runtime.BackgroundTask, error) {
+func (m *Manager) taskView(row types.SubagentTask) (runtime.BackgroundTask, error) {
 	mode, err := delivery.NormalizeTaskMode(row.DeliveryMode)
 	if err != nil {
 		return runtime.BackgroundTask{}, err
@@ -416,7 +416,7 @@ func (m *Manager) taskView(row store.SubagentTask) (runtime.BackgroundTask, erro
 	if len(row.Result) != 0 && string(row.Result) != "null" {
 		var result runtime.RunResult
 		if err := json.Unmarshal(row.Result, &result); err != nil {
-			return view, fmt.Errorf("subagent: invalid stored task result")
+			return view, fmt.Errorf("subagent: invalid typesd task result")
 		}
 		var runErr error
 		if row.Error != "" {
@@ -438,12 +438,12 @@ func (m *Manager) GetTask(ctx context.Context, parent runtime.DelegationParent, 
 	if !m.BackgroundEnabled() {
 		return runtime.BackgroundTask{}, ErrBackgroundUnavailable
 	}
-	row, err := m.backgroundRunner.store.Load(ctx, taskID, parent.ConversationID)
+	row, err := m.backgroundRunner.types.Load(ctx, taskID, parent.ConversationID)
 	if err != nil {
 		return runtime.BackgroundTask{}, err
 	}
 	if row.ID != taskID || row.ConversationID != parent.ConversationID {
-		return runtime.BackgroundTask{}, fmt.Errorf("subagent: stored task ownership mismatch")
+		return runtime.BackgroundTask{}, fmt.Errorf("subagent: typesd task ownership mismatch")
 	}
 	m.backgroundRunner.mu.Lock()
 	if failed, ok := m.backgroundRunner.failures[taskID]; ok && failed.ConversationID == parent.ConversationID {
@@ -458,14 +458,14 @@ func (m *Manager) ListTasks(ctx context.Context, conversationID uint) ([]runtime
 	if !m.BackgroundEnabled() {
 		return nil, ErrBackgroundUnavailable
 	}
-	rows, err := m.backgroundRunner.store.List(ctx, conversationID, 20)
+	rows, err := m.backgroundRunner.types.List(ctx, conversationID, 20)
 	if err != nil {
 		return nil, err
 	}
 	items := make([]runtime.BackgroundTask, 0, len(rows))
 	for _, row := range rows {
 		if row.ConversationID != conversationID {
-			return nil, fmt.Errorf("subagent: stored task ownership mismatch")
+			return nil, fmt.Errorf("subagent: typesd task ownership mismatch")
 		}
 		m.backgroundRunner.mu.Lock()
 		if failed, ok := m.backgroundRunner.failures[row.ID]; ok {
@@ -485,12 +485,12 @@ func (m *Manager) CancelTask(ctx context.Context, parent runtime.DelegationParen
 	if !m.BackgroundEnabled() {
 		return runtime.BackgroundTask{}, ErrBackgroundUnavailable
 	}
-	row, err := m.backgroundRunner.store.RequestCancel(ctx, taskID, parent.ConversationID)
+	row, err := m.backgroundRunner.types.RequestCancel(ctx, taskID, parent.ConversationID)
 	if err != nil {
 		return runtime.BackgroundTask{}, err
 	}
 	if row.ID != taskID || row.ConversationID != parent.ConversationID {
-		return runtime.BackgroundTask{}, fmt.Errorf("subagent: stored task ownership mismatch")
+		return runtime.BackgroundTask{}, fmt.Errorf("subagent: typesd task ownership mismatch")
 	}
 	if row.CancelRequested {
 		m.backgroundRunner.mu.Lock()

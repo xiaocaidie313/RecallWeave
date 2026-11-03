@@ -8,7 +8,7 @@ import (
 	"math"
 	"strings"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/gorm"
 )
@@ -19,17 +19,17 @@ var ErrCheckpointUnavailable = errors.New("subagent: newer work could not save i
 // SessionStore persists one child conversation without granting access to
 // another parent conversation's work. Update uses the loaded revision as CAS.
 type SubagentSessionStore interface {
-	Create(context.Context, *store.SubagentSession) error
-	Load(context.Context, string, uint) (store.SubagentSession, error)
-	Update(context.Context, *store.SubagentSession, uint64) error
-	List(context.Context, uint, int) ([]store.SubagentSession, error)
+	Create(context.Context, *types.SubagentSession) error
+	Load(context.Context, string, uint) (types.SubagentSession, error)
+	Update(context.Context, *types.SubagentSession, uint64) error
+	List(context.Context, uint, int) ([]types.SubagentSession, error)
 }
 
 // CheckpointVerifier is optional for repositories that can inspect durable Run
 // records. It prevents a restart from silently restoring a stale checkpoint
 // after a newer execution failed to persist its context.
 type CheckpointVerifier interface {
-	CheckCheckpoint(context.Context, store.SubagentSession) error
+	CheckCheckpoint(context.Context, types.SubagentSession) error
 }
 
 type GormSubagentSessionStore struct {
@@ -65,16 +65,16 @@ func checkSessionIdentity(id string, conversationID uint) error {
 }
 
 // 单纯检查 json 是否合法
-func checkSessionJSON(session *store.SubagentSession) error {
+func checkSessionJSON(session *types.SubagentSession) error {
 	for _, value := range []json.RawMessage{session.Snapshot, session.PresetAgent, session.Sources} {
 		if len(value) > 0 && !json.Valid(value) {
-			return fmt.Errorf("subagent: stored context must be valid JSON")
+			return fmt.Errorf("subagent: typesd context must be valid JSON")
 		}
 	}
 	return nil
 }
 
-func (s *GormSubagentSessionStore) Create(ctx context.Context, session *store.SubagentSession) error {
+func (s *GormSubagentSessionStore) Create(ctx context.Context, session *types.SubagentSession) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
@@ -100,8 +100,8 @@ func (s *GormSubagentSessionStore) Create(ctx context.Context, session *store.Su
 	return nil
 }
 
-func (s *GormSubagentSessionStore) Load(ctx context.Context, id string, conversationID uint) (store.SubagentSession, error) {
-	var session store.SubagentSession
+func (s *GormSubagentSessionStore) Load(ctx context.Context, id string, conversationID uint) (types.SubagentSession, error) {
+	var session types.SubagentSession
 	if err := s.check(ctx); err != nil {
 		return session, err
 	}
@@ -115,7 +115,7 @@ func (s *GormSubagentSessionStore) Load(ctx context.Context, id string, conversa
 	return session, nil
 }
 
-func (s *GormSubagentSessionStore) Update(ctx context.Context, session *store.SubagentSession, expectedRevision uint64) error {
+func (s *GormSubagentSessionStore) Update(ctx context.Context, session *types.SubagentSession, expectedRevision uint64) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func (s *GormSubagentSessionStore) Update(ctx context.Context, session *store.Su
 	// 跟新一次 在原来的id 和 conversation_id 和 版本号 都相同的情况下  改版本号  expectedRevision 是旧版本
 	record.Revision = expectedRevision + 1
 	record.UpdatedAt = s.db.NowFunc()
-	result := s.db.WithContext(ctx).Model(&store.SubagentSession{}).
+	result := s.db.WithContext(ctx).Model(&types.SubagentSession{}).
 		Where("id = ? AND conversation_id = ? AND revision = ?", record.ID, record.ConversationID, expectedRevision).
 		Select("agent_name", "task", "latest_run_id", "status", "snapshot", "PresetAgent", "sources", "revision", "updated_at").
 		Updates(&record)
@@ -152,7 +152,7 @@ func (s *GormSubagentSessionStore) Update(ctx context.Context, session *store.Su
 }
 
 // 同一对话下 列出所有子agent session
-func (s *GormSubagentSessionStore) List(ctx context.Context, conversationID uint, limit int) ([]store.SubagentSession, error) {
+func (s *GormSubagentSessionStore) List(ctx context.Context, conversationID uint, limit int) ([]types.SubagentSession, error) {
 	if err := s.check(ctx); err != nil {
 		return nil, err
 	}
@@ -165,13 +165,13 @@ func (s *GormSubagentSessionStore) List(ctx context.Context, conversationID uint
 	if limit > 10 {
 		limit = 10
 	}
-	sessions := make([]store.SubagentSession, 0)
+	sessions := make([]types.SubagentSession, 0)
 
 	err := s.db.WithContext(ctx).Where("conversation_id = ?", conversationID).Order("updated_at DESC").Order("id DESC").Limit(limit).Find(&sessions).Error
 	return sessions, err
 }
 
-func (s *GormSubagentSessionStore) CheckCheckpoint(ctx context.Context, session store.SubagentSession) error {
+func (s *GormSubagentSessionStore) CheckCheckpoint(ctx context.Context, session types.SubagentSession) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func (s *GormSubagentSessionStore) CheckCheckpoint(ctx context.Context, session 
 		return fmt.Errorf("subagent: checkpoint run id is required")
 	}
 	var failed int64
-	err := s.db.WithContext(ctx).Model(&store.AgentRun{}).
+	err := s.db.WithContext(ctx).Model(&types.AgentRun{}).
 		Where("subagent_id = ? AND conversation_id = ? AND previous_run_id = ? AND run_id <> ?",
 			session.ID, session.ConversationID, session.LatestRunID, session.LatestRunID).
 		Where("COALESCE(state->>'context_persist_failed', 'false') = 'true'").

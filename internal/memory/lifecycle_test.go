@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
@@ -34,14 +34,14 @@ func TestDeactivateMemoryPreservesOriginal(t *testing.T) {
 	mock.ExpectQuery(`SELECT .* FROM "memories".*FOR UPDATE`).WithArgs(1, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "session_id", "seq_start", "seq_end", "status", "content"}).AddRow(1, 10, 3, 4, "active", "旧方案"))
 	mock.ExpectExec(`UPDATE "memories" SET `).
-		WithArgs(sqlmock.AnyArg(), "用户要求停用", store.MemoryInactive, sqlmock.AnyArg(), 1, store.MemoryActive).
+		WithArgs(sqlmock.AnyArg(), "用户要求停用", types.MemoryInactive, sqlmock.AnyArg(), 1, types.MemoryActive).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	item, err := manager.DeactivateMemory(context.Background(), 1, " 用户要求停用 ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if item.Status != store.MemoryInactive || item.DeactivatedAt == nil || item.DeactivationReason != "用户要求停用" || item.Content != "旧方案" || item.SessionID != 10 || item.SeqStart != 3 || item.SeqEnd != 4 {
+	if item.Status != types.MemoryInactive || item.DeactivatedAt == nil || item.DeactivationReason != "用户要求停用" || item.Content != "旧方案" || item.SessionID != 10 || item.SeqStart != 3 || item.SeqEnd != 4 {
 		t.Fatalf("unexpected deactivation: %+v", item)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -106,7 +106,7 @@ func TestDeactivateMemoryRejectsInvalidArguments(t *testing.T) {
 func TestKeywordSearchVisibility(t *testing.T) {
 	manager, mock := lifecycleTestManager(t)
 	mock.ExpectQuery(`SELECT .* FROM "memories" WHERE status = \$1.*LIMIT \$4`).
-		WithArgs(store.MemoryActive, "%方案%", "%方案%", 25).
+		WithArgs(types.MemoryActive, "%方案%", "%方案%", 25).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(2, "active"))
 	items, err := manager.FindMemories(context.Background(), "方案", "", 5)
 	if err != nil || len(items) != 1 || items[0].ID != 2 {
@@ -127,7 +127,7 @@ func TestKeywordSearchVisibility(t *testing.T) {
 func TestSessionCatalogVisibility(t *testing.T) {
 	manager, mock := lifecycleTestManager(t)
 	mock.ExpectQuery(`SELECT .* FROM "memories" WHERE session_id = \$1 AND status = \$2`).
-		WithArgs(10, store.MemoryActive).WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(2, "active"))
+		WithArgs(10, types.MemoryActive).WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow(2, "active"))
 	if _, err := manager.ListBySession(context.Background(), 10); err != nil {
 		t.Fatal(err)
 	}

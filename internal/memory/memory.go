@@ -3,13 +3,14 @@ package memory
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"sort"
 	"strings"
 
 	"recallweave/internal/retrieval"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 	"time"
 
 	"gorm.io/gorm"
@@ -36,81 +37,8 @@ func NewMemoryManger(db *gorm.DB, retriever *retrieval.Retriever) *MemoryManger 
 	return &MemoryManger{db: db, retriever: retriever}
 }
 
-func (m *MemoryManger) ConversationExists(ctx context.Context, conversationID uint) (bool, error) {
-	var count int64
-	err := m.db.WithContext(ctx).Model(&store.Conversation{}).Where("id = ?", conversationID).Count(&count).Error
-	return count > 0, err
-}
-
-func (m *MemoryManger) ConversationTitle(ctx context.Context, conversationID uint) (string, error) {
-	var item store.Conversation
-	err := m.db.WithContext(ctx).Select("title").First(&item, conversationID).Error
-	if err != nil {
-		return "", err
-	}
-	return item.Title, nil
-}
-
-func (m *MemoryManger) ConversationBrief(ctx context.Context, conversationID uint) (string, int, error) {
-	var item store.Conversation
-	err := m.db.WithContext(ctx).Select("brief", "brief_until_seq").First(&item, conversationID).Error
-	if err != nil {
-		return "", 0, err
-	}
-	return item.Brief, item.BriefUntilSeq, nil
-}
-
-func (m *MemoryManger) UpdateConversationBrief(ctx context.Context, conversationID uint, brief string, untilSeq int) error {
-	return m.db.WithContext(ctx).Model(&store.Conversation{}).
-		Where("id = ?", conversationID).
-		Updates(map[string]any{
-			"brief":           brief,
-			"brief_until_seq": untilSeq,
-		}).Error
-}
-
-func (m *MemoryManger) UpdateConversationTitle(ctx context.Context, conversationID uint, title string) error {
-	return m.db.WithContext(ctx).Model(&store.Conversation{}).
-		Where("id = ?", conversationID).
-		Update("title", title).Error
-}
-
-func (m *MemoryManger) CreateConversation(ctx context.Context, title string) (store.Conversation, error) {
-	item := store.Conversation{Title: title}
-	err := m.db.WithContext(ctx).Create(&item).Error
-	return item, err
-}
-
-func (m *MemoryManger) ListConversations(ctx context.Context) ([]store.Conversation, error) {
-	var items []store.Conversation
-	err := m.db.WithContext(ctx).Order("updated_at DESC, id DESC").Find(&items).Error
-	return items, err
-}
-
-func (m *MemoryManger) ListConversationsWithTitle(ctx context.Context) ([]struct {
-	ID        uint      `json:"id"`
-	Title     string    `json:"title"`
-	UpdatedAt time.Time `json:"updated_at"`
-}, error) {
-	var items = []struct {
-		ID        uint      `json:"id"`
-		Title     string    `json:"title"`
-		UpdatedAt time.Time `json:"updated_at"`
-	}{}
-
-	err := m.db.WithContext(ctx).
-		Model(&store.Conversation{}).
-		Select("id", "title", "updated_at").
-		Order("updated_at DESC, id DESC").
-		Find(&items).Error
-	if err != nil {
-		return nil, err
-	}
-	return items, err
-}
-
 // FindMemories 混合检索，不改活跃度。预取背景用这个，避免每次提问都给 Top-K 加分。
-func (m *MemoryManger) FindMemories(ctx context.Context, keyword string, tag store.MemoryTag, limit int, includeInactive ...bool) ([]store.Memory, error) {
+func (m *MemoryManger) FindMemories(ctx context.Context, keyword string, tag types.MemoryTag, limit int, includeInactive ...bool) ([]types.Memory, error) {
 	history := len(includeInactive) > 0 && includeInactive[0]
 	if limit <= 0 {
 		limit = defaultSearchLimit
@@ -118,6 +46,7 @@ func (m *MemoryManger) FindMemories(ctx context.Context, keyword string, tag sto
 	if limit > maxSearchLimit {
 		limit = maxSearchLimit
 	}
+	// 候选窗口
 	candidateLimit := limit * recallCandidateFactor
 	// 两路各自召回候选，不能提前裁到最终 Top-K。
 	keywordHits, err := m.keywordSearch(ctx, keyword, tag, candidateLimit, history)
@@ -134,7 +63,7 @@ func (m *MemoryManger) FindMemories(ctx context.Context, keyword string, tag sto
 }
 
 // SearchMemories 给模型工具用：检索后再记一次召回。
-func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag store.MemoryTag, limit int, includeInactive ...bool) ([]store.Memory, error) {
+func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag types.MemoryTag, limit int, includeInactive ...bool) ([]types.Memory, error) {
 	merged, err := m.FindMemories(ctx, keyword, tag, limit, includeInactive...)
 	if err != nil {
 		return nil, err
@@ -145,10 +74,10 @@ func (m *MemoryManger) SearchMemories(ctx context.Context, keyword string, tag s
 	return merged, nil
 }
 
-func (m *MemoryManger) keywordSearch(ctx context.Context, keyword string, tag store.MemoryTag, limit int, includeInactive bool) ([]store.Memory, error) {
-	query := m.db.WithContext(ctx).Model(&store.Memory{})
+func (m *MemoryManger) keywordSearch(ctx context.Context, keyword string, tag types.MemoryTag, limit int, includeInactive bool) ([]types.Memory, error) {
+	query := m.db.WithContext(ctx).Model(&types.Memory{})
 	if !includeInactive {
-		query = query.Where("status = ?", store.MemoryActive)
+		query = query.Where("status = ?", types.MemoryActive)
 	}
 	if tokens := strings.Fields(keyword); len(tokens) > 0 {
 		conditions := m.db.Session(&gorm.Session{NewDB: true})
@@ -162,7 +91,7 @@ func (m *MemoryManger) keywordSearch(ctx context.Context, keyword string, tag st
 		query = query.Where("tag = ?", tag)
 	}
 
-	var memories []store.Memory
+	var memories []types.Memory
 	if err := query.Order("id DESC").Limit(limit).Find(&memories).Error; err != nil {
 		return nil, err
 	}
@@ -170,7 +99,7 @@ func (m *MemoryManger) keywordSearch(ctx context.Context, keyword string, tag st
 }
 
 // vectorSearch 取一批向量近邻，再按活跃度重排。近邻本身在 retrieval。
-func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag store.MemoryTag, limit int, includeInactive bool) ([]store.Memory, error) {
+func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag types.MemoryTag, limit int, includeInactive bool) ([]types.Memory, error) {
 	if m.retriever == nil {
 		return nil, nil
 	}
@@ -182,7 +111,7 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 	}
 
 	type scoredMemory struct {
-		memory store.Memory
+		memory types.Memory
 		score  float64
 	}
 	scored := make([]scoredMemory, 0, len(hits))
@@ -203,7 +132,7 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 		scored = scored[:limit]
 	}
 
-	ranked := make([]store.Memory, 0, len(scored))
+	ranked := make([]types.Memory, 0, len(scored))
 	for _, item := range scored {
 		ranked = append(ranked, item.memory)
 	}
@@ -214,18 +143,18 @@ func (m *MemoryManger) vectorSearch(ctx context.Context, keyword string, tag sto
 // An item contributes at most once per route; rank starts at 1. This combines
 // positions rather than incomparable keyword/vector scores. Zero rank means
 // that the route did not return the item.
-func mergeMemories(vector, keyword []store.Memory, limit int) []store.Memory {
+func mergeMemories(vector, keyword []types.Memory, limit int) []types.Memory {
 	if limit <= 0 {
 		return nil
 	}
 	type candidate struct {
-		memory store.Memory
+		memory types.Memory
 		ranks  [2]int
 		score  float64
 		best   int
 	}
 	byID := make(map[uint]*candidate, len(vector)+len(keyword))
-	for route, group := range [][]store.Memory{vector, keyword} {
+	for route, group := range [][]types.Memory{vector, keyword} {
 		for i, item := range group {
 			entry := byID[item.ID]
 			if entry == nil {
@@ -263,7 +192,7 @@ func mergeMemories(vector, keyword []store.Memory, limit int) []store.Memory {
 	if len(ranked) > limit {
 		ranked = ranked[:limit]
 	}
-	merged := make([]store.Memory, 0, len(ranked))
+	merged := make([]types.Memory, 0, len(ranked))
 	for _, entry := range ranked {
 		merged = append(merged, entry.memory)
 		slog.Debug("memory recall fusion", "memory_id", entry.memory.ID,
@@ -293,7 +222,7 @@ func activationMultiplier(recalled int, lastAccess time.Time, now time.Time) flo
 // bumpRecall 给命中的记忆记一次召回：次数 +1、刷新最近命中时间。
 // 在事务里批量更新，更新失败只记日志，不影响这次检索的结果。
 // 把命中的memory 整体搜索到集体处理 +1
-func (m *MemoryManger) bumpRecall(ctx context.Context, hits []store.Memory) {
+func (m *MemoryManger) bumpRecall(ctx context.Context, hits []types.Memory) {
 	now := time.Now()
 	// 直接拼 SQL 比逐条 Save 省一次查询，命中一多就不想逐条开事务。
 	ids := make([]uint, 0, len(hits))
@@ -301,7 +230,7 @@ func (m *MemoryManger) bumpRecall(ctx context.Context, hits []store.Memory) {
 		ids = append(ids, item.ID)
 	}
 
-	if err := m.db.WithContext(ctx).Model(&store.Memory{}).
+	if err := m.db.WithContext(ctx).Model(&types.Memory{}).
 		Where("id IN ?", ids).
 		Updates(map[string]any{
 			"recalled_count": gorm.Expr("recalled_count + 1"),
@@ -312,11 +241,11 @@ func (m *MemoryManger) bumpRecall(ctx context.Context, hits []store.Memory) {
 }
 
 // ListBySession 返回一个会话下的记忆，按它在原文里的起始位置排序。
-func (m *MemoryManger) ListBySession(ctx context.Context, sessionID uint, includeInactive ...bool) ([]store.Memory, error) {
-	var memories []store.Memory
+func (m *MemoryManger) ListBySession(ctx context.Context, sessionID uint, includeInactive ...bool) ([]types.Memory, error) {
+	var memories []types.Memory
 	query := m.db.WithContext(ctx).Where("session_id = ?", sessionID)
 	if len(includeInactive) == 0 || !includeInactive[0] {
-		query = query.Where("status = ?", store.MemoryActive)
+		query = query.Where("status = ?", types.MemoryActive)
 	}
 	if err := query.
 		Order("seq_start").
@@ -327,8 +256,8 @@ func (m *MemoryManger) ListBySession(ctx context.Context, sessionID uint, includ
 }
 
 // GetMessages 按 seq 区间把某条记忆的原文捞回来，这是「可追溯」的落点。
-func (m *MemoryManger) GetMessages(ctx context.Context, sessionID uint, seqStart, seqEnd int) ([]store.Message, error) {
-	var messages []store.Message
+func (m *MemoryManger) GetMessages(ctx context.Context, sessionID uint, seqStart, seqEnd int) ([]types.Message, error) {
+	var messages []types.Message
 	if err := m.db.WithContext(ctx).
 		Where("session_id = ? AND seq >= ? AND seq <= ?", sessionID, seqStart, seqEnd).
 		Where("NOT EXISTS (SELECT 1 FROM sessions AS private_session JOIN conversations AS private_conversation ON private_conversation.id = private_session.conversation_id WHERE private_session.id = messages.session_id AND private_conversation.parent_conversation_id IS NOT NULL)").
@@ -341,18 +270,20 @@ func (m *MemoryManger) GetMessages(ctx context.Context, sessionID uint, seqStart
 
 // ChatSession 是跟助手的这一次聊天。同一个 conversation 只建一条，
 // 导入的其他来源会话不放进来。
-func (m *MemoryManger) ChatSession(ctx context.Context, conversationID uint) (*store.Session, error) {
-	exists, err := m.ConversationExists(ctx, conversationID)
+func (m *MemoryManger) ChatSession(ctx context.Context, conversationID uint) (*types.Session, error) {
+	var count int64
+	err := m.db.WithContext(ctx).Model(&types.Conversation{}).Where("id = ?", conversationID).Count(&count).Error
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
+	if count == 0 {
 		return nil, gorm.ErrRecordNotFound
 	}
 
-	var session store.Session
+	var session types.Session
 	err = m.db.WithContext(ctx).
-		Where("conversation_id = ? AND source_tag = ?", conversationID, store.SourceChat).
+		//默认配置成 SourceChat 的 session 聊天会话
+		Where("conversation_id = ? AND source_tag = ?", conversationID, types.SourceChat).
 		First(&session).Error
 	if err == nil {
 		return &session, nil
@@ -361,21 +292,21 @@ func (m *MemoryManger) ChatSession(ctx context.Context, conversationID uint) (*s
 		return nil, err
 	}
 	// 没找到就新建
-	session = store.Session{
+	session = types.Session{
 		ConversationID: &conversationID,
-		SourceTag:      store.SourceChat,
+		SourceTag:      types.SourceChat,
 		Name:           "chat",
-		ExtractStatus:  store.ExtractPending,
+		ExtractStatus:  types.ExtractPending,
 	}
 	if err := m.db.WithContext(ctx).Create(&session).Error; err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create chat session failed: %w", err)
 	}
 	return &session, nil
 }
 
 // ListMessages 按顺序返回一次聊天里已经保存的消息。
-func (m *MemoryManger) ListMessages(ctx context.Context, sessionID uint) ([]store.Message, error) {
-	var messages []store.Message
+func (m *MemoryManger) ListMessages(ctx context.Context, sessionID uint) ([]types.Message, error) {
+	var messages []types.Message
 	err := m.db.WithContext(ctx).
 		Where("session_id = ?", sessionID).
 		Order("seq").
@@ -384,13 +315,13 @@ func (m *MemoryManger) ListMessages(ctx context.Context, sessionID uint) ([]stor
 }
 
 // AppendMessages 把新消息接在已有序号后面。
-func (m *MemoryManger) AppendMessages(ctx context.Context, sessionID uint, messages []store.Message) error {
+func (m *MemoryManger) AppendMessages(ctx context.Context, sessionID uint, messages []types.Message) error {
 	if len(messages) == 0 {
 		return nil
 	}
 
 	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var last store.Message
+		var last types.Message
 		err := tx.Where("session_id = ?", sessionID).Order("seq desc").First(&last).Error
 		seq := 0
 		if err == nil {
@@ -408,9 +339,9 @@ func (m *MemoryManger) AppendMessages(ctx context.Context, sessionID uint, messa
 	})
 }
 
-func (m *MemoryManger) GetSessions(ctx context.Context, conversationID uint) ([]store.Session, error) {
-	var sessions []store.Session
-	if err := m.db.WithContext(ctx).Model(&store.Session{}).Where("conversation_id = ?", conversationID).
+func (m *MemoryManger) GetSessions(ctx context.Context, conversationID uint) ([]types.Session, error) {
+	var sessions []types.Session
+	if err := m.db.WithContext(ctx).Model(&types.Session{}).Where("conversation_id = ?", conversationID).
 		Where("NOT EXISTS (SELECT 1 FROM conversations AS private_conversation WHERE private_conversation.id = sessions.conversation_id AND private_conversation.parent_conversation_id IS NOT NULL)").Find(&sessions).Error; err != nil {
 		return nil, err
 	}
@@ -418,13 +349,13 @@ func (m *MemoryManger) GetSessions(ctx context.Context, conversationID uint) ([]
 }
 
 type SessionOverview struct {
-	Session      store.Session
+	Session      types.Session
 	MessageCount int64
 	MemoryCount  int64
 }
 
-func (m *MemoryManger) GetSession(ctx context.Context, sessionID uint) (store.Session, error) {
-	var session store.Session
+func (m *MemoryManger) GetSession(ctx context.Context, sessionID uint) (types.Session, error) {
+	var session types.Session
 	err := m.db.WithContext(ctx).First(&session, sessionID).Error
 	return session, err
 }
@@ -436,10 +367,10 @@ func (m *MemoryManger) SessionOverview(ctx context.Context, sessionID uint) (Ses
 	}
 
 	var messages, memories int64
-	if err := m.db.WithContext(ctx).Model(&store.Message{}).Where("session_id = ?", sessionID).Count(&messages).Error; err != nil {
+	if err := m.db.WithContext(ctx).Model(&types.Message{}).Where("session_id = ?", sessionID).Count(&messages).Error; err != nil {
 		return SessionOverview{}, err
 	}
-	if err := m.db.WithContext(ctx).Model(&store.Memory{}).Where("session_id = ?", sessionID).Count(&memories).Error; err != nil {
+	if err := m.db.WithContext(ctx).Model(&types.Memory{}).Where("session_id = ?", sessionID).Count(&memories).Error; err != nil {
 		return SessionOverview{}, err
 	}
 	return SessionOverview{
@@ -449,33 +380,33 @@ func (m *MemoryManger) SessionOverview(ctx context.Context, sessionID uint) (Ses
 	}, nil
 }
 
-func (m *MemoryManger) SaveAgentRun(ctx context.Context, run store.AgentRun) error {
-	if m == nil || m.db == nil || run.RunID == "" {
-		return nil
-	}
-	return m.db.WithContext(ctx).Create(&run).Error
-}
+// func (m *MemoryManger) SaveAgentRun(ctx context.Context, run types.AgentRun) error {
+// 	if m == nil || m.db == nil || run.RunID == "" {
+// 		return nil
+// 	}
+// 	return m.db.WithContext(ctx).Create(&run).Error
+// }
 
-func (m *MemoryManger) GetAgentRun(ctx context.Context, runID string) (store.AgentRun, error) {
-	var run store.AgentRun
-	err := m.db.WithContext(ctx).Where("run_id = ?", runID).First(&run).Error
-	return run, err
-}
+// func (m *MemoryManger) GetAgentRun(ctx context.Context, runID string) (types.AgentRun, error) {
+// 	var run types.AgentRun
+// 	err := m.db.WithContext(ctx).Where("run_id = ?", runID).First(&run).Error
+// 	return run, err
+// }
 
-func (m *MemoryManger) ListAgentRuns(ctx context.Context, conversationID uint) ([]store.AgentRun, error) {
-	var runs []store.AgentRun
+// func (m *MemoryManger) ListAgentRuns(ctx context.Context, conversationID uint) ([]types.AgentRun, error) {
+// 	var runs []types.AgentRun
+// 	err := m.db.WithContext(ctx).
+// 		Where("conversation_id = ?", conversationID).
+// 		Order("id DESC").
+// 		Limit(20).
+// 		Find(&runs).Error
+// 	return runs, err
+// }
+
+func (m *MemoryManger) FindChatSession(ctx context.Context, conversationID uint) (*types.Session, error) {
+	var session types.Session
 	err := m.db.WithContext(ctx).
-		Where("conversation_id = ?", conversationID).
-		Order("id DESC").
-		Limit(20).
-		Find(&runs).Error
-	return runs, err
-}
-
-func (m *MemoryManger) FindChatSession(ctx context.Context, conversationID uint) (*store.Session, error) {
-	var session store.Session
-	err := m.db.WithContext(ctx).
-		Where("conversation_id = ? AND source_tag = ?", conversationID, store.SourceChat).
+		Where("conversation_id = ? AND source_tag = ?", conversationID, types.SourceChat).
 		First(&session).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil

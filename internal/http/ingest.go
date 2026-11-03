@@ -8,7 +8,7 @@ import (
 
 	"recallweave/internal/ingest"
 	"recallweave/internal/parser"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -39,7 +39,7 @@ func (h *IngestHandler) ImportText(c *gin.Context) {
 
 	results, err := h.service.ImportText(
 		c.Request.Context(),
-		store.SourceTag(req.SourceTag),
+		types.SourceTag(req.SourceTag),
 		req.Name,
 		req.Text,
 	)
@@ -65,7 +65,7 @@ func (h *IngestHandler) ImportFile(c *gin.Context) {
 
 	results, err := h.service.ImportText(
 		c.Request.Context(),
-		store.SourceTag(sourceTag),
+		types.SourceTag(sourceTag),
 		c.PostForm("name"),
 		text,
 	)
@@ -98,7 +98,7 @@ func (h *IngestHandler) ImportConversation(c *gin.Context) {
 	results, err := h.service.ImportIntoConversation(
 		c.Request.Context(),
 		conversationID,
-		store.SourceTag(req.SourceTag),
+		types.SourceTag(req.SourceTag),
 		req.Name,
 		req.Text,
 	)
@@ -130,7 +130,7 @@ func (h *IngestHandler) ImportConversationFile(c *gin.Context) {
 	results, err := h.service.ImportIntoConversation(
 		c.Request.Context(),
 		conversationID,
-		store.SourceTag(sourceTag),
+		types.SourceTag(sourceTag),
 		c.PostForm("name"),
 		text,
 	)

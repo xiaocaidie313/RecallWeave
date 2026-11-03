@@ -2,14 +2,14 @@ package db
 
 import (
 	"fmt"
-
 	"recallweave/internal/config"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
+// 目前只做postgres 的 连接
 func NewDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s",
 		cfg.UserName,
@@ -18,7 +18,6 @@ func NewDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		cfg.Port,
 		cfg.DBName,
 	)
-	// db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, err
@@ -28,59 +27,47 @@ func NewDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 
 func AutoMigrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(
-		&store.Conversation{},
-		&store.Session{},
-		&store.Message{},
-		&store.Memory{},
-		&store.AgentRun{},
-		&store.SubagentSession{},
-		&store.SubagentTask{},
-		&store.TaskGroup{},
-		&store.ConversationEvent{},
+		&types.Conversation{},
+		&types.Session{},
+		&types.Message{},
+		&types.Memory{},
+		&types.AgentRun{},
+		&types.SubagentSession{},
+		&types.SubagentTask{},
+		&types.TaskGroup{},
+		&types.ConversationEvent{},
 	); err != nil {
 		return err
 	}
-
-	// AutoMigrate 不会改已有列的非空约束，也不会删掉结构体里已经去掉的字段。
-	// messages_ids 是早期误加的外键列，消息已经用 session_id 关联。
-	if db.Migrator().HasColumn(&store.Session{}, "messages_ids") {
-		if err := db.Migrator().DropColumn(&store.Session{}, "messages_ids"); err != nil {
-			return err
-		}
-	}
-	// 导入会话的 conversation_id 需要能留空。已有的非空列要改成可空。
-	if err := db.Migrator().AlterColumn(&store.Session{}, "ConversationID"); err != nil {
+	// 导入会话的 conversation_id 需要能留空。conversation_id 可以为空
+	if err := db.Migrator().AlterColumn(&types.Session{}, "ConversationID"); err != nil {
 		return err
 	}
-	// attach 曾用来区分 context / continue，绑定本身就是 context，这一列去掉。
-	if db.Migrator().HasColumn(&store.Session{}, "attach") {
-		if err := db.Migrator().DropColumn(&store.Session{}, "attach"); err != nil {
-			return err
-		}
-	}
-	return ensureEmbeddingIndex(db)
+	return ensureMemoryEmbeddingIndex(db)
 }
 
 // ensureEmbeddingIndex 把向量列收成可建 HNSW 的宽度，再按余弦距离建索引。
 // 查询用的是 <=>，运算符类必须是 vector_cosine_ops。
-func ensureEmbeddingIndex(db *gorm.DB) error {
-	if !db.Migrator().HasTable(&store.Memory{}) {
+func ensureMemoryEmbeddingIndex(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&types.Memory{}) {
 		return nil
 	}
 
 	var width int
+	// 获取 memory 的 embedding 的宽度 多少维
 	if err := db.Raw(`SELECT atttypmod FROM pg_attribute WHERE attrelid = 'memories'::regclass AND attname = 'embedding'`).Scan(&width).Error; err != nil {
 		return err
 	}
-	if width != store.EmbeddingDim {
-		var stored int64
-		if err := db.Model(&store.Memory{}).Where("embedding IS NOT NULL").Count(&stored).Error; err != nil {
+	if width != types.EmbeddingDim {
+		var typesd int64 // 统计 非空的emmbedding 的 数量
+		if err := db.Model(&types.Memory{}).Where("embedding IS NOT NULL").Count(&typesd).Error; err != nil {
 			return err
 		}
-		if stored > 0 {
-			return fmt.Errorf("db: %d memories use vector(%d); re-embed them before narrowing to vector(%d)", stored, width, store.EmbeddingDim)
+		if typesd > 0 { // 有非空的emmbedding 需要重新嵌入
+			return fmt.Errorf("db: %d memories use vector(%d); re-embed them before narrowing to vector(%d)", typesd, width, types.EmbeddingDim)
 		}
-		if err := db.Exec(fmt.Sprintf(`ALTER TABLE memories ALTER COLUMN embedding TYPE vector(%d)`, store.EmbeddingDim)).Error; err != nil {
+		// 执行sql 修改memory 的 embedding 的宽度 多少维
+		if err := db.Exec(fmt.Sprintf(`ALTER TABLE memories ALTER COLUMN embedding TYPE vector(%d)`, types.EmbeddingDim)).Error; err != nil {
 			return err
 		}
 	}

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"recallweave/internal/memory"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -157,14 +157,14 @@ type memoryView struct {
 	SeqEnd             int                `json:"seq_end"`
 	Title              string             `json:"title"`
 	Content            string             `json:"content"`
-	Tag                store.MemoryTag    `json:"tag"`
-	ContentType        store.ContentType  `json:"content_type"`
-	Status             store.MemoryStatus `json:"status"`
+	Tag                types.MemoryTag    `json:"tag"`
+	ContentType        types.ContentType  `json:"content_type"`
+	Status             types.MemoryStatus `json:"status"`
 	DeactivatedAt      *time.Time         `json:"deactivated_at,omitempty"`
 	DeactivationReason string             `json:"deactivation_reason,omitempty"`
 }
 
-func memoryViews(memories []store.Memory) []memoryView {
+func memoryViews(memories []types.Memory) []memoryView {
 	views := make([]memoryView, 0, len(memories))
 	for _, item := range memories {
 		views = append(views, memoryView{
@@ -175,7 +175,7 @@ func memoryViews(memories []store.Memory) []memoryView {
 			Title:              item.Title,
 			Content:            item.Content,
 			Tag:                item.Tag,
-			ContentType:        store.NormalizeContentType(string(item.ContentType)),
+			ContentType:        types.NormalizeContentType(string(item.ContentType)),
 			Status:             item.Status,
 			DeactivatedAt:      item.DeactivatedAt,
 			DeactivationReason: item.DeactivationReason,
@@ -193,7 +193,7 @@ type messageView struct {
 	memory.MessageDelivery
 }
 
-func messageViews(messages []store.Message, deliveries map[uint]memory.MessageDelivery) []messageView {
+func messageViews(messages []types.Message, deliveries map[uint]memory.MessageDelivery) []messageView {
 	views := make([]messageView, 0, len(messages))
 	for _, item := range messages {
 		views = append(views, messageView{

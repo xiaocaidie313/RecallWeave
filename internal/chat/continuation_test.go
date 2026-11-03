@@ -17,29 +17,29 @@ import (
 	"recallweave/internal/agent/runtime"
 	"recallweave/internal/agent/subagent"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 type chatContinuationStore struct {
 	mu   sync.Mutex
-	rows map[string]store.SubagentSession
+	rows map[string]types.SubagentSession
 }
 
-func cloneChatContinuation(row store.SubagentSession) store.SubagentSession {
+func cloneChatContinuation(row types.SubagentSession) types.SubagentSession {
 	row.Snapshot = append(json.RawMessage(nil), row.Snapshot...)
 	row.PresetAgent = append(json.RawMessage(nil), row.PresetAgent...)
 	row.Sources = append(json.RawMessage(nil), row.Sources...)
 	return row
 }
 
-func (s *chatContinuationStore) Create(ctx context.Context, row *store.SubagentSession) error {
+func (s *chatContinuationStore) Create(ctx context.Context, row *types.SubagentSession) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.rows == nil {
-		s.rows = make(map[string]store.SubagentSession)
+		s.rows = make(map[string]types.SubagentSession)
 	}
 	if _, exists := s.rows[row.ID]; exists {
 		return errors.New("duplicate child")
@@ -51,20 +51,20 @@ func (s *chatContinuationStore) Create(ctx context.Context, row *store.SubagentS
 	return nil
 }
 
-func (s *chatContinuationStore) Load(ctx context.Context, id string, conversationID uint) (store.SubagentSession, error) {
+func (s *chatContinuationStore) Load(ctx context.Context, id string, conversationID uint) (types.SubagentSession, error) {
 	if err := ctx.Err(); err != nil {
-		return store.SubagentSession{}, err
+		return types.SubagentSession{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	row, ok := s.rows[id]
 	if !ok || row.ConversationID != conversationID {
-		return store.SubagentSession{}, errors.New("child unavailable")
+		return types.SubagentSession{}, errors.New("child unavailable")
 	}
 	return cloneChatContinuation(row), nil
 }
 
-func (s *chatContinuationStore) Update(ctx context.Context, row *store.SubagentSession, expected uint64) error {
+func (s *chatContinuationStore) Update(ctx context.Context, row *types.SubagentSession, expected uint64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -81,13 +81,13 @@ func (s *chatContinuationStore) Update(ctx context.Context, row *store.SubagentS
 	return nil
 }
 
-func (s *chatContinuationStore) List(ctx context.Context, conversationID uint, limit int) ([]store.SubagentSession, error) {
+func (s *chatContinuationStore) List(ctx context.Context, conversationID uint, limit int) ([]types.SubagentSession, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows := make([]store.SubagentSession, 0)
+	rows := make([]types.SubagentSession, 0)
 	for _, row := range s.rows {
 		if row.ConversationID == conversationID {
 			rows = append(rows, cloneChatContinuation(row))
@@ -237,7 +237,7 @@ func TestSubagentContinuationThroughModelHTTPAcrossParentRuns(t *testing.T) {
 					}
 				}
 				if !callFound || !resultFound || !finalFound || !followupFound {
-					capturedErrors = append(capturedErrors, fmt.Sprintf("restored history incomplete: call=%v result=%v final=%v followup=%v", callFound, resultFound, finalFound, followupFound))
+					capturedErrors = append(capturedErrors, fmt.Sprintf("retypesd history incomplete: call=%v result=%v final=%v followup=%v", callFound, resultFound, finalFound, followupFound))
 				}
 				message["content"] = "SECOND_CHILD_FINAL: 沿用实际原文完成补查"
 			}

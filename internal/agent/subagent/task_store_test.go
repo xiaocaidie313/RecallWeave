@@ -4,14 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"recallweave/internal/types"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"recallweave/internal/store"
-	"strings"
-	"testing"
-	"time"
 )
 
 var taskStoreNow = time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC)
@@ -29,10 +30,10 @@ func taskStoreTestDB(t *testing.T) (*GormTaskStore, sqlmock.Sqlmock) {
 	}
 	return NewTaskStore(database), mock
 }
-func taskStoreRecord() store.SubagentTask {
-	return store.SubagentTask{ID: "task-1", SubagentID: "child-1", ParentRunID: "parent-1", ConversationID: 9, AgentName: "researcher", Task: "Check original sources", Status: "queued"}
+func taskStoreRecord() types.SubagentTask {
+	return types.SubagentTask{ID: "task-1", SubagentID: "child-1", ParentRunID: "parent-1", ConversationID: 9, AgentName: "researcher", Task: "Check original sources", Status: "queued"}
 }
-func taskStoreRows(records ...store.SubagentTask) *sqlmock.Rows {
+func taskStoreRows(records ...types.SubagentTask) *sqlmock.Rows {
 	rows := sqlmock.NewRows([]string{"id", "subagent_id", "parent_run_id", "run_id", "previous_run_id", "conversation_id", "agent_name", "task", "delivery_mode", "status", "cancel_requested", "result", "error", "created_at", "updated_at", "started_at", "finished_at"})
 	for _, r := range records {
 		var raw any
@@ -47,10 +48,10 @@ func taskStoreRows(records ...store.SubagentTask) *sqlmock.Rows {
 const taskLoadSQL = `SELECT .* FROM "subagent_tasks" WHERE id = \$1 AND conversation_id = \$2 LIMIT \$3`
 const taskLockSQL = taskLoadSQL + ` FOR UPDATE`
 
-func taskRun(r store.SubagentTask) *store.AgentRun {
-	return &store.AgentRun{RunID: r.RunID, ParentRunID: r.ParentRunID, SubagentID: r.SubagentID, PreviousRunID: r.PreviousRunID, ConversationID: r.ConversationID, Status: r.Status, State: json.RawMessage(`{"status":"completed"}`)}
+func taskRun(r types.SubagentTask) *types.AgentRun {
+	return &types.AgentRun{RunID: r.RunID, ParentRunID: r.ParentRunID, SubagentID: r.SubagentID, PreviousRunID: r.PreviousRunID, ConversationID: r.ConversationID, Status: r.Status, State: json.RawMessage(`{"status":"completed"}`)}
 }
-func expectTaskFinish(mock sqlmock.Sqlmock, r store.SubagentTask, previous string) {
+func expectTaskFinish(mock sqlmock.Sqlmock, r types.SubagentTask, previous string) {
 	mock.ExpectExec(`UPDATE "subagent_tasks" SET .* WHERE id = \$7 AND conversation_id = \$8 AND status = \$9`).WithArgs(r.RunID, r.Status, sessionJSONArgument(r.Result), r.Error, taskStoreNow, taskStoreNow, r.ID, r.ConversationID, previous).WillReturnResult(sqlmock.NewResult(0, 1))
 }
 func TestTaskStoreCreatePersistsQueuedTaskBeforeExecution(t *testing.T) {
@@ -112,7 +113,7 @@ func TestTaskStoreFinishCannotChangeDeliveryMode(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-func TestTaskStoreLoadIsScopedAndRestoresJSON(t *testing.T) {
+func TestTaskStoreLoadIsScopedAndRetypessJSON(t *testing.T) {
 	repo, mock := taskStoreTestDB(t)
 	r := taskStoreRecord()
 	r.Status = "completed"
@@ -124,7 +125,7 @@ func TestTaskStoreLoadIsScopedAndRestoresJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.ID != r.ID || string(got.Result) != string(r.Result) {
-		t.Fatalf("stored result lost: %+v", got)
+		t.Fatalf("typesd result lost: %+v", got)
 	}
 	mock.ExpectQuery(taskLoadSQL).WithArgs(r.ID, uint(100), 1).WillReturnRows(taskStoreRows())
 	if _, err := repo.Load(context.Background(), r.ID, 100); !errors.Is(err, ErrTaskNotFound) {
@@ -293,7 +294,7 @@ func TestTaskStoreRestartInterruptsPendingWorkWithoutReplay(t *testing.T) {
 func TestTaskStoreCheckpointBlocksStartedInterruptedContinuation(t *testing.T) {
 	for _, count := range []int64{0, 1} {
 		repo, mock := taskStoreTestDB(t)
-		r := store.SubagentSession{ID: "child-1", ConversationID: 9, LatestRunID: "previous-run"}
+		r := types.SubagentSession{ID: "child-1", ConversationID: 9, LatestRunID: "previous-run"}
 		mock.ExpectQuery(`SELECT count\(\*\) FROM "subagent_tasks" WHERE subagent_id = \$1 AND conversation_id = \$2 AND previous_run_id = \$3 AND status = \$4 AND started_at IS NOT NULL`).WithArgs(r.ID, r.ConversationID, r.LatestRunID, "interrupted").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(count))
 		err := repo.CheckTaskCheckpoint(context.Background(), r)
 		if (count == 0 && err != nil) || (count == 1 && !errors.Is(err, ErrCheckpointUnavailable)) {

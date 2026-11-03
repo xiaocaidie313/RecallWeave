@@ -15,7 +15,7 @@ import (
 	"recallweave/internal/agent/subagent"
 	"recallweave/internal/llm"
 	"recallweave/internal/memory"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 	"recallweave/internal/watch/useage"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -186,13 +186,13 @@ func TestBranchDelegationPreservesScopedMessageReader(t *testing.T) {
 		globalTools = append(globalTools, llm.Tool{Schema: llm.ToolSchema{Name: name}, Run: func(context.Context, string) (string, error) { globalCalls++; return "GLOBAL_FUTURE_SECRET", nil }})
 	}
 	core := agent.NewAgent(1, "recall", model, "", 3, agent.NewAbility("memory", "", "", globalTools))
-	scoped := branchCore(core, []store.ContextMessage{{SessionID: 10, Seq: 1, Role: "user", Content: "分叉前原文"}})
+	scoped := branchCore(core, []types.ContextMessage{{SessionID: 10, Seq: 1, Role: "user", Content: "分叉前原文"}})
 	result, err := runtime.Run(context.Background(), scoped, runtime.Request{Input: "调查", Delegator: testDelegationManager(t, subagent.Config{})})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if globalCalls != 0 || len(result.State.Children) != 1 {
-		t.Fatalf("global access restored: calls=%d", globalCalls)
+		t.Fatalf("global access retypesd: calls=%d", globalCalls)
 	}
 	step := result.State.Children[0].State.Steps[0]
 	if !strings.Contains(step.Result, "分叉前原文") || strings.Contains(step.Result, "GLOBAL_FUTURE_SECRET") {

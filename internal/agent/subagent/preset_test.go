@@ -100,9 +100,9 @@ func TestPresetAgentAndMetadataCannotMutateManagerConfiguration(t *testing.T) {
 	metadata := manager.AvailableAgents()
 	metadata[0].Name = "changed"
 	metadata[0].Description = "changed"
-	stored := manager.PresetAgents["auditor"]
-	if stored.Name != "auditor" || stored.Instructions != preset.Instructions || !slices.Equal(stored.AllowedTools, []string{"get_messages"}) {
-		t.Fatalf("caller configuration mutated manager: %+v", stored)
+	typesd := manager.PresetAgents["auditor"]
+	if typesd.Name != "auditor" || typesd.Instructions != preset.Instructions || !slices.Equal(typesd.AllowedTools, []string{"get_messages"}) {
+		t.Fatalf("caller configuration mutated manager: %+v", typesd)
 	}
 	again := manager.AvailableAgents()
 	if again[0].Name != "auditor" || again[0].Description != preset.Description {

@@ -6,7 +6,7 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/agent/ability"
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 func isGlobalMemoryTool(name string) bool {
@@ -21,7 +21,7 @@ func isGlobalMemoryTool(name string) bool {
 // branchCore copies configuration, not execution state. Never mutate the shared
 // core's abilities or tool closures while another conversation may be running.
 // copy 能力和工具
-func branchCore(core *agent.Agent, visible []store.ContextMessage) *agent.Agent {
+func branchCore(core *agent.Agent, inheritedMsg []types.ContextMessage) *agent.Agent {
 	copy := *core
 	copy.Abilities = make([]*agent.Ability, 0, len(core.Abilities)+1)
 	for _, original := range core.Abilities {
@@ -36,7 +36,7 @@ func branchCore(core *agent.Agent, visible []store.ContextMessage) *agent.Agent 
 			copy.Abilities = append(copy.Abilities, &item)
 		}
 	}
-	copy.Abilities = append(copy.Abilities, ability.NewBranchContextAbility(visible))
+	copy.Abilities = append(copy.Abilities, ability.NewBranchContextAbility(inheritedMsg))
 	copy.ExternalTools = make([]llm.Tool, 0, len(core.ExternalTools))
 	for _, tool := range core.ExternalTools {
 		if !isGlobalMemoryTool(tool.Schema.Name) {

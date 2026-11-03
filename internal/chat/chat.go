@@ -5,16 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"recallweave/internal/run"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"recallweave/internal/agent"
 	"recallweave/internal/agent/runtime"
+	"recallweave/internal/conversation"
 	"recallweave/internal/extract"
 	"recallweave/internal/llm"
 	"recallweave/internal/memory"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 	"recallweave/internal/watch/useage"
 )
 
@@ -61,41 +63,46 @@ type Usage struct {
 
 // Agent 是问答服务：准备上下文 → 交给 core 跑 → 保存、提炼、压缩、起标题。
 // 真正决定调哪个工具的是 core（agent.Agent），这里的步骤每次都固定执行。
-type Agent struct {
-	core       *agent.Agent
-	memory     *memory.MemoryManger
-	extracter  *extract.ExtractExcuter
-	delegator  runtime.Delegator
-	turnWriter TurnWriter
-	gate       conversationGate
+type ChatService struct {
+	core                *agent.Agent
+	memory              *memory.MemoryManger
+	extracter           *extract.ExtractExcuter
+	delegator           runtime.Delegator
+	turnWriter          TurnWriter
+	gate                conversationGate
+	runStateManager     *run.RunManager
+	conversationManager *conversation.ConversationManager
 }
 
 // core 或 core.Model 为 nil 表示没配 api_key，这时问答直接报错。
 // 提炼有本地兜底，问答没有——没有模型就没法组织回答。
-func NewAgent(core *agent.Agent, memoryManger *memory.MemoryManger, extracter *extract.ExtractExcuter) *Agent {
-	return &Agent{core: core, memory: memoryManger, extracter: extracter}
+func NewChatService(core *agent.Agent, memoryManger *memory.MemoryManger, extracter *extract.ExtractExcuter) *ChatService {
+	return &ChatService{core: core, memory: memoryManger, extracter: extracter}
 }
 
 // WithDelegator is configured once during assembly. Per-run delegation state
 // stays inside runtime.Run, including for already-scoped branch Agents.
-func (a *Agent) WithDelegator(delegator runtime.Delegator) *Agent {
+func (a *ChatService) WithDelegator(delegator runtime.Delegator) *ChatService {
 	a.delegator = delegator
 	return a
 }
 
-func (a *Agent) model() llm.ChatGenerator {
+// 获取模型
+func (a *ChatService) model() llm.ChatGenerator {
 	if a.core == nil {
 		return nil
 	}
 	return a.core.Model
 }
 
-func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) (Answer, error) {
-	requestStarted := time.Now()
+func (a *ChatService) Chat(ctx context.Context, question string, conversationID uint) (Answer, error) {
+	requestStarted := time.Now() // 标记请求开始时间
 	var timings Timings
 	if a.model() == nil {
 		return Answer{}, ErrNoModel
 	}
+	// 获取业务锁， 释放锁
+	// 同一个conversation_id 下的agent 只能串行执行(主要运行的是 主 agent)  一个完成等待另一个
 	release, err := a.gate.acquire(ctx, conversationID)
 	if err != nil {
 		return Answer{}, err
@@ -103,7 +110,7 @@ func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) 
 	defer release()
 
 	stageStarted := time.Now()
-	preload, sessionID, conversation, visible, err := a.loadContext(ctx, conversationID, question)
+	preload, sessionID, conversation, inheritedMsg, err := a.loadContext(ctx, conversationID, question)
 	timings.LoadContextMs = time.Since(stageStarted).Milliseconds()
 	if err != nil {
 		return Answer{}, err
@@ -112,10 +119,11 @@ func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) 
 	go a.generateTitle(context.WithoutCancel(ctx), conversationID, question)
 	core := a.core
 	if conversation != nil && conversation.IsBranch() {
-		core = branchCore(a.core, visible)
+		core = branchCore(a.core, inheritedMsg)
 	}
-
+	// 标记开始
 	stageStarted = time.Now()
+	// 运行agent
 	result, err := runtime.Run(ctx, core, runtime.Request{
 		Input:          question,
 		ConversationID: conversationID,
@@ -123,7 +131,7 @@ func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) 
 		Preload:        preload,
 		Delegator:      a.delegator,
 	})
-	timings.AgentMs = time.Since(stageStarted).Milliseconds()
+	timings.AgentMs = time.Since(stageStarted).Milliseconds() // 标记agent 运行时间
 	logToolErrors(result.State)
 	// 不管 http 的取消 还是 模型超时 都保存运行结果 都保存 run结果
 	a.saveRun(context.WithoutCancel(ctx), result)
@@ -135,13 +143,13 @@ func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) 
 	if err := a.saveTurn(ctx, sessionID, question, result.Content); err != nil {
 		return Answer{}, err
 	}
-	timings.SaveTurnMs = time.Since(stageStarted).Milliseconds()
+	timings.SaveTurnMs = time.Since(stageStarted).Milliseconds() // 标记保存单轮对话时间
 	if conversation == nil || !conversation.IsBranch() {
 		go a.extractSession(context.WithoutCancel(ctx), sessionID)
 	}
 	stageStarted = time.Now()
 	a.condenseWindow(ctx, conversationID, sessionID)
-	timings.CondenseMs = time.Since(stageStarted).Milliseconds()
+	timings.CondenseMs = time.Since(stageStarted).Milliseconds() // 标记压缩对话时间
 	timings.TotalMs = time.Since(requestStarted).Milliseconds()
 	slog.Info("chat timing", "run_id", result.State.RunID, "total_ms", timings.TotalMs,
 		"load_context_ms", timings.LoadContextMs, "agent_ms", timings.AgentMs,
@@ -152,6 +160,7 @@ func (a *Agent) Chat(ctx context.Context, question string, conversationID uint) 
 	return answer, nil
 }
 
+// 从运行结果格式化答案
 func answerFromResult(result runtime.RunResult) Answer {
 	calls := result.State.AllCalls()
 	total := useage.Sum(calls)
@@ -171,7 +180,8 @@ func answerFromResult(result runtime.RunResult) Answer {
 	}
 }
 
-func (a *Agent) saveRun(ctx context.Context, result runtime.RunResult) {
+// 保存运行结果
+func (a *ChatService) saveRun(ctx context.Context, result runtime.RunResult) {
 	if a.memory == nil || result.State.RunID == "" {
 		return
 	}
@@ -184,7 +194,7 @@ func (a *Agent) saveRun(ctx context.Context, result runtime.RunResult) {
 		return
 	}
 	total := useage.Sum(result.State.AllCalls())
-	if err := a.memory.SaveAgentRun(ctx, store.AgentRun{
+	if err := a.runStateManager.SaveAgentRun(ctx, types.AgentRun{
 		RunID:            result.State.RunID,
 		ParentRunID:      result.State.ParentRunID,
 		SubagentID:       result.State.SubagentID,
@@ -203,7 +213,7 @@ func (a *Agent) saveRun(ctx context.Context, result runtime.RunResult) {
 	}
 }
 
-// logToolErrors 把运行中可恢复的工具失败记下来。这些失败已经回灌给模型，不影响回答。
+// 把运行中可恢复的工具失败记下来。这些失败已经回灌给模型，不影响回答。 @todo 变成专门的logger
 func logToolErrors(state runtime.RunState) {
 	for _, e := range state.Errors {
 		if e.Fatal {
@@ -220,7 +230,7 @@ func logToolErrors(state runtime.RunState) {
 
 // extractSession 在这一问已经写入会话之后，只提炼还没覆盖到的新消息。
 // 没配提炼器、或这次没有会话时跳过。失败只记日志，不把已经生成的回答变成 500。
-func (a *Agent) extractSession(ctx context.Context, sessionID uint) {
+func (a *ChatService) extractSession(ctx context.Context, sessionID uint) {
 	if a.extracter == nil || sessionID == 0 {
 		return
 	}
@@ -234,7 +244,7 @@ func (a *Agent) extractSession(ctx context.Context, sessionID uint) {
 
 // condenseWindow 在消息超过最近窗口时，把更早的原文收成摘要。
 // 最近的消息保持原文。失败只记日志。
-func (a *Agent) condenseWindow(ctx context.Context, conversationID, sessionID uint) {
+func (a *ChatService) condenseWindow(ctx context.Context, conversationID, sessionID uint) {
 	model := a.model()
 	if a.memory == nil || model == nil || conversationID == 0 || sessionID == 0 {
 		return
@@ -250,7 +260,7 @@ func (a *Agent) condenseWindow(ctx context.Context, conversationID, sessionID ui
 	}
 
 	// 已有简报 + 截止序号。untilSeq 之前的消息已被压缩过，不再重复压缩。
-	brief, untilSeq, err := a.memory.ConversationBrief(ctx, conversationID)
+	brief, untilSeq, err := a.conversationManager.ConversationBrief(ctx, conversationID)
 	if err != nil {
 		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
 		return
@@ -258,7 +268,7 @@ func (a *Agent) condenseWindow(ctx context.Context, conversationID, sessionID ui
 
 	// 获取超过 window 的消息
 	keepFrom := messages[len(messages)-keepRecentMessages].Seq
-	fresh := make([]store.Message, 0)
+	fresh := make([]types.Message, 0)
 	for _, msg := range messages {
 		if msg.Seq < keepFrom && msg.Seq > untilSeq {
 			fresh = append(fresh, msg)
@@ -268,7 +278,8 @@ func (a *Agent) condenseWindow(ctx context.Context, conversationID, sessionID ui
 		return
 	}
 	// 压缩对话得到 简报
-	next, err := model.NewOneTurnChat(ctx, briefPrompt, briefInput(brief, fresh))
+	// @todo  这里调用模型 需要优化 是否每次都需要额外压缩?
+	next, err := model.NewOneTurnChat(ctx, briefPrompt, joinbrief(brief, fresh))
 	if err != nil {
 		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
 		return
@@ -277,12 +288,12 @@ func (a *Agent) condenseWindow(ctx context.Context, conversationID, sessionID ui
 	if next == "" {
 		return
 	}
-	if err := a.memory.UpdateConversationBrief(ctx, conversationID, next, fresh[len(fresh)-1].Seq); err != nil {
+	if err := a.conversationManager.UpdateConversationBrief(ctx, conversationID, next, fresh[len(fresh)-1].Seq); err != nil {
 		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
 	}
 }
 
-func briefInput(brief string, messages []store.Message) string {
+func joinbrief(brief string, messages []types.Message) string {
 	var builder strings.Builder
 	if brief != "" {
 		builder.WriteString("已有摘要：\n")
@@ -300,13 +311,13 @@ func briefInput(brief string, messages []store.Message) string {
 }
 
 // generateTitle 只在标题还是默认值时，用第一问生成标题并写回 conversations。
-func (a *Agent) generateTitle(ctx context.Context, conversationID uint, question string) {
+func (a *ChatService) generateTitle(ctx context.Context, conversationID uint, question string) {
 	model := a.model()
 	if a.memory == nil || model == nil || conversationID == 0 {
 		return
 	}
 
-	current, err := a.memory.ConversationTitle(ctx, conversationID)
+	current, err := a.conversationManager.ConversationTitle(ctx, conversationID)
 	if err != nil {
 		slog.Warn("generate title failed", "conversation_id", conversationID, "error", err)
 		return
@@ -314,7 +325,7 @@ func (a *Agent) generateTitle(ctx context.Context, conversationID uint, question
 	if current != "" && current != defaultConversationTitle {
 		return
 	}
-
+	// 新开对话 生成标题
 	title, err := model.NewOneTurnChat(ctx, titlePrompt, question)
 	if err != nil {
 		slog.Warn("generate title failed", "conversation_id", conversationID, "error", err)
@@ -324,7 +335,7 @@ func (a *Agent) generateTitle(ctx context.Context, conversationID uint, question
 	if title == "" {
 		return
 	}
-	if err := a.memory.UpdateConversationTitle(ctx, conversationID, title); err != nil {
+	if err := a.conversationManager.UpdateConversationTitle(ctx, conversationID, title); err != nil {
 		slog.Warn("generate title failed", "conversation_id", conversationID, "error", err)
 	}
 }
@@ -342,7 +353,8 @@ func cleanTitle(title string) string {
 	return string(runes[:maxConversationTitle])
 }
 
-func (a *Agent) saveTurn(ctx context.Context, sessionID uint, question, answer string) error {
+// 保存单轮对话
+func (a *ChatService) saveTurn(ctx context.Context, sessionID uint, question, answer string) error {
 	if sessionID == 0 {
 		return nil
 	}
@@ -352,7 +364,7 @@ func (a *Agent) saveTurn(ctx context.Context, sessionID uint, question, answer s
 	if a.memory == nil {
 		return nil
 	}
-	return a.memory.AppendMessages(ctx, sessionID, []store.Message{
+	return a.memory.AppendMessages(ctx, sessionID, []types.Message{
 		{Role: "user", Content: question},
 		{Role: "assistant", Content: answer},
 	})

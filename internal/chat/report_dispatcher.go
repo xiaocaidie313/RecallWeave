@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 type ReportConfig struct {
@@ -22,7 +22,7 @@ type ReportConfig struct {
 
 type ReportDispatcher struct {
 	agent          *Agent
-	store          ReportStore
+	types          ReportStore
 	groups         GroupReportStore
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -71,7 +71,7 @@ func StartReportDispatcher(ctx context.Context, agent *Agent, repository ReportS
 		}
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
-	d := &ReportDispatcher{agent: agent, store: repository, groups: groups, ctx: workerCtx, cancel: cancel, done: make(chan struct{}), config: config}
+	d := &ReportDispatcher{agent: agent, types: repository, groups: groups, ctx: workerCtx, cancel: cancel, done: make(chan struct{}), config: config}
 	d.inFlight = make(map[uint]bool)
 	d.deliverySlots = make(chan struct{}, config.DeliveryWorkers)
 	d.synthesisSlots = make(chan struct{}, config.SynthesisWorkers)
@@ -150,7 +150,7 @@ func reportClaimID() (string, error) {
 	return hex.EncodeToString(value[:]), nil
 }
 
-func (d *ReportDispatcher) process(row store.SubagentTask, release func()) {
+func (d *ReportDispatcher) process(row types.SubagentTask, release func()) {
 	defer release()
 	claim, err := reportClaimID()
 	if err != nil {
@@ -167,7 +167,7 @@ func (d *ReportDispatcher) process(row store.SubagentTask, release func()) {
 		}
 	}()
 	ctx, cancel := context.WithTimeout(d.ctx, 3*time.Second)
-	task, ok, err := d.store.Claim(ctx, row.ID, row.ConversationID, claim)
+	task, ok, err := d.types.Claim(ctx, row.ID, row.ConversationID, claim)
 	cancel()
 	if err != nil {
 		if d.ctx.Err() == nil {
@@ -202,7 +202,7 @@ func (d *ReportDispatcher) process(row store.SubagentTask, release func()) {
 		return
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
-	err = d.store.Deliver(ctx, row.ID, row.ConversationID, claim, generated)
+	err = d.types.Deliver(ctx, row.ID, row.ConversationID, claim, generated)
 	cancel()
 	if err != nil {
 		slog.Error("persist automatic report failed", "task_id", row.ID, "error", err)
@@ -210,7 +210,7 @@ func (d *ReportDispatcher) process(row store.SubagentTask, release func()) {
 	}
 }
 
-func (d *ReportDispatcher) fail(row store.SubagentTask, claim, message string, run *store.AgentRun) {
+func (d *ReportDispatcher) fail(row types.SubagentTask, claim, message string, run *types.AgentRun) {
 	if len(message) > 2048 {
 		end := 2048
 		for end > 0 && !utf8.RuneStart(message[end]) {
@@ -220,7 +220,7 @@ func (d *ReportDispatcher) fail(row store.SubagentTask, claim, message string, r
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if err := d.store.Fail(ctx, row.ID, row.ConversationID, claim, message, run); err != nil {
+	if err := d.types.Fail(ctx, row.ID, row.ConversationID, claim, message, run); err != nil {
 		slog.Error("save automatic report failure failed", "task_id", row.ID, "error", err)
 	}
 }

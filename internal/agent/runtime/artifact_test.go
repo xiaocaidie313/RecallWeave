@@ -21,11 +21,11 @@ func TestRunSaveArtifact(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			store, err := artifact.Open(dir)
+			types, err := artifact.Open(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer store.Close()
+			defer types.Close()
 			turns := []llm.Turn{{Content: "# 偏好\n喜欢马思唯，来源：会话 1 消息 23。"}}
 			input := "整理偏好"
 			if save {
@@ -35,7 +35,7 @@ func TestRunSaveArtifact(t *testing.T) {
 					Arguments: `{"title":"偏好","markdown":"# 偏好\n喜欢马思唯，来源：会话 1 消息 23。"}`,
 				}}}}, turns...)
 			}
-			a := agent.NewAgent(1, "test", &scriptedModel{turns: turns}, "", 3, ability.NewArtifactAbility(store))
+			a := agent.NewAgent(1, "test", &scriptedModel{turns: turns}, "", 3, ability.NewArtifactAbility(types))
 			result, err := Run(context.Background(), a, Request{Input: input})
 			if err != nil {
 				t.Fatal(err)

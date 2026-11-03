@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
 func (d *ReportDispatcher) scanGroups(synthesize bool) {
@@ -37,7 +37,7 @@ func (d *ReportDispatcher) scanGroups(synthesize bool) {
 	}
 }
 
-func (d *ReportDispatcher) processGroup(row store.TaskGroup, release func()) {
+func (d *ReportDispatcher) processGroup(row types.TaskGroup, release func()) {
 	defer release()
 	claim, err := reportClaimID()
 	if err != nil {
@@ -95,7 +95,7 @@ func (d *ReportDispatcher) processGroup(row store.TaskGroup, release func()) {
 	}
 }
 
-func (d *ReportDispatcher) failGroup(row store.TaskGroup, claim, message string, run *store.AgentRun) {
+func (d *ReportDispatcher) failGroup(row types.TaskGroup, claim, message string, run *types.AgentRun) {
 	message = clipReportText(message, 2048)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

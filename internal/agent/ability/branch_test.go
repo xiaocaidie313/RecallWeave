@@ -8,10 +8,10 @@ import (
 	"testing"
 
 	"recallweave/internal/llm"
-	"recallweave/internal/store"
+	"recallweave/internal/types"
 )
 
-func branchToolForTest(t *testing.T, messages []store.ContextMessage) llm.Tool {
+func branchToolForTest(t *testing.T, messages []types.ContextMessage) llm.Tool {
 	t.Helper()
 	tools := NewBranchContextAbility(messages).Tools()
 	if len(tools) != 1 || tools[0].Schema.Name != GetMessagesToolName {
@@ -39,7 +39,7 @@ func readBranchMessages(t *testing.T, tool llm.Tool, sessionID uint, start, end 
 
 func TestBranchContextPreservesOriginalAndOwnMessages(t *testing.T) {
 	// The inherited prefix need not have the branch's own session or numbering.
-	tool := branchToolForTest(t, []store.ContextMessage{
+	tool := branchToolForTest(t, []types.ContextMessage{
 		{SessionID: 10, Seq: 3, Role: "user", Content: "旧方案：先保留 PostgreSQL。"},
 		{SessionID: 10, Seq: 8, Role: "assistant", Content: "这是建议，不是用户决定。"},
 		{SessionID: 20, Seq: 1, Role: "user", Content: "在支线研究另一种方案。"},
@@ -68,12 +68,12 @@ func TestBranchContextPreservesOriginalAndOwnMessages(t *testing.T) {
 }
 
 func TestBranchContextOwnsImmutableCopy(t *testing.T) {
-	input := make([]store.ContextMessage, 1, 2)
-	input[0] = store.ContextMessage{SessionID: 10, Seq: 3, Role: "user", Content: "分叉时的原文"}
+	input := make([]types.ContextMessage, 1, 2)
+	input[0] = types.ContextMessage{SessionID: 10, Seq: 3, Role: "user", Content: "分叉时的原文"}
 	tool := branchToolForTest(t, input)
 	input[0].Role = "assistant"
 	input[0].Content = "父会话后来被修改的内容"
-	input = append(input, store.ContextMessage{SessionID: 10, Seq: 4, Role: "user", Content: "分叉之后的父会话消息"})
+	input = append(input, types.ContextMessage{SessionID: 10, Seq: 4, Role: "user", Content: "分叉之后的父会话消息"})
 	got := readBranchMessages(t, tool, 10, 1, 10)
 	want := []messageLine{{Seq: 3, Role: "user", Content: "分叉时的原文"}}
 	if !reflect.DeepEqual(got.Messages, want) {
@@ -82,7 +82,7 @@ func TestBranchContextOwnsImmutableCopy(t *testing.T) {
 }
 
 func TestBranchContextRejectsUnknownSessionsAndDoesNotExpandKnownRanges(t *testing.T) {
-	tool := branchToolForTest(t, []store.ContextMessage{{SessionID: 10, Seq: 3, Role: "user", Content: "snapshot"}})
+	tool := branchToolForTest(t, []types.ContextMessage{{SessionID: 10, Seq: 3, Role: "user", Content: "snapshot"}})
 	for _, arguments := range []string{
 		`{"session_id":999,"seq_start":1,"seq_end":1}`,
 		`{"session_id":999,"seq_start":1,"seq_end":50}`,
@@ -105,9 +105,9 @@ func TestBranchContextRejectsUnknownSessionsAndDoesNotExpandKnownRanges(t *testi
 }
 
 func TestBranchContextMessageRangeLimit(t *testing.T) {
-	messages := make([]store.ContextMessage, 51)
+	messages := make([]types.ContextMessage, 51)
 	for i := range messages {
-		messages[i] = store.ContextMessage{SessionID: 10, Seq: i + 1, Role: "user", Content: fmt.Sprint(i + 1)}
+		messages[i] = types.ContextMessage{SessionID: 10, Seq: i + 1, Role: "user", Content: fmt.Sprint(i + 1)}
 	}
 	tool := branchToolForTest(t, messages)
 	for _, bounds := range [][2]int{{1, 50}, {2, 51}} {
@@ -127,7 +127,7 @@ func TestBranchContextMessageRangeLimit(t *testing.T) {
 }
 
 func TestBranchContextRejectsInvalidArguments(t *testing.T) {
-	tool := branchToolForTest(t, []store.ContextMessage{{SessionID: 10, Seq: 1, Role: "user", Content: "original"}})
+	tool := branchToolForTest(t, []types.ContextMessage{{SessionID: 10, Seq: 1, Role: "user", Content: "original"}})
 	for _, arguments := range []string{
 		`not-json`, `null`, `{}`, `[]`,
 		`{"session_id":10,"seq_start":1,"seq_end":1} {}`,
