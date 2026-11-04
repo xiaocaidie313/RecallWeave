@@ -24,7 +24,7 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 	if strings.TrimSpace(req.Input) == "" {
 		return RunResult{}, errors.New("runtime: input is empty")
 	}
-
+	// 生成 run id
 	runID, err := newRunID()
 	if err != nil {
 		return RunResult{}, fmt.Errorf("runtime: generate run id: %w", err)
@@ -77,6 +77,7 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 		}
 	}
 	tools.Register(planTool(&state))
+	//@todo 抽离模块注册  req.Delegator 能否单独抽出来
 	if req.Delegator != nil && req.ParentRunID == "" {
 		budget := &delegationBudget{}
 		tool, err := delegationTool(&state, a, req.Delegator, budget)
@@ -85,6 +86,7 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 		}
 		tools.Register(tool)
 		req.SystemPrompt += "\n" + delegationInstructions
+		// 注册组任务工具
 		if groups, ok := enabledGroups(req.Delegator); ok {
 			groupTools, err := taskGroupTools(&state, a, req.Delegator, groups, budget)
 			if err != nil {
@@ -95,6 +97,7 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 			}
 			req.SystemPrompt += "\n" + groupInstructions
 		}
+		// 注册后台任务工具
 		if background, ok := enabledBackground(req.Delegator); ok {
 			for _, tool := range backgroundTools(&state, a, background) {
 				tools.Register(tool)
@@ -114,6 +117,7 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 		conversation = buildConversation(a, req)
 	} else {
 		// 如果有切片 说明是续期 复活原对话
+		// 中断恢复对话恢复
 		conversation, err = resumeConversation(a, req)
 		if err != nil {
 			state.ContextError = err.Error()
@@ -128,6 +132,7 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 		state.CurrentRound = round
 
 		started := time.Now()
+		// 真实一次模型调用
 		turn, err := a.Model.Next(ctx, conversation, tools.Schemas())
 		call := useage.ModelCallStats{
 			RunID:     state.RunID,
@@ -137,7 +142,7 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 			LatencyMs: time.Since(started).Milliseconds(),
 		}
 		state.Calls = append(state.Calls, call)
-		useage.Record(call)
+		useage.SlogRecord(call)
 		if err != nil {
 			wrapped := fmt.Errorf("runtime: chat generation failed at round %d: %w", round, err)
 			status := RunFailed
@@ -168,11 +173,12 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 			finish(status)
 			return RunResult{Content: turn.Content, State: state}, nil
 		}
-
+		// 调用每次turn的预期工具
 		for _, call := range turn.ToolCalls {
 			if err := ctx.Err(); err != nil {
 				return fail(round, err, RunCancelled)
 			}
+			// 一次工具执行的步骤信息
 			step := RunStep{
 				Round:     round,
 				ToolName:  call.Name,
@@ -183,8 +189,9 @@ func Run(ctx context.Context, a *agent.Agent, req Request) (RunResult, error) {
 			}
 
 			toolStarted := time.Now()
+			// 执行工具
 			output, err := tools.Run(ctx, call.Name, call.Arguments)
-			step.LatencyMs = time.Since(toolStarted).Milliseconds()
+			step.LatencyMs = time.Since(toolStarted).Milliseconds() // 一次工具执行时间
 			if err != nil {
 				// 工具失败不中断，把原因回灌给模型，让它换个问法或换个工具。
 				step.Error = err.Error()

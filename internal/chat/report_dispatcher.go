@@ -21,7 +21,7 @@ type ReportConfig struct {
 }
 
 type ReportDispatcher struct {
-	agent          *Agent
+	agent          *ChatService
 	types          ReportStore
 	groups         GroupReportStore
 	ctx            context.Context
@@ -36,7 +36,7 @@ type ReportDispatcher struct {
 	wake           chan struct{}
 }
 
-func StartReportDispatcher(ctx context.Context, agent *Agent, repository ReportStore, config ReportConfig) (*ReportDispatcher, error) {
+func StartReportDispatcher(ctx context.Context, agent *ChatService, repository ReportStore, config ReportConfig) (*ReportDispatcher, error) {
 	if ctx == nil || agent == nil || repository == nil {
 		return nil, fmt.Errorf("chat: report dispatcher dependencies are required")
 	}

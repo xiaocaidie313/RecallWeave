@@ -9,7 +9,7 @@ import (
 )
 
 func TestProjectDecisionFixturePreservesAttribution(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "testdata", "project-decisions.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "project-decisions.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,10 +13,10 @@ import (
 )
 
 type ChatHandler struct {
-	agent *chat.Agent
+	agent *chat.ChatService
 }
 
-func NewChatHandler(agent *chat.Agent) *ChatHandler {
+func NewChatHandler(agent *chat.ChatService) *ChatHandler {
 	return &ChatHandler{agent: agent}
 }
 

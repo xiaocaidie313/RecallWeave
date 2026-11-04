@@ -124,6 +124,9 @@ func delegationTool(state *RunState, parent *agent.Agent, delegator Delegator, b
 			if err != nil {
 				return "", err
 			}
+			if budget.started {
+				return "", fmt.Errorf("delegate_task: this Run already used its one delegation")
+			}
 			if choices != nil {
 				if request.Agent == "" {
 					request.Agent = defaultAgent
@@ -134,9 +137,6 @@ func delegationTool(state *RunState, parent *agent.Agent, delegator Delegator, b
 			} else if request.Agent != "" {
 				return "", fmt.Errorf("delegate_task: this delegator does not expose named agents")
 			}
-			if budget.started {
-				return "", fmt.Errorf("delegate_task: this Run already used its one delegation")
-			}
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
@@ -144,6 +144,7 @@ func delegationTool(state *RunState, parent *agent.Agent, delegator Delegator, b
 				if !backgroundEnabled {
 					return "", fmt.Errorf("delegate_task: background execution is unavailable")
 				}
+				// 提交后台任务
 				task, submitErr := background.Submit(ctx, DelegationParent{
 					RunID: state.RunID, ConversationID: state.ConversationID, Agent: parent,
 				}, request)

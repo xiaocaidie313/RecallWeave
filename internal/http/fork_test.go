@@ -148,7 +148,7 @@ func TestForkStorageErrorsMapToHTTPStatus(t *testing.T) {
 }
 
 func TestChatRouteUsesRenamedService(t *testing.T) {
-	service := chat.NewAgent(agent.NewAgent(1, "test", nil, "", 3), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "test", nil, "", 3), nil, nil)
 	router := NewRouter(nil, nil, NewChatHandler(service), nil)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, forkHTTPRequest("/api/chat/1", `{"question":"你好"}`))

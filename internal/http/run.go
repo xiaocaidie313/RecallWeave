@@ -10,8 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-var ErrConversationNotFound = errors.New("run: conversation not found")
-
 type RunHandler struct {
 	RM *run.RunManager
 }

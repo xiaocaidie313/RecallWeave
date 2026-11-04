@@ -18,6 +18,7 @@ import (
 	"recallweave/internal/artifact"
 	"recallweave/internal/chat"
 	"recallweave/internal/config"
+	"recallweave/internal/conversation"
 	"recallweave/internal/db"
 	"recallweave/internal/events"
 	"recallweave/internal/extract"
@@ -27,6 +28,7 @@ import (
 	appmcp "recallweave/internal/mcp"
 	"recallweave/internal/memory"
 	"recallweave/internal/retrieval"
+	"recallweave/internal/run"
 	"recallweave/internal/skill"
 )
 
@@ -158,8 +160,11 @@ func main() {
 		}
 	}()
 	reportStore := chat.NewReportStore(database)
-	chatService := chat.NewAgent(recall, memoryManger, extracter).
-		WithDelegator(delegator).WithTurnWriter(reportStore)
+	conversationManager := conversation.NewConversationManager(database)
+	runManager := run.NewRunManager(database)
+	chatService := chat.NewChatService(recall, memoryManger, extracter).
+		WithDelegator(delegator).WithTurnWriter(reportStore).
+		WithConversationManager(conversationManager).WithRunManager(runManager)
 	reports, err := chat.StartReportDispatcher(serviceCtx, chatService, reportStore, chat.ReportConfig{})
 	if err != nil {
 		logger.Error("failed to start automatic reports", "error", err)
@@ -178,7 +183,7 @@ func main() {
 		apphttp.NewIngestHandler(ingest.NewService(database, extracter)),
 		apphttp.NewExtractHandler(extracter),
 		apphttp.NewChatHandler(chatService),
-		apphttp.NewConversationHandler(memoryManger),
+		apphttp.NewConversationHandler(memoryManger).Use(conversationManager, runManager),
 	)
 	apphttp.MountSubagentTasks(r, apphttp.NewSubagentTaskHandler(delegator))
 	apphttp.MountTaskGroups(r, apphttp.NewTaskGroupHandler(delegator))

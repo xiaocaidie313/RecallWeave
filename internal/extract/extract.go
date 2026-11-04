@@ -382,11 +382,11 @@ func allowedTags() []string {
 }
 
 func allowedContentTypes() []string {
-	types := make([]string, 0, len(types.ContentTypes))
+	allowed := make([]string, 0, len(types.ContentTypes))
 	for _, contentType := range types.ContentTypes {
-		types = append(types, string(contentType))
+		allowed = append(allowed, string(contentType))
 	}
-	return types
+	return allowed
 }
 
 func firstLine(content string) string {

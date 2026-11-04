@@ -33,7 +33,7 @@ const groupReportInstructions = `你是当前对话的主助手，负责对一�
 
 // GenerateGroupReport combines typesd results without model calls unless the
 // group explicitly requested synthesis. The caller owns the conversation gate.
-func (a *Agent) GenerateGroupReport(ctx context.Context, group types.TaskGroup, tasks []types.SubagentTask) (GeneratedReport, error) {
+func (a *ChatService) GenerateGroupReport(ctx context.Context, group types.TaskGroup, tasks []types.SubagentTask) (GeneratedReport, error) {
 	if err := ctx.Err(); err != nil {
 		return GeneratedReport{}, err
 	}

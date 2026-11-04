@@ -69,6 +69,7 @@ func (m *Manager) SubmitGroup(ctx context.Context, parent runtime.DelegationPare
 	if err != nil {
 		return runtime.TaskGroup{}, err
 	}
+	// 两个子任务的预设
 	presets := make([]PresetAgent, 2)
 	inputs := make([]string, 2)
 	for i, task := range request.Tasks {
@@ -92,6 +93,7 @@ func (m *Manager) SubmitGroup(ctx context.Context, parent runtime.DelegationPare
 		inputs[i] = "共同目标（只负责本次分配的独立部分）：\n" + request.Goal + "\n\n" + taskInput(runtime.DelegationRequest{Task: task.Task, Context: memberContext, ExpectedOutput: expected})
 	}
 	r := m.backgroundRunner
+	// 预留两个子任务的资源
 	if err := r.reserveGroup(ctx, 2); err != nil {
 		return runtime.TaskGroup{}, err
 	}

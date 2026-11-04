@@ -33,7 +33,7 @@ func TestSlowGroupSynthesisDoesNotBlockDirectDeliveryBehindManySynthesisTasks(t 
 			return llm.Turn{}, ctx.Err()
 		}
 	}}
-	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	ledger, groupID, ids := newGroupLedger()
 	second := ledger.rows[ids[1]]
 	second.Status, second.Error = "failed", "LOOKUP_FAILED"
@@ -89,7 +89,7 @@ func TestSlowSynthesisDoesNotBlockCombinedGroupDelivery(t *testing.T) {
 		<-ctx.Done()
 		return llm.Turn{}, ctx.Err()
 	}}
-	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	ledger, id, ids := newGroupLedger()
 	group := ledger.groups[id]
 	group.ConversationID = 2
@@ -141,7 +141,7 @@ func TestConcurrentReportLanesStillSerializeTheSameConversation(t *testing.T) {
 		<-ctx.Done()
 		return llm.Turn{}, ctx.Err()
 	}}
-	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	firstID, secondID, directID := strings.Repeat("a", 32), strings.Repeat("b", 32), strings.Repeat("c", 32)
 	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{firstID: dispatchTask(1, firstID), secondID: dispatchTask(1, secondID)}}
 	startDispatcher(t, service, ledger)
@@ -180,7 +180,7 @@ func TestBusyConversationDoesNotHideDirectDeliveryBehindFirstPage(t *testing.T) 
 			return llm.Turn{}, ctx.Err()
 		}
 	}}
-	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	ledger := &dispatchLedger{rows: make(map[string]types.SubagentTask)}
 	for i := 0; i < 30; i++ {
 		id := fmt.Sprintf("%032x", i+1)
@@ -236,7 +236,7 @@ func TestReportDispatcherBoundsSynthesisAndWaitsForWorkerCleanup(t *testing.T) {
 		<-cleanupRelease
 		return llm.Turn{}, ctx.Err()
 	}}
-	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	ledger := &dispatchLedger{rows: make(map[string]types.SubagentTask)}
 	for i := 0; i < 12; i++ {
 		id := fmt.Sprintf("%032x", i+1)

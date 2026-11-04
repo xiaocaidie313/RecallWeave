@@ -20,14 +20,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func noDeliveryModel(t *testing.T) (*chat.Agent, *atomic.Int32) {
+func noDeliveryModel(t *testing.T) (*chat.ChatService, *atomic.Int32) {
 	t.Helper()
 	calls := new(atomic.Int32)
 	model := &dispatchModel{next: func(context.Context, *llm.Conversation, []llm.ToolSchema) (llm.Turn, error) {
 		calls.Add(1)
 		return llm.Turn{}, errors.New("direct delivery must not call the model")
 	}}
-	return chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil), calls
+	return chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil), calls
 }
 
 func TestDefaultDirectDeliveryPublishesOriginalResultAndSourcesOverSSE(t *testing.T) {

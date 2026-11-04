@@ -30,7 +30,7 @@ func FromLLM(usage llm.Usage) TokenUsage {
 	}
 }
 
-func Record(stats ModelCallStats) {
+func SlogRecord(stats ModelCallStats) {
 	slog.Info("model call",
 		"run_id", stats.RunID,
 		"model", stats.Model,

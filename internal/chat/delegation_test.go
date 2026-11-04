@@ -15,6 +15,7 @@ import (
 	"recallweave/internal/agent/subagent"
 	"recallweave/internal/llm"
 	"recallweave/internal/memory"
+	"recallweave/internal/run"
 	"recallweave/internal/types"
 	"recallweave/internal/watch/useage"
 
@@ -223,7 +224,7 @@ func TestSaveDelegatedRunsPersistsChildAndParentUsage(t *testing.T) {
 		mock.ExpectQuery(`INSERT INTO "agent_runs"`).WithArgs(row.id, row.parent, "", "", uint(9), row.status, row.input, row.content, sqlmock.AnyArg(), row.prompt, row.completion, int64(0), 0, sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 		mock.ExpectCommit()
 	}
-	NewAgent(nil, memory.NewMemoryManger(database, nil), nil).saveRun(context.Background(), parent)
+	NewChatService(nil, memory.NewMemoryManger(database, nil), nil).WithRunManager(run.NewRunManager(database)).saveRun(context.Background(), parent)
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(fmt.Errorf("child and parent Run persistence: %w", err))
 	}

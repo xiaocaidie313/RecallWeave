@@ -93,6 +93,7 @@ func (p Plan) Validate() error {
 	return nil
 }
 
+// ActiveStep 返回当前正在进行的步骤
 func (p Plan) ActiveStep() string {
 	for _, step := range p.Steps {
 		if step.Status == InProgress {
@@ -102,6 +103,7 @@ func (p Plan) ActiveStep() string {
 	return ""
 }
 
+// HasOpenSteps 返回是否有未完成的步骤,等待或者正在进行中
 func (p Plan) HasOpenSteps() bool {
 	for _, step := range p.Steps {
 		if step.Status == Pending || step.Status == InProgress {
@@ -111,6 +113,7 @@ func (p Plan) HasOpenSteps() bool {
 	return false
 }
 
+// HasUncompletedSteps 返回是否有非完成状态的步骤
 func (p Plan) HasUncompletedSteps() bool {
 	for _, step := range p.Steps {
 		if step.Status != Completed {

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func waitForGateUsers(t *testing.T, a *Agent, owner uint, users int) {
+func waitForGateUsers(t *testing.T, a *ChatService, owner uint, users int) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -24,7 +24,7 @@ func waitForGateUsers(t *testing.T, a *Agent, owner uint, users int) {
 }
 
 func TestConversationGateSerializesReportsAndPrioritizesWaitingUsers(t *testing.T) {
-	a := NewAgent(nil, nil, nil)
+	a := NewChatService(nil, nil, nil)
 	first, err := a.gate.acquire(context.Background(), 7)
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestConversationGateSerializesReportsAndPrioritizesWaitingUsers(t *testing.
 }
 
 func TestConversationGateWaitingUserCancellationReleasesReferences(t *testing.T) {
-	a := NewAgent(nil, nil, nil)
+	a := NewChatService(nil, nil, nil)
 	active, ok := a.TryReportLock(7)
 	if !ok {
 		t.Fatal("initial lock unavailable")
@@ -105,7 +105,7 @@ func TestConversationGateWaitingUserCancellationReleasesReferences(t *testing.T)
 }
 
 func TestConversationGateRejectsAlreadyCancelledUserWithoutTakingLock(t *testing.T) {
-	a := NewAgent(nil, nil, nil)
+	a := NewChatService(nil, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if release, err := a.gate.acquire(ctx, 7); release != nil || !errors.Is(err, context.Canceled) {

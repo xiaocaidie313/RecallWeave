@@ -1,0 +1,32 @@
+[
+  {
+    "title": "会话一",
+    "current_node": "c",
+    "mapping": {
+      "root": {"parent": null, "children": ["a"], "message": {"author": {"role": "system"}, "content": {"parts": ["系统"]}}},
+      "a": {"parent": "root", "children": ["b"], "message": {"author": {"role": "user"}, "content": {"parts": ["第一问"]}}},
+      "b": {"parent": "a", "children": ["c"], "message": {"author": {"role": "assistant"}, "content": {"parts": ["第一答"]}}},
+      "c": {"parent": "b", "children": [], "message": {"author": {"role": "user"}, "content": {"parts": ["追问"]}}}
+    }
+  },
+  {
+    "title": "会话二",
+    "current_node": "c",
+    "mapping": {
+      "root": {"parent": null, "children": ["a"], "message": {"author": {"role": "system"}, "content": {"parts": ["系统"]}}},
+      "a": {"parent": "root", "children": ["b"], "message": {"author": {"role": "assistant"}, "content": {"parts": ["先说结论"]}}},
+      "b": {"parent": "a", "children": ["c"], "message": {"author": {"role": "user"}, "content": {"parts": ["补充"]}}},
+      "c": {"parent": "b", "children": [], "message": {"author": {"role": "assistant"}, "content": {"parts": ["收到"]}}}
+    }
+  },
+  {
+    "title": "会话三",
+    "current_node": "c",
+    "mapping": {
+      "root": {"parent": null, "children": ["a"], "message": {"author": {"role": "system"}, "content": {"parts": ["系统"]}}},
+      "a": {"parent": "root", "children": ["b"], "message": {"author": {"role": "user"}, "content": {"parts": ["第三问"]}}},
+      "b": {"parent": "a", "children": ["c"], "message": {"author": {"role": "assistant"}, "content": {"parts": ["第三答"]}}},
+      "c": {"parent": "b", "children": [], "message": {"author": {"role": "user"}, "content": {"parts": ["再问"]}}}
+    }
+  }
+]

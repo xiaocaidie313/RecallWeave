@@ -250,7 +250,7 @@ func (m *dispatchModel) Next(ctx context.Context, conv *llm.Conversation, schema
 	return turn, err
 }
 
-func startDispatcher(t *testing.T, service *chat.Agent, ledger *dispatchLedger) *chat.ReportDispatcher {
+func startDispatcher(t *testing.T, service *chat.ChatService, ledger *dispatchLedger) *chat.ReportDispatcher {
 	t.Helper()
 	d, err := chat.StartReportDispatcher(context.Background(), service, ledger, chat.ReportConfig{PollInterval: 5 * time.Millisecond, Timeout: time.Second})
 	if err != nil {
@@ -304,7 +304,7 @@ func TestReportDispatcherWaitsForUserAndDoesNotBlockOtherConversation(t *testing
 		reportCalls.Add(1)
 		return llm.Turn{Content: "reported findings", Usage: llm.Usage{PromptTokens: 9}}, nil
 	}}
-	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	id1, id2 := strings.Repeat("a", 32), strings.Repeat("b", 32)
 	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id1: dispatchTask(1, id1), id2: dispatchTask(2, id2)}}
 	userDone := make(chan error, 1)
@@ -342,7 +342,7 @@ func TestReportDispatcherDoesNotRetryModelAfterDeliveryFailureOrRestart(t *testi
 		calls.Add(1)
 		return llm.Turn{Content: "result"}, nil
 	}}
-	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	id := strings.Repeat("a", 32)
 	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id: dispatchTask(1, id)}, deliverError: errors.New("disk unavailable")}
 	d := startDispatcher(t, service, ledger)
@@ -373,7 +373,7 @@ func TestReportDispatcherAndSSEDeliverOnceAcrossTwoTabsAndReplay(t *testing.T) {
 		calls.Add(1)
 		return llm.Turn{Content: "AUTOMATIC_REPORT"}, nil
 	}}
-	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	id := strings.Repeat("a", 32)
 	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id: dispatchTask(1, id)}}
 	ledger.mu.Lock()
@@ -455,7 +455,7 @@ func TestReportDispatcherShutdownRecordsInterruptedGenerationWithoutRetry(t *tes
 		<-ctx.Done()
 		return llm.Turn{}, ctx.Err()
 	}}
-	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	id := strings.Repeat("a", 32)
 	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id: dispatchTask(1, id)}}
 	d := startDispatcher(t, service, ledger)
@@ -488,7 +488,7 @@ func TestReportDispatcherResolvesAmbiguousClaimWithoutCallingModel(t *testing.T)
 		calls.Add(1)
 		return llm.Turn{Content: "unexpected"}, nil
 	}}
-	service := chat.NewAgent(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
 	id := strings.Repeat("a", 32)
 	ledger := &dispatchLedger{rows: map[string]types.SubagentTask{id: dispatchTask(1, id)}, claimError: errors.New("commit acknowledgement lost")}
 	startDispatcher(t, service, ledger)

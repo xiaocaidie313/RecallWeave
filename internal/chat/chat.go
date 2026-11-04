@@ -80,6 +80,16 @@ func NewChatService(core *agent.Agent, memoryManger *memory.MemoryManger, extrac
 	return &ChatService{core: core, memory: memoryManger, extracter: extracter}
 }
 
+func (a *ChatService) WithRunManager(manager *run.RunManager) *ChatService {
+	a.runStateManager = manager
+	return a
+}
+
+func (a *ChatService) WithConversationManager(manager *conversation.ConversationManager) *ChatService {
+	a.conversationManager = manager
+	return a
+}
+
 // WithDelegator is configured once during assembly. Per-run delegation state
 // stays inside runtime.Run, including for already-scoped branch Agents.
 func (a *ChatService) WithDelegator(delegator runtime.Delegator) *ChatService {
@@ -182,7 +192,7 @@ func answerFromResult(result runtime.RunResult) Answer {
 
 // 保存运行结果
 func (a *ChatService) saveRun(ctx context.Context, result runtime.RunResult) {
-	if a.memory == nil || result.State.RunID == "" {
+	if a.runStateManager == nil || result.State.RunID == "" {
 		return
 	}
 	for _, child := range result.State.Children {
@@ -246,7 +256,7 @@ func (a *ChatService) extractSession(ctx context.Context, sessionID uint) {
 // 最近的消息保持原文。失败只记日志。
 func (a *ChatService) condenseWindow(ctx context.Context, conversationID, sessionID uint) {
 	model := a.model()
-	if a.memory == nil || model == nil || conversationID == 0 || sessionID == 0 {
+	if a.memory == nil || a.conversationManager == nil || model == nil || conversationID == 0 || sessionID == 0 {
 		return
 	}
 
@@ -313,7 +323,7 @@ func joinbrief(brief string, messages []types.Message) string {
 // generateTitle 只在标题还是默认值时，用第一问生成标题并写回 conversations。
 func (a *ChatService) generateTitle(ctx context.Context, conversationID uint, question string) {
 	model := a.model()
-	if a.memory == nil || model == nil || conversationID == 0 {
+	if a.conversationManager == nil || model == nil || conversationID == 0 {
 		return
 	}
 

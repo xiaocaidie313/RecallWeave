@@ -73,7 +73,7 @@ func TestGenerateReportUsesOneIsolatedMainRunAndVerifiedSources(t *testing.T) {
 		return llm.Turn{Content: "调查完成，来源：https://example.com/source", Usage: llm.Usage{PromptTokens: 7, CompletionTokens: 3}}, nil
 	}}
 	core := agent.NewAgent(1, "recall", model, "GLOBAL_SKILL_POLICY", 6, agent.NewAbility("dangerous", "dangerous", "GLOBAL_SKILL_POLICY", agent.ToolBox{{Schema: llm.ToolSchema{Name: "save_artifact"}}}))
-	report, err := NewAgent(core, nil, nil).GenerateReport(context.Background(), autoReportFixture(t))
+	report, err := NewChatService(core, nil, nil).GenerateReport(context.Background(), autoReportFixture(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestGenerateReportDefaultsToOriginalResultWithoutModelOrHistory(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewAgent(agent.NewAgent(1, "recall", model, "", 6), memory.NewMemoryManger(database, nil), nil)
+	service := NewChatService(agent.NewAgent(1, "recall", model, "", 6), memory.NewMemoryManger(database, nil), nil)
 	report, err := service.GenerateReport(context.Background(), task)
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestGenerateReportDefaultsToOriginalResultWithoutModelOrHistory(t *testing.
 func TestGenerateReportDirectPartialWorksWithoutConfiguredModel(t *testing.T) {
 	task := autoReportFixture(t)
 	task.DeliveryMode, task.Status, task.Error = delivery.Direct, "partial", "second source unavailable"
-	report, err := NewAgent(nil, nil, nil).GenerateReport(context.Background(), task)
+	report, err := NewChatService(nil, nil, nil).GenerateReport(context.Background(), task)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestGenerateReportDirectRejectsOversizedOriginalInsteadOfTruncating(t *test
 	}
 	child.Content = strings.Repeat("x", (512<<10)+1)
 	task.Result, _ = json.Marshal(child)
-	if _, err := NewAgent(nil, nil, nil).GenerateReport(context.Background(), task); err == nil || !strings.Contains(err.Error(), "storage limit") {
+	if _, err := NewChatService(nil, nil, nil).GenerateReport(context.Background(), task); err == nil || !strings.Contains(err.Error(), "storage limit") {
 		t.Fatalf("oversized original silently lost: %v", err)
 	}
 }
@@ -160,7 +160,7 @@ func TestGenerateReportRejectsUnknownDeliveryModeEvenForFailedTask(t *testing.T)
 	for _, status := range []string{"completed", "failed"} {
 		task := autoReportFixture(t)
 		task.Status, task.DeliveryMode = status, delivery.Combined
-		if _, err := NewAgent(nil, nil, nil).GenerateReport(context.Background(), task); err == nil {
+		if _, err := NewChatService(nil, nil, nil).GenerateReport(context.Background(), task); err == nil {
 			t.Fatal("unsupported single-task delivery mode accepted")
 		}
 	}
@@ -170,7 +170,7 @@ func TestGenerateReportFailureKeepsFailedRunAndDoesNotRetryModel(t *testing.T) {
 	model := &reportTestModel{next: func(context.Context, *llm.Conversation, []llm.ToolSchema) (llm.Turn, error) {
 		return llm.Turn{Usage: llm.Usage{PromptTokens: 11}}, errors.New("provider timed out")
 	}}
-	report, err := NewAgent(agent.NewAgent(1, "recall", model, "", 6), nil, nil).GenerateReport(context.Background(), autoReportFixture(t))
+	report, err := NewChatService(agent.NewAgent(1, "recall", model, "", 6), nil, nil).GenerateReport(context.Background(), autoReportFixture(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestGenerateReportRejectsUnsolicitedToolCallsWithoutExecution(t *testing.T)
 	}}
 	var writes int
 	core := agent.NewAgent(1, "recall", model, "", 6, agent.NewAbility("write", "write", "", agent.ToolBox{{Schema: llm.ToolSchema{Name: "save_artifact"}, Run: func(context.Context, string) (string, error) { writes++; return "saved", nil }}}))
-	report, err := NewAgent(core, nil, nil).GenerateReport(context.Background(), autoReportFixture(t))
+	report, err := NewChatService(core, nil, nil).GenerateReport(context.Background(), autoReportFixture(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestGenerateReportTerminalFailureAndMissingModelHaveDeterministicMessages(t
 	model := &reportTestModel{next: func(context.Context, *llm.Conversation, []llm.ToolSchema) (llm.Turn, error) {
 		panic("unexpected model call")
 	}}
-	service := NewAgent(agent.NewAgent(1, "recall", model, "", 6), nil, nil)
+	service := NewChatService(agent.NewAgent(1, "recall", model, "", 6), nil, nil)
 	for _, status := range []string{"failed", "cancelled", "interrupted"} {
 		task := autoReportFixture(t)
 		task.Status = status
@@ -209,7 +209,7 @@ func TestGenerateReportTerminalFailureAndMissingModelHaveDeterministicMessages(t
 			t.Fatalf("bad deterministic %s: %+v %v", status, report, err)
 		}
 	}
-	report, err := NewAgent(nil, nil, nil).GenerateReport(context.Background(), autoReportFixture(t))
+	report, err := NewChatService(nil, nil, nil).GenerateReport(context.Background(), autoReportFixture(t))
 	if err != nil || !strings.Contains(report.Error, "not configured") || report.Run != nil || len(report.Sources) != 1 {
 		t.Fatalf("missing model not explicit: %+v %v", report, err)
 	}
@@ -219,7 +219,7 @@ func TestGenerateReportTerminalFailureAndMissingModelHaveDeterministicMessages(t
 }
 
 func TestGenerateReportRejectsForeignOrUnfinishedResultsBeforeModel(t *testing.T) {
-	service := NewAgent(agent.NewAgent(1, "recall", &reportTestModel{next: func(context.Context, *llm.Conversation, []llm.ToolSchema) (llm.Turn, error) {
+	service := NewChatService(agent.NewAgent(1, "recall", &reportTestModel{next: func(context.Context, *llm.Conversation, []llm.ToolSchema) (llm.Turn, error) {
 		panic("unexpected model call")
 	}}, "", 6), nil, nil)
 	for _, mutate := range []func(*types.SubagentTask){func(task *types.SubagentTask) { task.ConversationID = 8 }, func(task *types.SubagentTask) { task.SubagentID = "other" }, func(task *types.SubagentTask) { task.RunID = "other" }, func(task *types.SubagentTask) { task.Status = "running" }, func(task *types.SubagentTask) { task.Result = json.RawMessage(`null`) }} {
@@ -258,7 +258,7 @@ func TestGenerateReportLoadsOnlyCurrentConversationRecentHistory(t *testing.T) {
 		}
 		return llm.Turn{Content: "report"}, nil
 	}}
-	service := NewAgent(agent.NewAgent(1, "recall", model, "", 6), memory.NewMemoryManger(database, nil), nil)
+	service := NewChatService(agent.NewAgent(1, "recall", model, "", 6), memory.NewMemoryManger(database, nil), nil)
 	if _, err := service.GenerateReport(context.Background(), autoReportFixture(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +286,7 @@ func TestChatHoldsReportGateDuringUserModelCall(t *testing.T) {
 			return llm.Turn{}, ctx.Err()
 		}
 	}}
-	service := NewAgent(agent.NewAgent(1, "recall", model, "", 6), nil, nil)
+	service := NewChatService(agent.NewAgent(1, "recall", model, "", 6), nil, nil)
 	done := make(chan error, 1)
 	go func() { _, err := service.Chat(context.Background(), "ordinary question", 7); done <- err }()
 	select {
@@ -326,7 +326,7 @@ func (w *reportTestTurnWriter) AppendTurn(_ context.Context, sessionID uint, que
 
 func TestChatTurnWriterReceivesTurnAndPropagatesPersistenceFailure(t *testing.T) {
 	writer := &reportTestTurnWriter{err: errors.New("event transaction failed")}
-	service := NewAgent(nil, nil, nil).WithTurnWriter(writer)
+	service := NewChatService(nil, nil, nil).WithTurnWriter(writer)
 	err := service.saveTurn(context.Background(), 11, "question", "answer")
 	if !errors.Is(err, writer.err) || writer.calls != 1 || writer.sessionID != 11 || writer.question != "question" || writer.answer != "answer" {
 		t.Fatalf("turn writer not used: %+v %v", writer, err)

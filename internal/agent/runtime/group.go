@@ -35,7 +35,7 @@ type GroupDelegationRequest struct {
 	Goal           string      `json:"goal"`
 	Context        string      `json:"context,omitempty"`
 	ExpectedOutput string      `json:"expected_output,omitempty"`
-	DeliveryMode   string      `json:"delivery_mode,omitempty"`
+	DeliveryMode   string      `json:"delivery_mode,omitempty"` //分发模式
 	Tasks          []GroupTask `json:"tasks"`
 }
 
@@ -89,6 +89,7 @@ func taskGroupTools(state *RunState, parent *agent.Agent, delegator Delegator, g
 		"context":         map[string]any{"type": "string", "description": "该子任务必要背景，最多8KiB；共同限制另写顶层context"},
 		"expected_output": map[string]any{"type": "string", "description": "该子任务的结果与来源要求，最多2KiB"},
 	}
+	//@todo 描述简单 2 后面选写成可配置多少个 可行？
 	description := "围绕一个统一目标，一次提交恰好两个相互独立的后台子任务。默认 direct，各成员结束即交付；combined 等齐固定格式合并；仅用户要求比较、筛选或统一判断时 synthesize。与delegate_task共享本Run一次委派动作。"
 	var names []string
 	choices := map[string]bool{}
@@ -111,21 +112,27 @@ func taskGroupTools(state *RunState, parent *agent.Agent, delegator Delegator, g
 	parentInfo := func() DelegationParent {
 		return DelegationParent{RunID: state.RunID, ConversationID: state.ConversationID, Agent: parent}
 	}
-	tool := llm.Tool{
-		Schema: llm.ToolSchema{Name: DelegateTaskGroupToolName, Description: description, Parameters: map[string]any{
-			"type": "object", "additionalProperties": false,
-			"properties": map[string]any{
-				"goal":            map[string]any{"type": "string", "description": "统一目标，最多8KiB"},
-				"context":         map[string]any{"type": "string", "description": "共同背景和用户限制（如禁止联网），最多8KiB"},
-				"expected_output": map[string]any{"type": "string", "description": "统一回报的交付要求，最多2KiB"},
-				"delivery_mode":   map[string]any{"type": "string", "enum": []string{delivery.Direct, delivery.Combined, delivery.Synthesize}, "default": delivery.Direct, "description": "direct 各成员结束即直接交付，不等其他成员；combined 等齐后固定格式列结果，无额外模型调用；仅用户明确要求对照、筛选或统一判断时选 synthesize，额外调用一次主模型。关联或数量本身不构成综合理由"},
-				"tasks":           map[string]any{"type": "array", "minItems": 2, "maxItems": 2, "items": map[string]any{"type": "object", "additionalProperties": false, "properties": memberProperties, "required": []string{"task"}}},
-			}, "required": []string{"goal", "tasks"},
-		}},
+	delegateTaskGroupTool := llm.Tool{
+		Schema: llm.ToolSchema{
+			Name:        DelegateTaskGroupToolName,
+			Description: description,
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"goal":            map[string]any{"type": "string", "description": "统一目标，最多8KiB"},
+					"context":         map[string]any{"type": "string", "description": "共同背景和用户限制（如禁止联网），最多8KiB"},
+					"expected_output": map[string]any{"type": "string", "description": "统一回报的交付要求，最多2KiB"},
+					"delivery_mode":   map[string]any{"type": "string", "enum": []string{delivery.Direct, delivery.Combined, delivery.Synthesize}, "default": delivery.Direct, "description": "direct 各成员结束即直接交付，不等其他成员；combined 等齐后固定格式列结果，无额外模型调用；仅用户明确要求对照、筛选或统一判断时选 synthesize，额外调用一次主模型。关联或数量本身不构成综合理由"},
+					"tasks":           map[string]any{"type": "array", "minItems": 2, "maxItems": 2, "items": map[string]any{"type": "object", "additionalProperties": false, "properties": memberProperties, "required": []string{"task"}}},
+				}, "required": []string{"goal", "tasks"},
+			}},
 		Run: func(ctx context.Context, arguments string) (string, error) {
 			request, err := decodeGroupDelegation(arguments)
 			if err != nil {
 				return "", err
+			}
+			if budget.started {
+				return "", fmt.Errorf("delegate_task_group: this Run already used its one delegation")
 			}
 			for index := range request.Tasks {
 				member := &request.Tasks[index]
@@ -140,12 +147,10 @@ func taskGroupTools(state *RunState, parent *agent.Agent, delegator Delegator, g
 					return "", fmt.Errorf("delegate_task_group: named agents are unavailable")
 				}
 			}
-			if budget.started {
-				return "", fmt.Errorf("delegate_task_group: this Run already used its one delegation")
-			}
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
+			// 提交组任务
 			group, submitErr := groups.SubmitGroup(ctx, parentInfo(), request)
 			if group.GroupID == "" {
 				if submitErr != nil {
@@ -157,25 +162,43 @@ func taskGroupTools(state *RunState, parent *agent.Agent, delegator Delegator, g
 			return encodeTaskGroup(group, submitErr)
 		}}
 	makeAction := func(name, description string, action func(context.Context, DelegationParent, string) (TaskGroup, error)) llm.Tool {
-		return llm.Tool{Schema: llm.ToolSchema{Name: name, Description: description, Parameters: map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"group_id": map[string]any{"type": "string", "description": "提交返回的32位小写十六进制group_id"}}, "required": []string{"group_id"}}}, Run: func(ctx context.Context, arguments string) (string, error) {
-			id, err := decodeTaskGroupID(arguments)
-			if err != nil {
-				return "", fmt.Errorf("%s: %w", name, err)
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-			group, err := action(ctx, parentInfo(), id)
-			if err != nil {
-				return "", fmt.Errorf("%s: %w", name, err)
-			}
-			if group.GroupID != id || group.ConversationID != state.ConversationID {
-				return "", fmt.Errorf("%s: group identity or ownership mismatch", name)
-			}
-			return encodeTaskGroup(group, nil)
-		}}
+		return llm.Tool{
+			Schema: llm.ToolSchema{
+				Name:        name,
+				Description: description,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"group_id": map[string]any{
+							"type":        "string",
+							"description": "提交返回的32位小写十六进制group_id",
+						},
+					},
+					"required": []string{"group_id"},
+				},
+			},
+			Run: func(ctx context.Context, arguments string) (string, error) {
+				id, err := decodeTaskGroupID(arguments)
+				if err != nil {
+					return "", fmt.Errorf("%s: %w", name, err)
+				}
+				if err := ctx.Err(); err != nil {
+					return "", err
+				}
+				group, err := action(ctx, parentInfo(), id)
+				if err != nil {
+					return "", fmt.Errorf("%s: %w", name, err)
+				}
+				if group.GroupID != id || group.ConversationID != state.ConversationID {
+					return "", fmt.Errorf("%s: group identity or ownership mismatch", name)
+				}
+				return encodeTaskGroup(group, nil)
+			},
+		}
 	}
-	return []llm.Tool{tool,
+	return []llm.Tool{
+		delegateTaskGroupTool,
 		makeAction(GetTaskGroupToolName, "查看当前对话的统一任务组状态、各成员结果与来源；运行中不要忙等。", groups.GetGroup),
 		makeAction(CancelTaskGroupToolName, "请求取消当前对话整组子任务；运行中的成员需退出后整组才结束。", groups.CancelGroup),
 	}, nil

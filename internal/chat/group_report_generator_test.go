@@ -53,7 +53,7 @@ func TestGenerateGroupReportCombinesSuccessfulEvidenceAndFailedMemberInOneRun(t 
 		return llm.Turn{Content: "保留历史调查成果；外部调查失败，外部结论仍缺证据。", Usage: llm.Usage{PromptTokens: 13, CompletionTokens: 4}}, nil
 	}}
 	core := agent.NewAgent(1, "recall", model, "GLOBAL_MAIN_POLICY", 6)
-	report, err := NewAgent(core, nil, nil).GenerateGroupReport(context.Background(), group, tasks)
+	report, err := NewChatService(core, nil, nil).GenerateGroupReport(context.Background(), group, tasks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestGenerateGroupReportCombinedPreservesOriginalsInDeclaredOrderWithoutMode
 				t.Fatal("combined delivery called model")
 				return llm.Turn{}, nil
 			}}
-			report, err := NewAgent(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, []types.SubagentTask{tasks[1], tasks[0]})
+			report, err := NewChatService(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, []types.SubagentTask{tasks[1], tasks[0]})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,7 @@ func TestGenerateGroupReportCombinedPreservesOriginalsInDeclaredOrderWithoutMode
 func TestGenerateGroupReportCombinedPartialWorksWithoutConfiguredModel(t *testing.T) {
 	group, tasks := groupReportFixture(t)
 	group.DeliveryMode = delivery.Combined
-	report, err := NewAgent(nil, nil, nil).GenerateGroupReport(context.Background(), group, tasks)
+	report, err := NewChatService(nil, nil, nil).GenerateGroupReport(context.Background(), group, tasks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestGenerateGroupReportRejectsDirectAndUnknownModesWithoutModel(t *testing.
 			t.Fatal("invalid group delivery reached model")
 			return llm.Turn{}, nil
 		}}
-		if _, err := NewAgent(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, tasks); err == nil {
+		if _, err := NewChatService(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, tasks); err == nil {
 			t.Fatalf("group delivery mode %q accepted", mode)
 		}
 		if model.calls != 0 {
@@ -150,7 +150,7 @@ func TestGenerateGroupReportCombinedRejectsOversizedOriginalInsteadOfTruncating(
 	}
 	child.Content = strings.Repeat("x", 512<<10)
 	tasks[0].Result, _ = json.Marshal(child)
-	if _, err := NewAgent(nil, nil, nil).GenerateGroupReport(context.Background(), group, tasks); err == nil || !strings.Contains(err.Error(), "storage limit") {
+	if _, err := NewChatService(nil, nil, nil).GenerateGroupReport(context.Background(), group, tasks); err == nil || !strings.Contains(err.Error(), "storage limit") {
 		t.Fatalf("oversized combined result silently lost: %v", err)
 	}
 }
@@ -171,7 +171,7 @@ func TestGenerateGroupReportRetainsBothSuccessfulSourceSets(t *testing.T) {
 	model := &reportTestModel{next: func(context.Context, *llm.Conversation, []llm.ToolSchema) (llm.Turn, error) {
 		return llm.Turn{Content: "两路资料对照完成。"}, nil
 	}}
-	report, err := NewAgent(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, []types.SubagentTask{tasks[1], tasks[0]})
+	report, err := NewChatService(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, []types.SubagentTask{tasks[1], tasks[0]})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestGenerateGroupReportNoUsableResultDoesNotCallModel(t *testing.T) {
 		t.Fatal("failed group called model")
 		return llm.Turn{}, nil
 	}}
-	report, err := NewAgent(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, tasks)
+	report, err := NewChatService(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, tasks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestGenerateGroupReportFailureKeepsRunAndDoesNotRetry(t *testing.T) {
 	model := &reportTestModel{next: func(context.Context, *llm.Conversation, []llm.ToolSchema) (llm.Turn, error) {
 		return llm.Turn{Usage: llm.Usage{PromptTokens: 17}}, errors.New("model timeout")
 	}}
-	report, err := NewAgent(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, tasks)
+	report, err := NewChatService(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, tasks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestGenerateGroupReportRejectsIncompleteForeignOrWrongMembership(t *testing
 				t.Fatal("invalid group reached model")
 				return llm.Turn{}, nil
 			}}
-			if _, err := NewAgent(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, tasks); err == nil {
+			if _, err := NewChatService(agent.NewAgent(1, "recall", model, "", 4), nil, nil).GenerateGroupReport(context.Background(), group, tasks); err == nil {
 				t.Fatal("invalid group accepted")
 			}
 		})
