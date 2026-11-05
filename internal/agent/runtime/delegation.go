@@ -192,7 +192,10 @@ func SummarizeDelegation(child RunResult, runErr error) DelegationResult {
 		CanFollowUp: child.State.SubagentID != "" && child.State.ContextSnapshot != nil && child.State.ContextError == "",
 		Agent:       child.State.AgentName, Status: child.State.Status,
 		Summary: boundedText(child.Content, 16<<10), Sources: SourcesForRun(child.State),
-		Usage: total.Usage, Calls: len(calls), LatencyMs: total.LatencyMs,
+		Usage:     total.Usage,
+		Calls:     len(calls),
+		LatencyMs: total.LatencyMs,
+		Error:     boundedText(runErr.Error(), 2<<10),
 	}
 	if runErr != nil {
 		reply.Error = boundedText(runErr.Error(), 2<<10)

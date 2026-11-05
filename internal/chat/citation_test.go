@@ -18,13 +18,13 @@ func TestCitationsFromStepsRequiresGetMessages(t *testing.T) {
 		t.Fatalf("marshal hits: %v", err)
 	}
 
-	if citations := citationsFromSteps([]runtime.RunStep{
+	if citations := verifiedCitations([]runtime.RunStep{
 		{ToolName: ability.SearchMemoriesToolName, Result: string(encoded)},
 	}); len(citations) != 0 {
 		t.Fatalf("search-only hits should not become citations, got %+v", citations)
 	}
 
-	citations := citationsFromSteps([]runtime.RunStep{
+	citations := verifiedCitations([]runtime.RunStep{
 		{ToolName: ability.SearchMemoriesToolName, Result: string(encoded)},
 		{ToolName: ability.SearchMemoriesToolName, Result: string(encoded)},
 		{ToolName: ability.SearchMemoriesToolName, Error: "db is down", Result: string(encoded)},
@@ -53,18 +53,18 @@ func TestCitationsRequireReturnedMessages(t *testing.T) {
 	for _, result := range []string{`{"session_id":1,"messages":[]}`, `{"session_id":1}`, `{`} {
 		steps := []runtime.RunStep{search, {ToolName: ability.GetMessagesToolName,
 			Arguments: `{"session_id":1,"seq_start":1,"seq_end":5}`, Result: result}}
-		if got := citationsFromSteps(steps); len(got) != 0 {
+		if got := verifiedCitations(steps); len(got) != 0 {
 			t.Fatalf("empty or invalid result %q produced citations: %+v", result, got)
 		}
 	}
 	steps := []runtime.RunStep{search, {ToolName: ability.GetMessagesToolName,
 		Result: `{"session_id":1,"messages":[{"seq":2,"content":"原文"},{"seq":4,"content":"另一条原文"}]}`}}
-	got := citationsFromSteps(steps)
+	got := verifiedCitations(steps)
 	if len(got) != 2 || got[0].SeqStart != 2 || got[0].SeqEnd != 2 || got[1].SeqStart != 4 || got[1].SeqEnd != 4 {
 		t.Fatalf("citations should only include returned messages: %+v", got)
 	}
 	steps[1].Error = "db is down"
-	if got := citationsFromSteps(steps); len(got) != 0 {
+	if got := verifiedCitations(steps); len(got) != 0 {
 		t.Fatalf("failed tool produced citations: %+v", got)
 	}
 }

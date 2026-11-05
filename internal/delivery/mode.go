@@ -4,8 +4,8 @@ import "fmt"
 
 const (
 	Direct     = "direct"
-	Combined   = "combined"
-	Synthesize = "synthesize"
+	Combined   = "combined"   //任务组
+	Synthesize = "synthesize" // 模型介入
 )
 
 func NormalizeTaskMode(mode string) (string, error) {

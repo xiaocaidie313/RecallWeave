@@ -56,8 +56,8 @@ func newSubagentID() (string, error) {
 
 // lockSession prevents concurrent continuations in this server process. The
 // repository's revision check also prevents stale writes across Managers.
-func (m *Manager) lockSubagentSession(conversationID uint, id string) (func(), error) {
-	key := fmt.Sprintf("%d/%s", conversationID, id)
+func (m *Manager) lockSubagentSession(conversationID uint, subagentID string) (func(), error) {
+	key := fmt.Sprintf("%d/%s", conversationID, subagentID)
 	m.activeMu.Lock()
 	defer m.activeMu.Unlock()
 	if m.active[key] {
@@ -154,7 +154,13 @@ func (m *Manager) executeSession(ctx context.Context, parent runtime.DelegationP
 }
 
 func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, id string, previous *types.SubagentSession) (runtime.RunResult, error) {
-	request := runtime.Request{ParentRunID: parent.RunID, ConversationID: parent.ConversationID, SubagentID: id, Input: input, CaptureContext: m.ContinuationsEnabled()}
+	request := runtime.Request{
+		ParentRunID:    parent.RunID,
+		ConversationID: parent.ConversationID,
+		SubagentID:     id,
+		Input:          input,
+		CaptureContext: m.ContinuationsEnabled(),
+	}
 	if previous != nil {
 		if len(previous.Snapshot) == 0 || string(previous.Snapshot) == "null" {
 			return runtime.RunResult{}, fmt.Errorf("subagent: this child has no resumable context")
@@ -171,11 +177,17 @@ func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, p
 	}
 	childCtx, cancel := context.WithTimeout(ctx, PresetAgent.Timeout)
 	defer cancel()
+	// 执行子任务
 	result, runErr := runtime.Run(childCtx, child, request)
+	// 如果不能继续 或者 没有运行ID 就返回
 	if !m.ContinuationsEnabled() || result.State.RunID == "" {
 		return result, runErr
 	}
-	policy := sessionPolicy{Version: sessionPolicyVersion, PresetAgent: PresetAgent}
+	policy := sessionPolicy{
+		Version:     sessionPolicyVersion,
+		PresetAgent: PresetAgent,
+	}
+	// 获取子agent的工具
 	for _, schema := range child.Tools().Schemas() {
 		policy.Tools = append(policy.Tools, schema.Name)
 	}
@@ -192,7 +204,17 @@ func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, p
 		return result, err
 	}
 	// 新建 子agent session 记录
-	record := types.SubagentSession{ID: id, ConversationID: parent.ConversationID, AgentName: PresetAgent.Name, Task: task, LatestRunID: result.State.RunID, Status: string(result.State.Status), Snapshot: encodedSnapshot, PresetAgent: encodedPolicy, Sources: encodedSources}
+	record := types.SubagentSession{
+		ID:             id,
+		ConversationID: parent.ConversationID,
+		AgentName:      PresetAgent.Name,
+		Task:           task,
+		LatestRunID:    result.State.RunID,
+		Status:         string(result.State.Status),
+		Snapshot:       encodedSnapshot,
+		PresetAgent:    encodedPolicy,
+		Sources:        encodedSources,
+	}
 	// Save completed/failed work even if the HTTP request has been cancelled.
 	saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer saveCancel()
@@ -213,7 +235,10 @@ func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, p
 			if previous != nil {
 				key := fmt.Sprintf("%d/%s", parent.ConversationID, id)
 				m.activeMu.Lock()
-				m.unsaved[key] = unsavedCheckpoint{Revision: previous.Revision, RunID: previous.LatestRunID}
+				m.unsaved[key] = unsavedCheckpoint{
+					Revision: previous.Revision,
+					RunID:    previous.LatestRunID,
+				}
 				m.activeMu.Unlock()
 			}
 		}

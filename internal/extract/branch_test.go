@@ -62,7 +62,7 @@ func TestBranchExtractionBlockedAtBothPublicEntrypoints(t *testing.T) {
 			if mode == "full" {
 				count, err = extractor.ExtractSessionToMemory(context.Background(), 10)
 			} else {
-				count, err = extractor.ExtractNewToMemory(context.Background(), 10)
+				count, err = extractor.ExtractIncrementalToMemory(context.Background(), 10)
 			}
 			if count != 0 || !errors.Is(err, types.ErrBranchMemoryPrivate) || probe.calls != 0 {
 				t.Fatalf("branch extraction escaped guard: count=%d err=%v model_calls=%d", count, err, probe.calls)
@@ -133,7 +133,7 @@ func TestScopeFailureDoesNotReachExtraction(t *testing.T) {
 		WithArgs(sqlmock.AnyArg(), types.ExtractFailed, sqlmock.AnyArg(), 10).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	if count, err := extractor.ExtractNewToMemory(context.Background(), 10); count != 0 || err == nil || probe.calls != 0 {
+	if count, err := extractor.ExtractIncrementalToMemory(context.Background(), 10); count != 0 || err == nil || probe.calls != 0 {
 		t.Fatalf("scope failure escaped: count=%d err=%v model_calls=%d", count, err, probe.calls)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

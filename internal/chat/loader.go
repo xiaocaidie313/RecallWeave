@@ -65,10 +65,9 @@ func (a *ChatService) loadContext(ctx context.Context, conversationID uint, ques
 		preload.History = append(preload.History, llm.Message{Seq: message.Seq, Role: message.Role,
 			Content: fmt.Sprintf("【继承原文：会话 %d，消息 %d】\n%s", message.SessionID, message.Seq, message.Content)})
 	}
-	// 获取摘要
 	brief, untilSeq := conversation.Brief, conversation.BriefUntilSeq
 	if brief != "" {
-		preload.Background = append(preload.Background, "此前对话摘要：\n"+brief)
+		preload.Background = append(preload.Background, "此前对话简报：\n"+brief)
 	}
 	//@todo  session
 	messages, err := a.memory.ListMessages(ctx, session.ID)

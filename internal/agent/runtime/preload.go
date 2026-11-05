@@ -15,6 +15,7 @@ type Preload struct {
 
 // buildConversation 按固定顺序组装对话：
 // Agent 说明 + 本次 SystemPrompt → 背景 → 历史 → 本次输入。
+// @todo 不论简单还是复杂对话 都要Preload吗
 func buildConversation(a *agent.Agent, req Request) *llm.Conversation {
 	conv := llm.NewConversation(conversationInstructions(a, req), llm.WithConversationID(req.ConversationID))
 

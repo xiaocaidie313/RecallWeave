@@ -28,7 +28,7 @@ const keepRecentMessages = 20
 
 const titlePrompt = `根据用户的问题给这段对话起一个简短标题。只返回标题本身，不要解释，不要加引号。`
 
-const briefPrompt = `把对话压缩成一份可供后续继续聊天使用的摘要。保留决定、偏好、未完成的事和关键事实。只返回摘要本身，不要解释。`
+const briefPrompt = `把对话压缩成一份可供后续继续聊天使用的简报。保留决定、偏好、未完成的事和关键事实。只返回简报本身，不要解释。`
 
 // systemPrompt 是问答场景的通用规则。身份由 Agent 的 Role 给出，
 // 记忆工具的用法由 memory ability 的 Instructions 给出，这里不再重复。
@@ -150,14 +150,17 @@ func (a *ChatService) Chat(ctx context.Context, question string, conversationID 
 	}
 
 	stageStarted = time.Now()
+	// 保存单轮对话
 	if err := a.saveTurn(ctx, sessionID, question, result.Content); err != nil {
 		return Answer{}, err
 	}
 	timings.SaveTurnMs = time.Since(stageStarted).Milliseconds() // 标记保存单轮对话时间
 	if conversation == nil || !conversation.IsBranch() {
-		go a.extractSession(context.WithoutCancel(ctx), sessionID)
+		// 开协程 提取会话 成 memory
+		go a.extractSessionToMemory(context.WithoutCancel(ctx), sessionID)
 	}
 	stageStarted = time.Now()
+	// 压缩对话
 	a.condenseWindow(ctx, conversationID, sessionID)
 	timings.CondenseMs = time.Since(stageStarted).Milliseconds() // 标记压缩对话时间
 	timings.TotalMs = time.Since(requestStarted).Milliseconds()
@@ -176,7 +179,7 @@ func answerFromResult(result runtime.RunResult) Answer {
 	total := useage.Sum(calls)
 	return Answer{
 		Text:      result.Content,
-		Citations: citationsFromSteps(result.State.AllSteps()),
+		Citations: verifiedCitations(result.State.AllSteps()),
 		Rounds:    result.State.CurrentRound,
 		RunID:     result.State.RunID,
 		Usage: Usage{
@@ -240,11 +243,11 @@ func logToolErrors(state runtime.RunState) {
 
 // extractSession 在这一问已经写入会话之后，只提炼还没覆盖到的新消息。
 // 没配提炼器、或这次没有会话时跳过。失败只记日志，不把已经生成的回答变成 500。
-func (a *ChatService) extractSession(ctx context.Context, sessionID uint) {
+func (a *ChatService) extractSessionToMemory(ctx context.Context, sessionID uint) {
 	if a.extracter == nil || sessionID == 0 {
 		return
 	}
-	if _, err := a.extracter.ExtractNewToMemory(ctx, sessionID); err != nil {
+	if _, err := a.extracter.ExtractIncrementalToMemory(ctx, sessionID); err != nil {
 		slog.Warn("extract session failed",
 			"session_id", sessionID,
 			"error", err,
@@ -252,7 +255,7 @@ func (a *ChatService) extractSession(ctx context.Context, sessionID uint) {
 	}
 }
 
-// condenseWindow 在消息超过最近窗口时，把更早的原文收成摘要。
+// condenseWindow 在消息超过最近窗口时，把更早的原文收成简报。
 // 最近的消息保持原文。失败只记日志。
 func (a *ChatService) condenseWindow(ctx context.Context, conversationID, sessionID uint) {
 	model := a.model()
@@ -265,6 +268,7 @@ func (a *ChatService) condenseWindow(ctx context.Context, conversationID, sessio
 		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
 		return
 	}
+	// 保留最近小于20条的
 	if len(messages) <= keepRecentMessages {
 		return
 	}
@@ -289,7 +293,7 @@ func (a *ChatService) condenseWindow(ctx context.Context, conversationID, sessio
 	}
 	// 压缩对话得到 简报
 	// @todo  这里调用模型 需要优化 是否每次都需要额外压缩?
-	next, err := model.NewOneTurnChat(ctx, briefPrompt, joinbrief(brief, fresh))
+	next, err := model.NewOneTurnChat(ctx, briefPrompt, joinbrief(brief, fresh)) // 简报 拼接 新消息
 	if err != nil {
 		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
 		return
@@ -306,7 +310,7 @@ func (a *ChatService) condenseWindow(ctx context.Context, conversationID, sessio
 func joinbrief(brief string, messages []types.Message) string {
 	var builder strings.Builder
 	if brief != "" {
-		builder.WriteString("已有摘要：\n")
+		builder.WriteString("已有简报：\n")
 		builder.WriteString(brief)
 		builder.WriteString("\n\n新增对话：\n")
 	}

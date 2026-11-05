@@ -105,7 +105,7 @@ type segmentResponse struct {
 	Segments []Segment `json:"segments"`
 }
 
-// Segment 把整段会话交给模型按话题切分。
+// Segment 把整段会话交给模型按话题切分。返回多段Segment
 func (c *Client) Segment(ctx context.Context, messages []Message, allowedTags, allowedContentTypes []string) ([]Segment, error) {
 	if len(messages) == 0 {
 		return nil, nil
@@ -124,8 +124,8 @@ func (c *Client) Segment(ctx context.Context, messages []Message, allowedTags, a
 	}
 
 	prompt := fmt.Sprintf(segmentPromptTemplate, minSeq, maxSeq, strings.Join(allowedTags, ", "), strings.Join(allowedContentTypes, ", "))
-
-	raw, err := c.completeJSON(ctx, prompt, builder.String())
+	// 交给 模型 单轮 生成segment结果 强制返回 JSON
+	raw, err := c.OneTurnJSON(ctx, prompt, builder.String())
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (c *Client) Segment(ctx context.Context, messages []Message, allowedTags, a
 
 // completeJSON 是单轮、强制返回 JSON 的调用，提炼这类结构化任务用它。
 // 问答走 Next，那边要的是自然语言，不能锁成 JSON。
-func (c *Client) completeJSON(ctx context.Context, systemPrompt, userMessage string) (string, error) {
+func (c *Client) OneTurnJSON(ctx context.Context, systemPrompt, userMessage string) (string, error) {
 	response, err := c.sdk.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 		Model: shared.ChatModel(c.model),
 		Messages: []openai.ChatCompletionMessageParamUnion{

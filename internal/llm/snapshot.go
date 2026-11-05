@@ -32,6 +32,7 @@ func (conv *Conversation) Snapshot() (*ConversationSnapshot, error) {
 	if conv == nil {
 		return nil, fmt.Errorf("llm: cannot snapshot a nil conversation")
 	}
+	// 序列化 conv本身的messages
 	messages, err := json.Marshal(conv.messages)
 	if err != nil {
 		return nil, fmt.Errorf("llm: encode conversation snapshot: %w", err)
@@ -47,7 +48,7 @@ func (conv *Conversation) Snapshot() (*ConversationSnapshot, error) {
 
 // RetypesConversation replaces the first system message with current policy,
 // while preserving all remaining messages, including original tool-call ids
-// and result strings. Restoring never invokes any tool.
+// and result strings. Restoring never invokes any tool.就是把之前的信息全部粘出来到新的conv上
 func RetypesConversation(systemPrompt string, snapshot *ConversationSnapshot, opts ...ConvOption) (*Conversation, error) {
 	if !utf8.ValidString(systemPrompt) {
 		return nil, fmt.Errorf("llm: system prompt must be UTF-8")
@@ -115,10 +116,12 @@ func validateConversationSnapshot(snapshot *ConversationSnapshot) ([]json.RawMes
 	if snapshot == nil || snapshot.Version != ConversationSnapshotVersion {
 		return nil, fmt.Errorf("llm: unsupported conversation snapshot version")
 	}
+	// 检验长度和编码
 	if len(snapshot.Messages) > MaxConversationSnapshotBytes || !utf8.Valid(snapshot.Messages) {
 		return nil, fmt.Errorf("llm: conversation snapshot must be UTF-8 and at most 512 KiB")
 	}
 	encoded, err := json.Marshal(snapshot)
+	// 检验序列化后的长度
 	if err != nil || len(encoded) > MaxConversationSnapshotBytes {
 		return nil, fmt.Errorf("llm: conversation snapshot must be valid JSON and at most 512 KiB")
 	}
@@ -134,12 +137,13 @@ func validateConversationSnapshot(snapshot *ConversationSnapshot) ([]json.RawMes
 	for index, raw := range messages {
 		var message snapshotMessage
 
+		//decode--> 检验字段格式
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&message); err != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			return nil, fmt.Errorf("llm: invalid snapshot message %d: %w", index, err)
 		}
-
+		// 解码-->操作数据
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &fields); err != nil || !snapshotFieldsAllowed(message.Role, fields) {
 			return nil, fmt.Errorf("llm: invalid snapshot fields at message %d", index)
@@ -173,6 +177,7 @@ func validateConversationSnapshot(snapshot *ConversationSnapshot) ([]json.RawMes
 				return nil, fmt.Errorf("llm: empty assistant snapshot message %d", index)
 			}
 			for _, call := range message.ToolCalls {
+				// pending在开始前 应该是空的
 				if call.ID == "" || pending[call.ID] || call.Type != "function" || call.Function.Name == "" || call.Function.Arguments == nil {
 					return nil, fmt.Errorf("llm: invalid or duplicate tool call at snapshot message %d", index)
 				}

@@ -22,23 +22,24 @@ var ErrBackgroundFull = errors.New("subagent: background capacity is full; try a
 var ErrBackgroundUnavailable = errors.New("subagent: background execution is unavailable")
 
 type BackgroundConfig struct {
-	Workers       int
-	QueueCapacity int
+	Workers       int // 工人数量
+	QueueCapacity int // 队列容量
 }
 
+// 后台任务管理器
 type backgroundRunner struct {
-	ctx      context.Context // 上下文
-	cancel   context.CancelFunc
-	types    TaskStore           // 任务存储
-	queue    chan *backgroundJob // 队列
-	slots    chan struct{}       // 占位符
-	mu       sync.Mutex
-	closing  bool
-	jobs     map[string]*backgroundJob     // 工人实体正在执行的任务
-	failures map[string]types.SubagentTask // 失败任务
-	pending  sync.WaitGroup                // 排队情况
-	workers  sync.WaitGroup                // 工人
-	done     chan struct{}
+	ctx       context.Context // 上下文
+	cancel    context.CancelFunc
+	taskStore TaskStore           // 任务存储
+	queue     chan *backgroundJob // 队列
+	slots     chan struct{}       // 占位符
+	mu        sync.Mutex
+	closing   bool
+	jobs      map[string]*backgroundJob     // 工人实体正在执行的任务
+	failures  map[string]types.SubagentTask // 失败任务
+	pending   sync.WaitGroup                // 排队情况
+	workers   sync.WaitGroup                // 工人
+	done      chan struct{}                 // 完成信号
 }
 
 type backgroundJob struct {
@@ -83,10 +84,15 @@ func (m *Manager) StartBackground(ctx context.Context, repository TaskStore, con
 	runnerCtx, cancel := context.WithCancel(ctx)
 	// 总容量
 	capacity := config.Workers + config.QueueCapacity
-	r := &backgroundRunner{ctx: runnerCtx, cancel: cancel, types: repository,
-		queue: make(chan *backgroundJob, capacity),
-		slots: make(chan struct{}, capacity), // 占位符容量 和queue 容量一样
-		jobs:  make(map[string]*backgroundJob), failures: make(map[string]types.SubagentTask), done: make(chan struct{})}
+	r := &backgroundRunner{
+		ctx:       runnerCtx,
+		cancel:    cancel,
+		taskStore: repository,
+		queue:     make(chan *backgroundJob, capacity),
+		slots:     make(chan struct{}, capacity), // 占位符容量 和queue 容量一样
+		jobs:      make(map[string]*backgroundJob),
+		failures:  make(map[string]types.SubagentTask),
+		done:      make(chan struct{})}
 	m.backgroundRunner = r
 	for i := 0; i < config.Workers; i++ {
 		r.workers.Add(1)
@@ -110,7 +116,6 @@ func (r *backgroundRunner) stopAdmission() {
 	r.closing = true
 	r.cancel()
 	r.mu.Unlock()
-
 }
 
 // CloseBackground waits for workers before their model/tool dependencies close.
@@ -150,6 +155,7 @@ func (r *backgroundRunner) reserve(ctx context.Context) error {
 	}
 }
 
+// 提交任务
 func (m *Manager) Submit(ctx context.Context, parent runtime.DelegationParent, request runtime.DelegationRequest) (runtime.BackgroundTask, error) {
 	if !m.BackgroundEnabled() || parent.Agent == nil || parent.Agent.Model == nil || parent.RunID == "" || parent.ConversationID == 0 {
 		return runtime.BackgroundTask{}, ErrBackgroundUnavailable
@@ -206,12 +212,13 @@ func (m *Manager) SubmitFollowUp(ctx context.Context, parent runtime.DelegationP
 	return m.enqueue(ctx, parent, "继续此子任务：\n"+request.Message, previous.Task, PresetAgent, mode, previous.ID, &previous, release)
 }
 
+// 释放占位
 func (m *Manager) abortReservation() {
-	// 释放占位
-	<-m.backgroundRunner.slots
-	m.backgroundRunner.pending.Done()
+	<-m.backgroundRunner.done
+	m.backgroundRunner.pending.Done() // 标记排队完成
 }
 
+// 入队
 func (m *Manager) enqueue(ctx context.Context, parent runtime.DelegationParent, input, task string, PresetAgentConfig PresetAgent, mode, id string, previous *types.SubagentSession, release func()) (runtime.BackgroundTask, error) {
 	r := m.backgroundRunner
 	accepted := false
@@ -228,23 +235,44 @@ func (m *Manager) enqueue(ctx context.Context, parent runtime.DelegationParent, 
 		return runtime.BackgroundTask{}, err
 	}
 	now := time.Now()
-	record := types.SubagentTask{ID: taskID, SubagentID: id, ParentRunID: parent.RunID,
-		ConversationID: parent.ConversationID, AgentName: PresetAgentConfig.Name, Task: task, DeliveryMode: mode, Status: "queued", CreatedAt: now, UpdatedAt: now}
+	record := types.SubagentTask{
+		ID:             taskID,
+		SubagentID:     id,
+		ParentRunID:    parent.RunID,
+		ConversationID: parent.ConversationID,
+		AgentName:      PresetAgentConfig.Name,
+		Task:           task,
+		DeliveryMode:   mode,
+		Status:         "queued",
+		CreatedAt:      now,
+		UpdatedAt:      now}
 	if previous != nil {
 		record.PreviousRunID = previous.LatestRunID
 	}
 	// Freeze the scoped tools before the parent Run returns. The child never
 	// receives the parent's mutable RunState, history, or preloaded memories.
 	child := m.newChild(parent.Agent, PresetAgentConfig)
-	if err := r.types.Create(ctx, &record); err != nil {
+	if err := r.taskStore.Create(ctx, &record); err != nil {
 		return runtime.BackgroundTask{}, err
 	}
 	// 继承runner的 ctx
 	jobCtx, cancel := context.WithCancel(r.ctx)
 	// 只执行一次 release
 	var released sync.Once
-	job := &backgroundJob{record: record, parent: runtime.DelegationParent{RunID: parent.RunID, ConversationID: parent.ConversationID},
-		child: child, presetAgent: PresetAgentConfig, input: input, previous: previous, ctx: jobCtx, cancel: cancel, release: func() { released.Do(release) }}
+	job := &backgroundJob{
+		record: record,
+		parent: runtime.DelegationParent{
+			RunID:          parent.RunID,
+			ConversationID: parent.ConversationID,
+		},
+		child:       child,
+		presetAgent: PresetAgentConfig,
+		input:       input,
+		previous:    previous,
+		ctx:         jobCtx,
+		cancel:      cancel,
+		release:     func() { released.Do(release) },
+	}
 
 	r.mu.Lock()
 	r.jobs[record.ID] = job
@@ -280,8 +308,8 @@ func (m *Manager) backgroundWorkerWorkingJob(r *backgroundRunner) {
 
 func (m *Manager) runBackgroundJob(r *backgroundRunner, job *backgroundJob) {
 	defer func() {
-		job.cancel()
-		job.release()
+		job.cancel()  // 取消任务
+		job.release() // 释放任务
 		r.mu.Lock()
 		delete(r.jobs, job.record.ID)
 		r.mu.Unlock()
@@ -302,7 +330,7 @@ func (m *Manager) runBackgroundJob(r *backgroundRunner, job *backgroundJob) {
 	}()
 	// 单独写库
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	started, err := r.types.Start(ctx, job.record.ID, job.record.ConversationID)
+	started, err := r.taskStore.Start(ctx, job.record.ID, job.record.ConversationID)
 	cancel()
 	if err != nil {
 		var row types.SubagentTask
@@ -367,18 +395,27 @@ func (m *Manager) finishBackground(r *backgroundRunner, row types.SubagentTask, 
 			state, stateErr := json.Marshal(result.State)
 			if stateErr == nil {
 				total := useage.Sum(result.State.AllCalls())
-				run = &types.AgentRun{RunID: result.State.RunID, ParentRunID: result.State.ParentRunID,
-					SubagentID: result.State.SubagentID, PreviousRunID: result.State.PreviousRunID, ConversationID: result.State.ConversationID,
-					Status: string(result.State.Status), Input: result.State.Input, Content: result.Content, State: state,
-					PromptTokens: total.Usage.PromptTokens, CompletionTokens: total.Usage.CompletionTokens,
-					LatencyMs: total.LatencyMs, Rounds: result.State.CurrentRound}
+				run = &types.AgentRun{
+					RunID:          result.State.RunID,
+					ParentRunID:    result.State.ParentRunID,
+					SubagentID:     result.State.SubagentID,
+					PreviousRunID:  result.State.PreviousRunID,
+					ConversationID: result.State.ConversationID,
+					Status:         string(result.State.Status),
+					Input:          result.State.Input,
+					Content:        result.Content, State: state,
+					PromptTokens:     total.Usage.PromptTokens,
+					CompletionTokens: total.Usage.CompletionTokens,
+					LatencyMs:        total.LatencyMs,
+					Rounds:           result.State.CurrentRound,
+				}
 			}
 		}
 	}
 	now := time.Now()
 	row.FinishedAt, row.UpdatedAt = &now, now
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	err := r.types.Finish(ctx, &row, run)
+	err := r.taskStore.Finish(ctx, &row, run)
 	cancel()
 	if err == nil || errors.Is(err, ErrTaskConflict) {
 		return
@@ -405,10 +442,23 @@ func (m *Manager) taskView(row types.SubagentTask) (runtime.BackgroundTask, erro
 	if err != nil {
 		return runtime.BackgroundTask{}, err
 	}
-	view := runtime.BackgroundTask{TaskID: row.ID, SubagentID: row.SubagentID, ParentRunID: row.ParentRunID,
-		RunID: row.RunID, PreviousRunID: row.PreviousRunID, ConversationID: row.ConversationID,
-		Agent: row.AgentName, Task: row.Task, Status: row.Status, CancelRequested: row.CancelRequested,
-		Error: row.Error, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt}
+	view := runtime.BackgroundTask{
+		TaskID:          row.ID,
+		SubagentID:      row.SubagentID,
+		ParentRunID:     row.ParentRunID,
+		RunID:           row.RunID,
+		PreviousRunID:   row.PreviousRunID,
+		ConversationID:  row.ConversationID,
+		Agent:           row.AgentName,
+		Task:            row.Task,
+		Status:          row.Status,
+		CancelRequested: row.CancelRequested,
+		Error:           row.Error,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+		StartedAt:       row.StartedAt,
+		FinishedAt:      row.FinishedAt,
+	}
 	view.GroupID = row.GroupID
 	view.DeliveryMode = mode
 	view.ReportStatus, view.ReportRunID, view.ReportMessageID = row.ReportStatus, row.ReportRunID, row.ReportMessageID
@@ -438,7 +488,7 @@ func (m *Manager) GetTask(ctx context.Context, parent runtime.DelegationParent, 
 	if !m.BackgroundEnabled() {
 		return runtime.BackgroundTask{}, ErrBackgroundUnavailable
 	}
-	row, err := m.backgroundRunner.types.Load(ctx, taskID, parent.ConversationID)
+	row, err := m.backgroundRunner.taskStore.Load(ctx, taskID, parent.ConversationID)
 	if err != nil {
 		return runtime.BackgroundTask{}, err
 	}
@@ -458,7 +508,7 @@ func (m *Manager) ListTasks(ctx context.Context, conversationID uint) ([]runtime
 	if !m.BackgroundEnabled() {
 		return nil, ErrBackgroundUnavailable
 	}
-	rows, err := m.backgroundRunner.types.List(ctx, conversationID, 20)
+	rows, err := m.backgroundRunner.taskStore.List(ctx, conversationID, 20)
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +535,7 @@ func (m *Manager) CancelTask(ctx context.Context, parent runtime.DelegationParen
 	if !m.BackgroundEnabled() {
 		return runtime.BackgroundTask{}, ErrBackgroundUnavailable
 	}
-	row, err := m.backgroundRunner.types.RequestCancel(ctx, taskID, parent.ConversationID)
+	row, err := m.backgroundRunner.taskStore.RequestCancel(ctx, taskID, parent.ConversationID)
 	if err != nil {
 		return runtime.BackgroundTask{}, err
 	}

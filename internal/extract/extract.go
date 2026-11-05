@@ -68,20 +68,21 @@ func (e *ExtractExcuter) extractSessionToMemory(ctx context.Context, sessionID u
 	return len(memories), nil
 }
 
-// ExtractNew 只提炼上次覆盖序号之后的新消息，已有记忆保留。
-// 手动的 ExtractSession 仍会删掉旧记忆再整段重写。
+// ExtractIncrementalToMemory 只提炼上次覆盖序号之后的新消息，已有记忆保留。
+// 手动的 ExtractSessionToMemory 仍会删掉旧记忆再整段重写。
 // 摘要失败做降级 ----> llm 自动重新提炼信息
-func (e *ExtractExcuter) ExtractNewToMemory(ctx context.Context, sessionID uint) (int, error) {
+func (e *ExtractExcuter) ExtractIncrementalToMemory(ctx context.Context, sessionID uint) (int, error) {
 	if err := e.checkGlobalExtraction(ctx, sessionID); err != nil {
 		e.markExtract(ctx, sessionID, err)
 		return 0, err
 	}
-	count, err := e.extractNewToMemory(ctx, sessionID)
+	count, err := e.extractIncrementalToMemory(ctx, sessionID)
 	e.markExtract(ctx, sessionID, err)
 	return count, err
 }
 
-func (e *ExtractExcuter) extractNewToMemory(ctx context.Context, sessionID uint) (int, error) {
+func (e *ExtractExcuter) extractIncrementalToMemory(ctx context.Context, sessionID uint) (int, error) {
+	// 某一session的message
 	messages, err := e.GetMessages(ctx, sessionID)
 	if err != nil {
 		return 0, err
@@ -89,13 +90,15 @@ func (e *ExtractExcuter) extractNewToMemory(ctx context.Context, sessionID uint)
 	if len(messages) == 0 {
 		return 0, nil
 	}
-
+	// 获取覆盖的序号 获取最后一条记忆的序号 获得最大seq序号
 	covered, err := e.coveredSeq(ctx, sessionID)
 	if err != nil {
 		return 0, err
 	}
+	// 获取新的消息  @todo是不是有点浪费？ 获取的session下全部message 但是只要大于 covered  极端情况就只有一条
 	fresh := make([]types.Message, 0, len(messages))
 	for _, msg := range messages {
+		// 如果消息的序号大于覆盖的序号，则添加到新的消息中
 		if msg.Seq > covered {
 			fresh = append(fresh, msg)
 		}
@@ -103,14 +106,17 @@ func (e *ExtractExcuter) extractNewToMemory(ctx context.Context, sessionID uint)
 	if len(fresh) == 0 {
 		return 0, nil
 	}
-
+	// fresh里存的是全新的message
+	// 生成记忆从message
 	memories := e.generateMemoryFromMessage(ctx, sessionID, fresh)
+	// 写入记忆
 	if err := e.db.WithContext(ctx).Create(&memories).Error; err != nil {
 		return 0, err
 	}
 	return len(memories), nil
 }
 
+// 标记提取状态
 func (e *ExtractExcuter) markExtract(ctx context.Context, sessionID uint, extractErr error) {
 	if e.db == nil {
 		return
@@ -133,6 +139,7 @@ func (e *ExtractExcuter) markExtract(ctx context.Context, sessionID uint, extrac
 	}
 }
 
+// 获取覆盖的序号 获取最后一条记忆的序号。即最大序号
 func (e *ExtractExcuter) coveredSeq(ctx context.Context, sessionID uint) (int, error) {
 	var row struct {
 		Seq int
@@ -144,6 +151,7 @@ func (e *ExtractExcuter) coveredSeq(ctx context.Context, sessionID uint) (int, e
 	return row.Seq, err
 }
 
+// 生成记忆从message 通过将大段message 切断成多段segment 每段segment 生成一条记忆
 func (e *ExtractExcuter) generateMemoryFromMessage(ctx context.Context, sessionID uint, messages []types.Message) []types.Memory {
 	segments := e.segment(ctx, messages)
 	memories := make([]types.Memory, 0, len(segments))
@@ -191,6 +199,7 @@ func (e *ExtractExcuter) GetMessages(ctx context.Context, sessionID uint) ([]typ
 }
 
 // #2 切段。长会话按批交给模型，单批失败只降级该批。
+
 func (e *ExtractExcuter) segment(ctx context.Context, messages []types.Message) []llm.Segment {
 	if len(messages) == 0 {
 		return nil
@@ -204,7 +213,7 @@ func (e *ExtractExcuter) segment(ctx context.Context, messages []types.Message) 
 }
 
 func (e *ExtractExcuter) segmentBatch(ctx context.Context, messages []types.Message) []llm.Segment {
-	fallback := []llm.Segment{wholeSessionSegment(messages)}
+	fallback := []llm.Segment{wholeSessionSegment(messages)} // 把 原文直接转化格式成segment
 	if e.segmenter == nil {
 		return fallback
 	}
@@ -241,6 +250,7 @@ func (e *ExtractExcuter) segmentBatch(ctx context.Context, messages []types.Mess
 	return valid
 }
 
+// 分割消息批次 一组要么条数大于1且大于最大条数 要么 字符数大于最大字符数
 func splitMessageBatches(messages []types.Message) [][]types.Message {
 	if len(messages) == 0 {
 		return nil
@@ -252,8 +262,11 @@ func splitMessageBatches(messages []types.Message) [][]types.Message {
 		end := start
 		chars := 0
 		for end < len(messages) {
+			// 计算下一组消息的字符数
 			nextChars := chars + utf8.RuneCountInString(messages[end].Content)
+			// 计算下一组消息的条数
 			nextCount := end - start + 1
+			// 如果下一组消息的条数大于1且大于最大条数或字符数大于最大字符数，则结束
 			if nextCount > 1 && (nextCount > segmentBatchMaxMessages || nextChars > segmentBatchMaxChars) {
 				break
 			}

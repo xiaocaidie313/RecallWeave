@@ -17,9 +17,10 @@ type Citation struct {
 	Title     string `json:"title"`
 }
 
-// citationsFromSteps 只收被 get_messages 核对过的记忆。
+// verifiedCitations 只收被 get_messages 核对过的记忆。
 // 引用范围只包含工具实际返回的消息，不使用模型请求的范围推断原文。
-func citationsFromSteps(steps []runtime.RunStep) []Citation {
+func verifiedCitations(steps []runtime.RunStep) []Citation {
+	// step的号称的用到的session的 那些seq号的msg
 	verified := verifiedMessages(steps)
 	if len(verified) == 0 {
 		return nil
@@ -39,7 +40,7 @@ func citationsFromSteps(steps []runtime.RunStep) []Citation {
 			if _, seen := cited[hit.MemoryID]; seen {
 				continue
 			}
-			// 定位真实的原文位置 真实区间  不会拓展
+			// 将号称的seq区间 以 真实的工具的返回seq为依据 得到真实的seq区间
 			spans := citedSpans(verified[hit.SessionID], hit.SeqStart, hit.SeqEnd)
 			if len(spans) == 0 {
 				continue
@@ -86,9 +87,9 @@ func verifiedMessages(steps []runtime.RunStep) map[uint]map[int]struct{} {
 	return verified
 }
 
-func citedSpans(messages map[int]struct{}, start, end int) [][2]int {
+func citedSpans(seqset map[int]struct{}, start, end int) [][2]int {
 	var seqs []int
-	for seq := range messages {
+	for seq := range seqset {
 		if seq >= start && seq <= end {
 			seqs = append(seqs, seq)
 		}
@@ -98,9 +99,10 @@ func citedSpans(messages map[int]struct{}, start, end int) [][2]int {
 	for _, seq := range seqs {
 		// 大于前一个区间的右边界+1，则新增一个区间
 		if len(spans) == 0 || seq > spans[len(spans)-1][1]+1 {
-
+			// [2,3] ----> [2,3] [5,5]
 			spans = append(spans, [2]int{seq, seq})
 		} else {
+			// 刚好是当前最后seq的下一个 则拓展右边区间 [2,2]--->[2,3]
 			// 拓展右边区间 刚好是当前最后seq的下一个
 			spans[len(spans)-1][1] = seq
 		}

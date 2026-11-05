@@ -121,9 +121,9 @@ func (s *Service) importText(ctx context.Context, sourceTag types.SourceTag, nam
 	go func() {
 		ctx := context.Background()
 		for _, result := range results {
-			_, err := s.extractExcuter.ExtractNewToMemory(ctx, result.SessionID)
+			_, err := s.extractExcuter.ExtractIncrementalToMemory(ctx, result.SessionID)
 			if err != nil {
-				slog.Warn("extract new failed", "session_id", result.SessionID, "error", err)
+				slog.Warn("extract incremental failed", "session_id", result.SessionID, "error", err)
 			}
 		}
 	}()
