@@ -183,7 +183,9 @@ func main() {
 		apphttp.NewIngestHandler(ingest.NewService(database, extracter)),
 		apphttp.NewExtractHandler(extracter),
 		apphttp.NewChatHandler(chatService),
-		apphttp.NewConversationHandler(memoryManger).Use(conversationManager, runManager),
+		apphttp.NewConversationHandler(conversationManager, memoryManger),
+		apphttp.NewSessionHandler(memoryManger),
+		apphttp.NewRunHandler(runManager),
 	)
 	apphttp.MountSubagentTasks(r, apphttp.NewSubagentTaskHandler(delegator))
 	apphttp.MountTaskGroups(r, apphttp.NewTaskGroupHandler(delegator))

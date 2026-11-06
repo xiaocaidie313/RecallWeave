@@ -101,7 +101,9 @@ func (m *Manager) AvailableAgents() []runtime.DelegationAgent {
 	agents := make([]runtime.DelegationAgent, 0, len(m.order))
 	for _, name := range m.order {
 		PresetAgent := m.PresetAgents[name]
-		agents = append(agents, runtime.DelegationAgent{Name: PresetAgent.Name, Description: PresetAgent.Description})
+		agents = append(agents, runtime.DelegationAgent{
+			Name:        PresetAgent.Name,
+			Description: PresetAgent.Description})
 	}
 	return agents
 }
@@ -133,11 +135,11 @@ func (m *Manager) Delegate(ctx context.Context, parent runtime.DelegationParent,
 		if parent.ConversationID == 0 {
 			return runtime.RunResult{}, fmt.Errorf("subagent: a conversation is required for a persistent child")
 		}
-		id, err := newSubagentID()
+		subagentID, err := newSubagentID()
 		if err != nil {
 			return runtime.RunResult{}, err
 		}
-		return m.executeSession(ctx, parent, taskInput(request), request.Task, PresetAgent, id, nil)
+		return m.executeSession(ctx, parent, taskInput(request), request.Task, PresetAgent, subagentID, nil)
 	}
 	return m.executeSession(ctx, parent, taskInput(request), request.Task, PresetAgent, "", nil)
 }

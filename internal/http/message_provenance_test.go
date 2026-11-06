@@ -70,7 +70,7 @@ func TestMessageHistoryRetypessSavedSSEProvenance(t *testing.T) {
 			path = "/api/conversations/7/messages"
 		}
 		t.Run(path, func(t *testing.T) {
-			manager, mock := forkHTTPManager(t)
+			manager, messageStore, mock := forkHTTPManagers(t)
 			question := provenanceMessage(700, 1, "user", "question")
 			direct := provenanceMessage(701, 2, "assistant", "original result without inline URL")
 			group := provenanceMessage(702, 3, "assistant", "combined saved result")
@@ -83,7 +83,14 @@ func TestMessageHistoryRetypessSavedSSEProvenance(t *testing.T) {
 				WillReturnRows(sqlmock.NewRows([]string{"conversation_id", "kind", "key", "data"}).
 					AddRow(7, "message.created", "message:701", provenancePayload(t, direct, directMeta)).
 					AddRow(7, "message.created", "message:702", provenancePayload(t, group, groupMeta)))
-			messages := readProvenanceResponse(t, path, NewRouter(nil, nil, nil, NewConversationHandler(manager)))
+			var conversationHandler *ConversationHandler
+			var sessionHandler *SessionHandler
+			if conversation {
+				conversationHandler = NewConversationHandler(manager, messageStore)
+			} else {
+				sessionHandler = NewSessionHandler(messageStore)
+			}
+			messages := readProvenanceResponse(t, path, NewRouter(nil, nil, nil, conversationHandler, sessionHandler, nil))
 			if len(messages) != 3 {
 				t.Fatalf("messages missing: %+v", messages)
 			}
@@ -119,7 +126,7 @@ func TestMessageHistoryRejectsMalformedAndForeignProvenance(t *testing.T) {
 	message := provenanceMessage(701, 2, "assistant", "saved result")
 	for _, scenario := range []string{"event owner", "payload owner", "message id", "session", "seq", "role", "content", "key", "kind", "invalid payload", "invalid sources"} {
 		t.Run(scenario, func(t *testing.T) {
-			manager, mock := forkHTTPManager(t)
+			manager, messageStore, mock := forkHTTPManagers(t)
 			expectProvenanceHistory(mock, true, message)
 			eventOwner, payloadOwner, key, kind := 7, 7, "message:701", "message.created"
 			typesd := message
@@ -152,7 +159,7 @@ func TestMessageHistoryRejectsMalformedAndForeignProvenance(t *testing.T) {
 			}
 			mock.ExpectQuery(`SELECT .* FROM "conversation_events" WHERE conversation_id = .*AND kind = .*AND key IN`).WithArgs(7, "message.created", "message:701").
 				WillReturnRows(sqlmock.NewRows([]string{"conversation_id", "kind", "key", "data"}).AddRow(eventOwner, kind, key, raw))
-			messages := readProvenanceResponse(t, "/api/conversations/7/messages", NewRouter(nil, nil, nil, NewConversationHandler(manager)))
+			messages := readProvenanceResponse(t, "/api/conversations/7/messages", NewRouter(nil, nil, nil, NewConversationHandler(manager, messageStore), NewSessionHandler(messageStore), nil))
 			if len(messages) != 1 || messages[0]["content"] != message.Content {
 				t.Fatalf("ordinary history damaged: %+v", messages)
 			}
@@ -170,12 +177,12 @@ func TestMessageHistoryRejectsMalformedAndForeignProvenance(t *testing.T) {
 }
 
 func TestMessageHistoryReportsProvenanceStorageFailure(t *testing.T) {
-	manager, mock := forkHTTPManager(t)
+	_, messageStore, mock := forkHTTPManagers(t)
 	message := provenanceMessage(701, 2, "assistant", "saved result")
 	expectProvenanceHistory(mock, false, message)
 	mock.ExpectQuery(`SELECT .* FROM "conversation_events" WHERE conversation_id = .*AND kind = .*AND key IN`).WithArgs(7, "message.created", "message:701").WillReturnError(errors.New("storage unavailable"))
 	recorder := httptest.NewRecorder()
-	NewRouter(nil, nil, nil, NewConversationHandler(manager)).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/sessions/70/messages", nil))
+	NewRouter(nil, nil, nil, nil, NewSessionHandler(messageStore), nil).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/sessions/70/messages", nil))
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("silently lost provenance: %d %s", recorder.Code, recorder.Body.String())
 	}

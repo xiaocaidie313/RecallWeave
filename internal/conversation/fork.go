@@ -1,4 +1,4 @@
-package memory
+package conversation
 
 import (
 	"context"
@@ -25,17 +25,9 @@ type ForkResult struct {
 	InheritedCount int                `json:"inherited_count"`
 }
 
-func (m *MemoryManger) GetConversation(ctx context.Context, id uint) (types.Conversation, error) {
-	var conversation types.Conversation
-	if err := m.db.WithContext(ctx).Model(&types.Conversation{}).Where("id = ?", id).First(&conversation).Error; err != nil {
-		return types.Conversation{}, err
-	}
-	return conversation, nil
-}
-
 // ForkConversation creates an independent empty chat and a frozen context
 // prefix. Original messages are not copied into the new session or re-extracted.
-func (m *MemoryManger) ForkConversation(ctx context.Context, parentID uint, fromSeq int, title string) (ForkResult, error) {
+func (m *ConversationManager) ForkConversation(ctx context.Context, parentID uint, fromSeq int, title string) (ForkResult, error) {
 	title = strings.TrimSpace(title)
 	if parentID == 0 || fromSeq <= 0 || utf8.RuneCountInString(title) > 191 {
 		return ForkResult{}, ErrInvalidFork
@@ -46,7 +38,7 @@ func (m *MemoryManger) ForkConversation(ctx context.Context, parentID uint, from
 		if err := tx.First(&parent, parentID).Error; err != nil {
 			return err
 		}
-		// 找session 
+		// 找session
 		var source types.Session
 		if err := tx.Where("conversation_id = ? AND source_tag = ?", parentID, types.SourceChat).First(&source).Error; err != nil {
 			return err

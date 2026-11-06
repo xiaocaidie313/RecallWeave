@@ -1,11 +1,21 @@
 package chat
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"recallweave/internal/memory"
 	"recallweave/internal/types"
 )
+
+func TestLoadContextRequiresConversationManager(t *testing.T) {
+	service := NewChatService(nil, memory.NewMemoryManger(nil, nil), nil)
+	_, _, _, _, err := service.loadContext(context.Background(), 7, "继续讨论")
+	if err == nil || !strings.Contains(err.Error(), "conversation manager is not configured") {
+		t.Fatalf("missing conversation manager should fail before querying storage: %v", err)
+	}
+}
 
 func TestFormatImportedBackground(t *testing.T) {
 	got := formatImportedBackground([]importedPiece{{

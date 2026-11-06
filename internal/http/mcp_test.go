@@ -22,7 +22,7 @@ func (t bearerTransport) RoundTrip(request *http.Request) (*http.Response, error
 
 func TestMountMCPWithoutToken(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0.0"}, nil)
-	router := NewRouter(nil, nil, nil, nil)
+	router := NewRouter(nil, nil, nil, nil, nil, nil)
 	MountMCP(router, server, "")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/mcp", nil))
@@ -40,7 +40,7 @@ func TestMCPOverStreamableHTTP(t *testing.T) {
 			OK bool `json:"ok"`
 		}{OK: true}, nil
 	})
-	router := NewRouter(nil, nil, nil, nil)
+	router := NewRouter(nil, nil, nil, nil, nil, nil)
 	MountMCP(router, server, "secret")
 	httpServer := httptest.NewServer(router)
 	defer httpServer.Close()

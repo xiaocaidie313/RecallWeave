@@ -17,8 +17,8 @@ import (
 
 type GormTaskStore struct {
 	db        *gorm.DB
-	events    bool
-	groupMode bool
+	events    bool // 是否开启事件 sse
+	groupMode bool // 是否开启组任务
 }
 
 func (s *GormTaskStore) WithTaskGroups() *GormTaskStore {
@@ -140,6 +140,8 @@ func (s *GormTaskStore) List(ctx context.Context, owner uint, limit int) ([]type
 	err := s.db.WithContext(ctx).Where("conversation_id = ?", owner).Order("created_at DESC").Order("id DESC").Limit(limit).Find(&records).Error
 	return records, err
 }
+
+// 启动任务 更新库状态为 running
 func (s *GormTaskStore) Start(ctx context.Context, id string, owner uint) (bool, error) {
 	if err := s.check(ctx); err != nil {
 		return false, err
@@ -356,10 +358,12 @@ func (s *GormTaskStore) CheckTaskCheckpoint(ctx context.Context, session types.S
 		return fmt.Errorf("subagent: checkpoint run id is required")
 	}
 	var interrupted int64
+	// 检查当前session 在 某一子agent 某一会话 开始在前一次会话后续上， 且已经开始了 但是 又中断了
 	err := s.db.WithContext(ctx).Model(&types.SubagentTask{}).Where("subagent_id = ? AND conversation_id = ? AND previous_run_id = ? AND status = ? AND started_at IS NOT NULL", session.ID, session.ConversationID, session.LatestRunID, "interrupted").Count(&interrupted).Error
 	if err != nil {
 		return err
 	}
+	// 如果有中断状态 说明前一次运行的后续运行有中断 不能继续
 	if interrupted > 0 {
 		return ErrCheckpointUnavailable
 	}

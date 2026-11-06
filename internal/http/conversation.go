@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"recallweave/internal/conversation"
+	"recallweave/internal/memory"
 
 	"github.com/gin-gonic/gin"
 )
@@ -13,13 +14,14 @@ const (
 	defaultListLimit = 20
 )
 
-// conversation 用memory ？
+// ConversationHandler handles conversation metadata, branches, and chat history.
 type ConversationHandler struct {
-	manager *conversation.ConversationManager
+	manager  *conversation.ConversationManager
+	messages *memory.MemoryManger
 }
 
-func NewConversationHandler(manager *conversation.ConversationManager) *ConversationHandler {
-	return &ConversationHandler{manager: manager}
+func NewConversationHandler(manager *conversation.ConversationManager, messages *memory.MemoryManger) *ConversationHandler {
+	return &ConversationHandler{manager: manager, messages: messages}
 }
 
 type createConversationRequest struct {

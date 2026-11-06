@@ -233,6 +233,7 @@ func (s *GormReportStore) InterruptProcessing(ctx context.Context) error {
 		}
 	}
 }
+
 func (s *GormReportStore) AppendTurn(ctx context.Context, sessionID uint, question, answer string) error {
 	if err := s.check(ctx); err != nil {
 		return err

@@ -13,7 +13,15 @@ import (
 	"gorm.io/gorm"
 )
 
-func (h *ConversationHandler) GetSession(c *gin.Context) {
+type SessionHandler struct {
+	memory *memory.MemoryManger
+}
+
+func NewSessionHandler(manager *memory.MemoryManger) *SessionHandler {
+	return &SessionHandler{memory: manager}
+}
+
+func (h *SessionHandler) GetSession(c *gin.Context) {
 	sessionID, ok := sessionIDFromPath(c)
 	if !ok {
 		return
@@ -41,7 +49,7 @@ func (h *ConversationHandler) GetSession(c *gin.Context) {
 	})
 }
 
-func (h *ConversationHandler) ListSessionMemories(c *gin.Context) {
+func (h *SessionHandler) ListSessionMemories(c *gin.Context) {
 	sessionID, ok := sessionIDFromPath(c)
 	if !ok {
 		return
@@ -60,7 +68,7 @@ func (h *ConversationHandler) ListSessionMemories(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"memories": memoryViews(memories)})
 }
 
-func (h *ConversationHandler) ListSessionMessages(c *gin.Context) {
+func (h *SessionHandler) ListSessionMessages(c *gin.Context) {
 	sessionID, ok := sessionIDFromPath(c)
 	if !ok {
 		return
@@ -83,54 +91,6 @@ func (h *ConversationHandler) ListSessionMessages(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"messages": messageViews(messages, deliveries)})
-}
-
-func (h *ConversationHandler) ListConversationMessages(c *gin.Context) {
-	conversationID, ok := conversationIDFromPath(c)
-	if !ok {
-		return
-	}
-
-	conversation, err := h.memory.GetConversation(c.Request.Context(), conversationID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
-		return
-	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load conversation"})
-		return
-	}
-	inherited, err := conversation.InheritedMessages()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid fork snapshot"})
-		return
-	}
-
-	session, err := h.memory.FindChatSession(c.Request.Context(), conversationID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load chat session"})
-		return
-	}
-	if session == nil {
-		c.JSON(http.StatusOK, gin.H{"messages": []any{}, "inherited_messages": inherited})
-		return
-	}
-
-	messages, err := h.memory.ListMessages(c.Request.Context(), session.ID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
-		return
-	}
-	deliveries, err := h.memory.MessageDeliveries(c.Request.Context(), *session, messages)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load message provenance"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"session_id":         session.ID,
-		"messages":           messageViews(messages, deliveries),
-		"inherited_messages": inherited,
-	})
 }
 
 func sessionIDFromPath(c *gin.Context) (uint, bool) {

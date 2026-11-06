@@ -10,6 +10,7 @@ import (
 
 	"recallweave/internal/agent"
 	"recallweave/internal/chat"
+	"recallweave/internal/conversation"
 	"recallweave/internal/memory"
 	"recallweave/internal/types"
 
@@ -19,7 +20,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func forkHTTPManager(t *testing.T) (*memory.MemoryManger, sqlmock.Sqlmock) {
+func forkHTTPManagers(t *testing.T) (*conversation.ConversationManager, *memory.MemoryManger, sqlmock.Sqlmock) {
 	t.Helper()
 	conn, mock, err := sqlmock.New()
 	if err != nil {
@@ -30,7 +31,7 @@ func forkHTTPManager(t *testing.T) (*memory.MemoryManger, sqlmock.Sqlmock) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return memory.NewMemoryManger(db, nil), mock
+	return conversation.NewConversationManager(db), memory.NewMemoryManger(db, nil), mock
 }
 
 func forkHTTPRequest(path, body string) *http.Request {
@@ -49,7 +50,7 @@ func TestForkRejectsInvalidRequestBeforeStorage(t *testing.T) {
 		{"/api/conversations/7/fork", `{"from_seq":"two"}`},
 		{"/api/conversations/7/fork", `not-json`},
 	} {
-		router := NewRouter(nil, nil, nil, NewConversationHandler(nil))
+		router := NewRouter(nil, nil, nil, NewConversationHandler(nil, nil), nil, nil)
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, forkHTTPRequest(tc.path, tc.body))
 		if recorder.Code != http.StatusBadRequest {
@@ -67,11 +68,11 @@ func expectHTTPForkSource(mock sqlmock.Sqlmock) {
 }
 
 func TestForkCreatesBranchAndReturnsMetadata(t *testing.T) {
-	manager, mock := forkHTTPManager(t)
+	manager, messages, mock := forkHTTPManagers(t)
 	mock.ExpectBegin()
 	expectHTTPForkSource(mock)
 	mock.ExpectQuery(`SELECT .* FROM "messages" WHERE session_id = .*seq <= .*ORDER BY seq LIMIT`).
-		WithArgs(70, 2, memory.MaxForkMessages+1).
+		WithArgs(70, 2, conversation.MaxForkMessages+1).
 		WillReturnRows(sqlmock.NewRows([]string{"seq", "role", "content"}).AddRow(1, "user", "原问题").AddRow(2, "assistant", "原建议"))
 	mock.ExpectQuery(`INSERT INTO "conversations"`).
 		WithArgs("选型分支", "", 0, 7, 70, 2, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -80,13 +81,13 @@ func TestForkCreatesBranchAndReturnsMetadata(t *testing.T) {
 		WithArgs(8, types.SourceChat, "chat", "", types.ExtractSkipped, "", nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(80))
 	mock.ExpectCommit()
-	router := NewRouter(nil, nil, nil, NewConversationHandler(manager))
+	router := NewRouter(nil, nil, nil, NewConversationHandler(manager, messages), nil, nil)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, forkHTTPRequest("/api/conversations/7/fork", `{"from_seq":2,"title":"选型分支"}`))
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("expected created branch, got %d %s", recorder.Code, recorder.Body.String())
 	}
-	var result memory.ForkResult
+	var result conversation.ForkResult
 	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +116,7 @@ func TestForkStorageErrorsMapToHTTPStatus(t *testing.T) {
 		{"database_error", http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			manager, mock := forkHTTPManager(t)
+			manager, messages, mock := forkHTTPManagers(t)
 			mock.ExpectBegin()
 			switch tc.name {
 			case "missing_parent":
@@ -128,13 +129,13 @@ func TestForkStorageErrorsMapToHTTPStatus(t *testing.T) {
 				expectHTTPForkSource(mock)
 				rows := sqlmock.NewRows([]string{"seq", "role", "content"})
 				if tc.name == "oversized_snapshot" {
-					rows.AddRow(2, "user", strings.Repeat("x", memory.MaxForkSnapshotBytes))
+					rows.AddRow(2, "user", strings.Repeat("x", conversation.MaxForkSnapshotBytes))
 				}
 				mock.ExpectQuery(`SELECT .* FROM "messages" WHERE session_id = .*seq <= .*ORDER BY seq LIMIT`).
-					WithArgs(70, 2, memory.MaxForkMessages+1).WillReturnRows(rows)
+					WithArgs(70, 2, conversation.MaxForkMessages+1).WillReturnRows(rows)
 			}
 			mock.ExpectRollback()
-			router := NewRouter(nil, nil, nil, NewConversationHandler(manager))
+			router := NewRouter(nil, nil, nil, NewConversationHandler(manager, messages), nil, nil)
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder, forkHTTPRequest("/api/conversations/7/fork", `{"from_seq":2}`))
 			if recorder.Code != tc.want {
@@ -149,7 +150,7 @@ func TestForkStorageErrorsMapToHTTPStatus(t *testing.T) {
 
 func TestChatRouteUsesRenamedService(t *testing.T) {
 	service := chat.NewChatService(agent.NewAgent(1, "test", nil, "", 3), nil, nil)
-	router := NewRouter(nil, nil, NewChatHandler(service), nil)
+	router := NewRouter(nil, nil, NewChatHandler(service), nil, nil, nil)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, forkHTTPRequest("/api/chat/1", `{"question":"你好"}`))
 	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "llm is not configured") {
@@ -158,7 +159,7 @@ func TestChatRouteUsesRenamedService(t *testing.T) {
 }
 
 func TestBranchHistoryKeepsInheritedSourceLocations(t *testing.T) {
-	manager, mock := forkHTTPManager(t)
+	manager, messages, mock := forkHTTPManagers(t)
 	inherited := []types.ContextMessage{{SessionID: 70, Seq: 2, Role: "assistant", Content: "冻结的父会话原文"}}
 	snapshot, err := json.Marshal(inherited)
 	if err != nil {
@@ -171,7 +172,7 @@ func TestBranchHistoryKeepsInheritedSourceLocations(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(80, 8, "chat"))
 	mock.ExpectQuery(`SELECT .* FROM "messages" WHERE session_id = .*ORDER BY seq`).WithArgs(80).
 		WillReturnRows(sqlmock.NewRows([]string{"seq", "role", "content"}).AddRow(1, "user", "支线自己的新消息"))
-	router := NewRouter(nil, nil, nil, NewConversationHandler(manager))
+	router := NewRouter(nil, nil, nil, NewConversationHandler(manager, messages), nil, nil)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/conversations/8/messages", nil))
 	if recorder.Code != http.StatusOK {

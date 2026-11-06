@@ -13,7 +13,7 @@ func TestHealth(t *testing.T) {
 	recorder := httptest.NewRecorder()
 
 	// 伪造请求
-	NewRouter(nil, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	// 检查 状态码、Content-Type、JSON 内容
 	if recorder.Code != http.StatusOK {

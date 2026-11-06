@@ -3,15 +3,20 @@ package http
 import (
 	"errors"
 	"net/http"
-	"recallweave/internal/run"
 	"strings"
+
+	"recallweave/internal/run"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type RunHandler struct {
-	RM *run.RunManager
+	manager *run.RunManager
+}
+
+func NewRunHandler(manager *run.RunManager) *RunHandler {
+	return &RunHandler{manager: manager}
 }
 
 // 主要负责 一次  runtime 的记录的 获取 和 列表
@@ -22,7 +27,7 @@ func (h *RunHandler) GetRun(c *gin.Context) {
 		return
 	}
 
-	run, err := h.RM.GetAgentRun(c.Request.Context(), runID)
+	run, err := h.manager.GetAgentRun(c.Request.Context(), runID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
@@ -40,9 +45,9 @@ func (h *RunHandler) ListRuns(c *gin.Context) {
 		return
 	}
 
-	runs, err := h.RM.ListAgentRuns(c.Request.Context(), conversationID)
+	runs, err := h.manager.ListAgentRuns(c.Request.Context(), conversationID)
 	if err != nil {
-		if errors.Is(err, ErrConversationNotFound) {
+		if errors.Is(err, run.ErrConversationNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
 			return
 		}

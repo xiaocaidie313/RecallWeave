@@ -12,7 +12,7 @@ type SubagentSession struct {
 	ConversationID uint            `gorm:"index;not null" json:"conversation_id"`
 	AgentName      string          `gorm:"size:40" json:"agent_name"`
 	Task           string          `gorm:"type:text" json:"task"`
-	LatestRunID    string          `gorm:"size:64" json:"latest_run_id"`
+	LatestRunID    string          `gorm:"size:64" json:"latest_run_id"` //写入盘的最新的运行ID
 	Status         string          `gorm:"size:32" json:"status"`
 	Snapshot       json.RawMessage `gorm:"serializer:json;type:jsonb" json:"-"`
 	PresetAgent    json.RawMessage `gorm:"serializer:json;type:jsonb" json:"-"`

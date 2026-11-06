@@ -34,7 +34,10 @@ func (a *ChatService) loadContext(ctx context.Context, conversationID uint, ques
 	if a.memory == nil || conversationID == 0 {
 		return preload, 0, nil, nil, nil
 	}
-	conversation, err := a.memory.GetConversation(ctx, conversationID)
+	if a.conversationManager == nil {
+		return preload, 0, nil, nil, fmt.Errorf("chat: conversation manager is not configured")
+	}
+	conversation, err := a.conversationManager.GetConversation(ctx, conversationID)
 	if err != nil {
 		return preload, 0, nil, nil, err
 	}

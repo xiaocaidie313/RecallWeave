@@ -16,6 +16,14 @@ func NewConversationManager(db *gorm.DB) *ConversationManager {
 	return &ConversationManager{db: db}
 }
 
+func (m *ConversationManager) GetConversation(ctx context.Context, id uint) (types.Conversation, error) {
+	var conversation types.Conversation
+	if err := m.db.WithContext(ctx).Model(&types.Conversation{}).Where("id = ?", id).First(&conversation).Error; err != nil {
+		return types.Conversation{}, err
+	}
+	return conversation, nil
+}
+
 func (m *ConversationManager) ConversationExists(ctx context.Context, conversationID uint) (bool, error) {
 	var count int64
 	err := m.db.WithContext(ctx).Model(&types.Conversation{}).Where("id = ?", conversationID).Count(&count).Error

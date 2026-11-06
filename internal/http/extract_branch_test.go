@@ -32,7 +32,7 @@ func TestManualBranchExtractionReturnsConflict(t *testing.T) {
 		WithArgs("", types.ExtractSkipped, sqlmock.AnyArg(), 10).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
-	router := NewRouter(nil, NewExtractHandler(extract.NewExtractExcuter(db, nil, nil)), nil, nil)
+	router := NewRouter(nil, NewExtractHandler(extract.NewExtractExcuter(db, nil, nil)), nil, nil, nil, nil)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/sessions/10/extract", nil))
 	if recorder.Code != http.StatusConflict {

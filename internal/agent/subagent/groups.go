@@ -20,7 +20,7 @@ func (m *Manager) GroupsEnabled() bool {
 	if !m.BackgroundEnabled() {
 		return false
 	}
-	repository, ok := m.backgroundRunner.types.(GroupTaskStore)
+	repository, ok := m.backgroundRunner.taskStore.(GroupTaskStore)
 	return ok && repository.GroupsEnabled()
 }
 
@@ -28,9 +28,10 @@ func (m *Manager) groupRepository() (GroupTaskStore, error) {
 	if !m.GroupsEnabled() {
 		return nil, ErrBackgroundUnavailable
 	}
-	return m.backgroundRunner.types.(GroupTaskStore), nil
+	return m.backgroundRunner.taskStore.(GroupTaskStore), nil
 }
 
+// 占位
 func (r *backgroundRunner) reserveGroup(ctx context.Context, count int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -98,6 +99,7 @@ func (m *Manager) SubmitGroup(ctx context.Context, parent runtime.DelegationPare
 		return runtime.TaskGroup{}, err
 	}
 	accepted := false
+	// 最多分2个任务
 	jobs := make([]*backgroundJob, 0, 2)
 	defer func() {
 		if !accepted {
@@ -117,7 +119,16 @@ func (m *Manager) SubmitGroup(ctx context.Context, parent runtime.DelegationPare
 		return runtime.TaskGroup{}, err
 	}
 	now := time.Now()
-	group := types.TaskGroup{ID: groupID, ConversationID: parent.ConversationID, ParentRunID: parent.RunID, Goal: strings.TrimSpace(request.Goal), ExpectedOutput: request.ExpectedOutput, DeliveryMode: mode, Status: "running", CreatedAt: now, UpdatedAt: now}
+	group := types.TaskGroup{
+		ID:             groupID,
+		ConversationID: parent.ConversationID,
+		ParentRunID:    parent.RunID,
+		Goal:           strings.TrimSpace(request.Goal),
+		ExpectedOutput: request.ExpectedOutput,
+		DeliveryMode:   mode,
+		Status:         "running",
+		CreatedAt:      now, UpdatedAt: now,
+	}
 	rows := make([]types.SubagentTask, 0, 2)
 	ids := make([]string, 0, 2)
 	for i, task := range request.Tasks {
@@ -129,6 +140,7 @@ func (m *Manager) SubmitGroup(ctx context.Context, parent runtime.DelegationPare
 		if err != nil {
 			return runtime.TaskGroup{}, err
 		}
+		// 占锁 保证子任务的唯一性
 		release, err := m.lockSubagentSession(parent.ConversationID, id)
 		if err != nil {
 			return runtime.TaskGroup{}, err
@@ -139,8 +151,33 @@ func (m *Manager) SubmitGroup(ctx context.Context, parent runtime.DelegationPare
 		if mode == delivery.Direct {
 			memberReportStatus = ""
 		}
-		row := types.SubagentTask{ID: taskID, GroupID: groupID, SubagentID: id, ConversationID: parent.ConversationID, ParentRunID: parent.RunID, AgentName: presets[i].Name, Task: strings.TrimSpace(task.Task), DeliveryMode: delivery.Direct, Status: "queued", ReportStatus: memberReportStatus, CreatedAt: now, UpdatedAt: now}
-		job := &backgroundJob{record: row, parent: runtime.DelegationParent{RunID: parent.RunID, ConversationID: parent.ConversationID}, child: m.newChild(parent.Agent, presets[i]), presetAgent: presets[i], input: inputs[i], ctx: jobCtx, cancel: cancel, release: func() { once.Do(release) }}
+		row := types.SubagentTask{
+			ID:             taskID,
+			GroupID:        groupID,
+			SubagentID:     id,
+			ConversationID: parent.ConversationID,
+			ParentRunID:    parent.RunID,
+			AgentName:      presets[i].Name,
+			Task:           strings.TrimSpace(task.Task),
+			DeliveryMode:   delivery.Direct,
+			Status:         "queued",
+			ReportStatus:   memberReportStatus,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}
+		job := &backgroundJob{
+			record: row,
+			parent: runtime.DelegationParent{
+				RunID:          parent.RunID,
+				ConversationID: parent.ConversationID,
+			},
+			child:       m.newChild(parent.Agent, presets[i]),
+			presetAgent: presets[i],
+			input:       inputs[i],
+			ctx:         jobCtx,
+			cancel:      cancel,
+			release:     func() { once.Do(release) },
+		}
 		jobs = append(jobs, job)
 		rows = append(rows, row)
 		ids = append(ids, taskID)
@@ -166,7 +203,16 @@ func (m *Manager) groupView(group types.TaskGroup, members []types.SubagentTask)
 	if err != nil {
 		return runtime.TaskGroup{}, err
 	}
-	view := runtime.TaskGroup{GroupID: group.ID, ConversationID: group.ConversationID, ParentRunID: group.ParentRunID, Goal: group.Goal, ExpectedOutput: group.ExpectedOutput, Status: group.Status, CancelRequested: group.CancelRequested, ReportStatus: group.ReportStatus, ReportRunID: group.ReportRunID, ReportMessageID: group.ReportMessageID, ReportError: group.ReportError, ReportedAt: group.ReportedAt, CreatedAt: group.CreatedAt, UpdatedAt: group.UpdatedAt, FinishedAt: group.FinishedAt}
+	view := runtime.TaskGroup{
+		GroupID:         group.ID,
+		ConversationID:  group.ConversationID,
+		ParentRunID:     group.ParentRunID,
+		Goal:            group.Goal,
+		ExpectedOutput:  group.ExpectedOutput,
+		Status:          group.Status,
+		CancelRequested: group.CancelRequested,
+		ReportStatus:    group.ReportStatus, ReportRunID: group.ReportRunID, ReportMessageID: group.ReportMessageID, ReportError: group.ReportError, ReportedAt: group.ReportedAt, CreatedAt: group.CreatedAt, UpdatedAt: group.UpdatedAt, FinishedAt: group.FinishedAt,
+	}
 	view.DeliveryMode = mode
 	if json.Unmarshal(group.TaskIDs, &view.TaskIDs) != nil || len(view.TaskIDs) != 2 || view.TaskIDs[0] == view.TaskIDs[1] {
 		return view, fmt.Errorf("subagent: invalid typesd group membership")
@@ -227,16 +273,16 @@ func (m *Manager) ListGroups(ctx context.Context, owner uint) ([]runtime.TaskGro
 	if err != nil {
 		return nil, err
 	}
-	rows, err := repository.ListGroups(ctx, owner, 10)
+	groups, err := repository.ListGroups(ctx, owner, 10)
 	if err != nil {
 		return nil, err
 	}
-	items := make([]runtime.TaskGroup, 0, len(rows))
-	for _, row := range rows {
-		if row.ConversationID != owner {
+	items := make([]runtime.TaskGroup, 0, len(groups))
+	for _, group := range groups {
+		if group.ConversationID != owner {
 			return nil, fmt.Errorf("subagent: typesd group ownership mismatch")
 		}
-		view, err := m.groupView(row, nil)
+		view, err := m.groupView(group, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +296,7 @@ func (m *Manager) CancelGroup(ctx context.Context, parent runtime.DelegationPare
 	if err != nil {
 		return runtime.TaskGroup{}, err
 	}
-	group, rows, err := repository.RequestCancelGroup(ctx, id, parent.ConversationID)
+	group, subagentTasks, err := repository.RequestCancelGroup(ctx, id, parent.ConversationID)
 	if err != nil {
 		return runtime.TaskGroup{}, err
 	}
@@ -259,20 +305,21 @@ func (m *Manager) CancelGroup(ctx context.Context, parent runtime.DelegationPare
 	}
 	r := m.backgroundRunner
 	r.mu.Lock()
-	for _, row := range rows {
-		if row.GroupID != id || row.ConversationID != parent.ConversationID {
+	for _, task := range subagentTasks {
+		if task.GroupID != id || task.ConversationID != parent.ConversationID {
 			r.mu.Unlock()
 			return runtime.TaskGroup{}, fmt.Errorf("subagent: typesd member ownership mismatch")
 		}
-		if row.CancelRequested {
-			if job := r.jobs[row.ID]; job != nil && job.record.ConversationID == parent.ConversationID {
+		if task.CancelRequested {
+			if job := r.jobs[task.ID]; job != nil && job.record.ConversationID == parent.ConversationID {
 				job.cancel()
-				if row.Status == "cancelled" {
+				// 在取消的时候 如果子任务已经取消了 则释放锁
+				if task.Status == "cancelled" {
 					job.release()
 				}
 			}
 		}
 	}
 	r.mu.Unlock()
-	return m.groupView(group, rows)
+	return m.groupView(group, subagentTasks)
 }

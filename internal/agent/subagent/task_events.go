@@ -20,7 +20,15 @@ func appendTaskFinished(tx *gorm.DB, task types.SubagentTask) error {
 		RunID          string `json:"run_id,omitempty"`
 		Status         string `json:"status"`
 		Error          string `json:"error,omitempty"`
-	}{task.ConversationID, task.ID, task.GroupID, task.SubagentID, task.RunID, task.Status, task.Error})
+	}{
+		task.ConversationID,
+		task.ID,
+		task.GroupID,
+		task.SubagentID,
+		task.RunID,
+		task.Status,
+		task.Error,
+	})
 	if err != nil {
 		return err
 	}
@@ -52,6 +60,7 @@ func (s *GormTaskStore) interruptWithEvents(ctx context.Context) error {
 						return err
 					}
 				}
+				//上锁后 再取一份 batch在这段时间有可能被修改了
 				var current types.SubagentTask
 				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND conversation_id = ?", item.ID, item.ConversationID).Take(&current).Error; err != nil {
 					return err

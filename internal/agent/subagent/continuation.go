@@ -77,6 +77,7 @@ func (m *Manager) FollowUp(ctx context.Context, parent runtime.DelegationParent,
 	return m.executeSession(ctx, parent, "继续此子任务：\n"+request.Message, previous.Task, current, previous.ID, &previous)
 }
 
+// 占锁 + 读旧对话 + 配置新agent + checkcheckpoint
 func (m *Manager) prepareFollowUp(ctx context.Context, parent runtime.DelegationParent, request runtime.FollowupRequest) (types.SubagentSession, PresetAgent, func(), error) {
 	var empty types.SubagentSession
 	fail := func(err error) (types.SubagentSession, PresetAgent, func(), error) {
@@ -102,6 +103,7 @@ func (m *Manager) prepareFollowUp(ctx context.Context, parent runtime.Delegation
 			release()
 		}
 	}()
+	// 读旧对话
 	previous, err := m.subagentSessionsStore.Load(ctx, request.SubagentID, parent.ConversationID)
 	if err != nil {
 		return fail(fmt.Errorf("subagent: child unavailable in this conversation: %w", err))
@@ -135,7 +137,7 @@ func (m *Manager) prepareFollowUp(ctx context.Context, parent runtime.Delegation
 			tools = append(tools, name)
 		}
 	}
-	// 跟新能用的tools
+	// 跟新能用的tools = allowed 下 agent真实能用的
 	current.AllowedTools = tools
 	if policy.PresetAgent.MaxRounds < current.MaxRounds {
 		current.MaxRounds = policy.PresetAgent.MaxRounds
@@ -147,17 +149,17 @@ func (m *Manager) prepareFollowUp(ctx context.Context, parent runtime.Delegation
 	return previous, current, release, nil
 }
 
-func (m *Manager) executeSession(ctx context.Context, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, id string, previous *types.SubagentSession) (runtime.RunResult, error) {
+func (m *Manager) executeSession(ctx context.Context, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, subagentID string, previous *types.SubagentSession) (runtime.RunResult, error) {
 	// 创建一个新的子agent
 	child := m.newChild(parent.Agent, PresetAgent)
-	return m.executeChildSession(ctx, child, parent, input, task, PresetAgent, id, previous)
+	return m.executeChildSession(ctx, child, parent, input, task, PresetAgent, subagentID, previous)
 }
 
-func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, id string, previous *types.SubagentSession) (runtime.RunResult, error) {
+func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, parent runtime.DelegationParent, input, task string, PresetAgent PresetAgent, subagentID string, previous *types.SubagentSession) (runtime.RunResult, error) {
 	request := runtime.Request{
 		ParentRunID:    parent.RunID,
 		ConversationID: parent.ConversationID,
-		SubagentID:     id,
+		SubagentID:     subagentID,
 		Input:          input,
 		CaptureContext: m.ContinuationsEnabled(),
 	}
@@ -205,7 +207,7 @@ func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, p
 	}
 	// 新建 子agent session 记录
 	record := types.SubagentSession{
-		ID:             id,
+		ID:             subagentID,
 		ConversationID: parent.ConversationID,
 		AgentName:      PresetAgent.Name,
 		Task:           task,
@@ -223,9 +225,10 @@ func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, p
 	} else {
 		err = m.subagentSessionsStore.Update(saveCtx, &record, previous.Revision)
 	}
-	// 写库有问题
+	// 写库有问题 不能跟新session 不能跟新数据库的 如果不记录 提醒的话  下次再续 会再走一遍followup
+	// 新一轮followup的时候 写入失败了 但是又真实的运行...
 	if err != nil {
-		result.State.ContextSnapshot = nil
+		result.State.ContextSnapshot = nil // 清空快照
 		result.State.ContextError = "subagent context was not saved: " + err.Error()
 		// CAS means another version may already be authoritative. Ordinary
 		// write failures instead mark this exact old checkpoint as unsafe.
@@ -233,7 +236,7 @@ func (m *Manager) executeChildSession(ctx context.Context, child *agent.Agent, p
 		if !errors.Is(err, ErrSessionConflict) {
 			result.State.ContextPersistFailed = true
 			if previous != nil {
-				key := fmt.Sprintf("%d/%s", parent.ConversationID, id)
+				key := fmt.Sprintf("%d/%s", parent.ConversationID, subagentID)
 				m.activeMu.Lock()
 				m.unsaved[key] = unsavedCheckpoint{
 					Revision: previous.Revision,
@@ -354,13 +357,16 @@ func (m *Manager) checkCheckpoint(ctx context.Context, row types.SubagentSession
 	if exists { // 如果存在 且没有别人修改过 就说明一直是有问题
 		return ErrCheckpointUnavailable
 	}
+	// 检查run id 的checkpoint
+	//挡的是 进程重启后 unsaved 丢了 那种情况。
 	if verifier, ok := m.subagentSessionsStore.(CheckpointVerifier); ok {
 		if err := verifier.CheckCheckpoint(ctx, row); err != nil {
 			return err
 		}
 	}
+	// 检查后台任务的checkpoint
 	if m.backgroundRunner != nil {
-		if verifier, ok := m.backgroundRunner.types.(TaskCheckpointVerifier); ok {
+		if verifier, ok := m.backgroundRunner.taskStore.(TaskCheckpointVerifier); ok {
 			return verifier.CheckTaskCheckpoint(ctx, row)
 		}
 	}

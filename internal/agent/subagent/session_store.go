@@ -183,6 +183,7 @@ func (s *GormSubagentSessionStore) CheckCheckpoint(ctx context.Context, session 
 	}
 	var failed int64
 	err := s.db.WithContext(ctx).Model(&types.AgentRun{}).
+		//  LatestRunID 是写入盘的最新的运行ID  run_id是当前的runId 如果相等 说明跟新上了 不相等是 还没到跟新的时候
 		Where("subagent_id = ? AND conversation_id = ? AND previous_run_id = ? AND run_id <> ?",
 			session.ID, session.ConversationID, session.LatestRunID, session.LatestRunID).
 		Where("COALESCE(state->>'context_persist_failed', 'false') = 'true'").

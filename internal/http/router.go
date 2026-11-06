@@ -12,6 +12,8 @@ func NewRouter(
 	extractHandler *ExtractHandler,
 	chatHandler *ChatHandler,
 	conversationHandler *ConversationHandler,
+	sessionHandler *SessionHandler,
+	runHandler *RunHandler,
 ) *gin.Engine {
 	router := gin.Default()
 
@@ -33,11 +35,16 @@ func NewRouter(
 	if chatHandler != nil {
 		router.POST("/api/chat/:conversation_id", chatHandler.Chat)
 	}
+	if sessionHandler != nil {
+		router.GET("/api/sessions/:session_id", sessionHandler.GetSession)
+		router.GET("/api/sessions/:session_id/memories", sessionHandler.ListSessionMemories)
+		router.GET("/api/sessions/:session_id/messages", sessionHandler.ListSessionMessages)
+	}
+	if runHandler != nil {
+		router.GET("/api/runs/:run_id", runHandler.GetRun)
+		router.GET("/api/conversations/:conversation_id/runs", runHandler.ListRuns)
+	}
 	if conversationHandler != nil {
-		router.GET("/api/sessions/:session_id", conversationHandler.GetSession)
-		router.GET("/api/sessions/:session_id/memories", conversationHandler.ListSessionMemories)
-		router.GET("/api/sessions/:session_id/messages", conversationHandler.ListSessionMessages)
-		router.GET("/api/runs/:run_id", conversationHandler.GetRun)
 		ConversationGroup := router.Group("/api/conversations")
 		{
 			ConversationGroup.GET("/list", conversationHandler.List)
@@ -45,7 +52,6 @@ func NewRouter(
 			ConversationGroup.POST("/:conversation_id/fork", conversationHandler.Fork)
 			ConversationGroup.GET("/list/with_title", conversationHandler.ListWithTitle)
 			ConversationGroup.GET("/:conversation_id/messages", conversationHandler.ListConversationMessages)
-			ConversationGroup.GET("/:conversation_id/runs", conversationHandler.ListRuns)
 		}
 	}
 

@@ -88,33 +88,35 @@ func loadTaskGroupMembers(tx *gorm.DB, group types.TaskGroup, lock bool) ([]type
 		return nil, err
 	}
 	query := tx.Where("group_id = ? AND conversation_id = ? AND id IN ?", group.ID, group.ConversationID, ids).Order("id ASC")
+	// 上锁
 	if lock {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
-	var rows []types.SubagentTask
-	if err := query.Find(&rows).Error; err != nil {
+	var tasks []types.SubagentTask
+	if err := query.Find(&tasks).Error; err != nil {
 		return nil, err
 	}
-	if len(rows) != 2 {
+	// 组任务必须有2个成员
+	if len(tasks) != 2 {
 		return nil, fmt.Errorf("subagent: group membership is incomplete")
 	}
 	byID := make(map[string]types.SubagentTask, 2)
-	for _, row := range rows {
-		if row.GroupID != group.ID || row.ConversationID != group.ConversationID || row.ParentRunID != group.ParentRunID {
+	for _, task := range tasks {
+		if task.GroupID != group.ID || task.ConversationID != group.ConversationID || task.ParentRunID != group.ParentRunID {
 			return nil, fmt.Errorf("subagent: group member ownership mismatch")
 		}
-		if _, duplicate := byID[row.ID]; duplicate {
+		if _, duplicate := byID[task.ID]; duplicate {
 			return nil, fmt.Errorf("subagent: duplicate group member")
 		}
-		byID[row.ID] = row
+		byID[task.ID] = task
 	}
 	ordered := make([]types.SubagentTask, 0, 2)
 	for _, id := range ids {
-		row, ok := byID[id]
+		task, ok := byID[id]
 		if !ok {
 			return nil, fmt.Errorf("subagent: group member missing")
 		}
-		ordered = append(ordered, row)
+		ordered = append(ordered, task)
 	}
 	return ordered, nil
 }
@@ -200,11 +202,22 @@ func (s *GormTaskStore) refreshTaskGroup(tx *gorm.DB, group *types.TaskGroup) er
 			Status         string          `json:"status"`
 			DeliveryMode   string          `json:"delivery_mode"`
 			TaskIDs        json.RawMessage `json:"task_ids"`
-		}{updated.ConversationID, updated.ID, updated.Status, mode, updated.TaskIDs})
+		}{
+			ConversationID: updated.ConversationID,
+			GroupID:        updated.ID,
+			Status:         updated.Status,
+			DeliveryMode:   mode,
+			TaskIDs:        updated.TaskIDs,
+		})
 		if err != nil {
 			return err
 		}
-		if err := events.Append(tx, &types.ConversationEvent{ConversationID: updated.ConversationID, Kind: "task_group.finished", Key: "group:" + updated.ID + ":finished", Data: data}); err != nil {
+		if err := events.Append(tx, &types.ConversationEvent{
+			ConversationID: updated.ConversationID,
+			Kind:           "task_group.finished",
+			Key:            "group:" + updated.ID + ":finished",
+			Data:           data,
+		}); err != nil {
 			return err
 		}
 	}

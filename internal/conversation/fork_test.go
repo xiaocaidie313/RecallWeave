@@ -1,4 +1,4 @@
-package memory
+package conversation
 
 import (
 	"context"
@@ -12,8 +12,24 @@ import (
 	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
+
+func forkTestManager(t *testing.T) (*ConversationManager, sqlmock.Sqlmock) {
+	t.Helper()
+	conn, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: conn}), &gorm.Config{DisableAutomaticPing: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewConversationManager(db), mock
+}
 
 type forkSnapshotArg []types.ContextMessage
 
@@ -72,7 +88,7 @@ func TestForkConversationFreezesSourcePrefix(t *testing.T) {
 			name = "branch_of_branch"
 		}
 		t.Run(name, func(t *testing.T) {
-			manager, mock := lifecycleTestManager(t)
+			manager, mock := forkTestManager(t)
 			var inherited []types.ContextMessage
 			if nested {
 				inherited = []types.ContextMessage{{SessionID: 10, Seq: 5, Role: "user", Content: "祖先原文"}}
@@ -110,7 +126,7 @@ func TestForkConversationFreezesSourcePrefix(t *testing.T) {
 }
 
 func TestForkConversationRejectsInvalidArgumentsBeforeSQL(t *testing.T) {
-	manager := NewMemoryManger(nil, nil)
+	manager := NewConversationManager(nil)
 	for _, tc := range []struct {
 		parent uint
 		seq    int
@@ -148,7 +164,7 @@ func TestForkConversationRollsBackInvalidPrefix(t *testing.T) {
 		}, ErrForkTooLarge},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			manager, mock := lifecycleTestManager(t)
+			manager, mock := forkTestManager(t)
 			cutoff := 2
 			if tc.name == "too_many_messages" {
 				cutoff = MaxForkMessages + 1
@@ -169,7 +185,7 @@ func TestForkConversationRollsBackInvalidPrefix(t *testing.T) {
 }
 
 func TestForkConversationSessionFailureReturnsNoPartialBranch(t *testing.T) {
-	manager, mock := lifecycleTestManager(t)
+	manager, mock := forkTestManager(t)
 	want := []types.ContextMessage{{SessionID: 70, Seq: 2, Role: "user", Content: "source"}}
 	mock.ExpectBegin()
 	expectForkParent(mock, nil)
@@ -187,7 +203,7 @@ func TestForkConversationSessionFailureReturnsNoPartialBranch(t *testing.T) {
 }
 
 func TestForkConversationMissingParent(t *testing.T) {
-	manager, mock := lifecycleTestManager(t)
+	manager, mock := forkTestManager(t)
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT .* FROM "conversations"`).WithArgs(7, 1).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
