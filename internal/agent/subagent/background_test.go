@@ -190,7 +190,7 @@ func (s *memoryTaskStore) CheckTaskCheckpoint(ctx context.Context, session types
 
 func backgroundManager(t *testing.T, tasks *memoryTaskStore, sessions *continuationMemoryStore) *Manager {
 	t.Helper()
-	m := testManager(t, Config{}).WithSubagentSessions(sessions)
+	m := testManager(t, Config{}).WithSubagentSessionsStore(sessions)
 	if err := m.StartBackground(context.Background(), tasks, BackgroundConfig{Workers: 1, QueueCapacity: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +433,7 @@ func TestBackgroundRestartInterruptsAndDoesNotReplayUnfinishedFollowup(t *testin
 		return llm.Turn{Content: "checkpoint"}, nil
 	}}
 	parent := managerParent(model)
-	initial := testManager(t, Config{}).WithSubagentSessions(sessions)
+	initial := testManager(t, Config{}).WithSubagentSessionsStore(sessions)
 	first, err := initial.Delegate(context.Background(), parent, runtime.DelegationRequest{Task: "task"})
 	if err != nil {
 		t.Fatal(err)

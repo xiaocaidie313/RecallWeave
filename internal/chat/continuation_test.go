@@ -269,7 +269,7 @@ func TestSubagentContinuationThroughModelHTTPAcrossParentRuns(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return manager.WithSubagentSessions(repository)
+		return manager.WithSubagentSessionsStore(repository)
 	}
 	first, err := runtime.Run(context.Background(), core, runtime.Request{Input: "第一次调查", ConversationID: 17, Delegator: newManager(), Preload: runtime.Preload{History: []llm.Message{{Role: "user", Content: "ROOT_PRIVATE_MARKER first parent"}}}})
 	if err != nil {

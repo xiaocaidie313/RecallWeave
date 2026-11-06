@@ -66,7 +66,7 @@ func main() {
 		logger.Error("failed to migrate database", "error", err)
 		os.Exit(1)
 	}
-	delegator.WithSubagentSessions(subagent.NewSubagentSessionStore(database))
+	delegator.WithSubagentSessionsStore(subagent.NewSubagentSessionStore(database))
 
 	// 没配 api_key 时提炼退回整段兜底，问答直接不可用
 	var client *llm.Client

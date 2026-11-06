@@ -244,7 +244,7 @@ func (s *memoryGroupStore) InterruptUnfinished(ctx context.Context) error {
 
 func groupManager(t *testing.T, repository *memoryGroupStore, workers, queue int) *Manager {
 	t.Helper()
-	m := testManager(t, Config{}).WithSubagentSessions(&continuationMemoryStore{})
+	m := testManager(t, Config{}).WithSubagentSessionsStore(&continuationMemoryStore{})
 	if err := m.StartBackground(context.Background(), repository, BackgroundConfig{Workers: workers, QueueCapacity: queue}); err != nil {
 		t.Fatal(err)
 	}

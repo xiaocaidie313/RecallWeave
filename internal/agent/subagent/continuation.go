@@ -38,7 +38,7 @@ var _ runtime.ContinuationDelegator = (*Manager)(nil)
 
 // WithSessions is called once during assembly, before serving requests. The
 // repository persists data; live execution locks remain local to this Manager.
-func (m *Manager) WithSubagentSessions(subagentSessionsStore SubagentSessionStore) *Manager {
+func (m *Manager) WithSubagentSessionsStore(subagentSessionsStore SubagentSessionStore) *Manager {
 	m.subagentSessionsStore = subagentSessionsStore
 	return m
 }
