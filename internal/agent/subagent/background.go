@@ -214,7 +214,7 @@ func (m *Manager) SubmitFollowUp(ctx context.Context, parent runtime.DelegationP
 
 // 释放占位
 func (m *Manager) abortReservation() {
-	<-m.backgroundRunner.done
+	<-m.backgroundRunner.slots
 	m.backgroundRunner.pending.Done() // 标记排队完成
 }
 
