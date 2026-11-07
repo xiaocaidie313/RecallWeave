@@ -10,7 +10,7 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/conversation"
 	"recallweave/internal/llm"
-	"recallweave/internal/memory"
+	"recallweave/internal/session"
 	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -90,7 +90,7 @@ func TestBranchLoaderUsesFrozenPrefixWithoutGlobalQueries(t *testing.T) {
 	mock.ExpectQuery(`SELECT .* FROM "messages" WHERE session_id = \$1 ORDER BY seq`).WithArgs(20).
 		WillReturnRows(sqlmock.NewRows([]string{"seq", "role", "content"}).
 			AddRow(1, "user", "本支线已压缩的消息").AddRow(2, "assistant", "本支线近期回复"))
-	service := NewChatService(nil, memory.NewMemoryManger(db, nil), nil).
+	service := NewChatService(nil, nil, session.NewSessionManager(db), nil).
 		WithConversationManager(conversation.NewConversationManager(db))
 	preload, sessionID, conversation, visible, err := service.loadContext(context.Background(), 3, "现在继续研究")
 	if err != nil {

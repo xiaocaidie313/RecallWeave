@@ -242,7 +242,7 @@ func TestGroupDispatcherWaitsForLastMemberAndSendsOneCombinedSSEMessage(t *testi
 		}
 		return llm.Turn{Content: "COMBINED_REPORT: source A is available; source B failed", Usage: llm.Usage{PromptTokens: 13}}, nil
 	}}
-	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil, nil)
 	ledger, id, ids := newGroupLedger()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -302,7 +302,7 @@ func TestGroupDispatcherAllCancelledReportsWithoutCallingModel(t *testing.T) {
 		calls.Add(1)
 		return llm.Turn{Content: "unexpected"}, nil
 	}}
-	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil, nil)
 	ledger, id, ids := newGroupLedger()
 	ledger.mu.Lock()
 	for _, taskID := range ids {
@@ -329,7 +329,7 @@ func TestGroupDispatcherDoesNotRegenerateAfterFailedPersistence(t *testing.T) {
 		calls.Add(1)
 		return llm.Turn{Content: "combined"}, nil
 	}}
-	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil, nil)
 	ledger, id, ids := newGroupLedger()
 	ledger.mu.Lock()
 	member := ledger.rows[ids[1]]

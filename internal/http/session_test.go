@@ -21,7 +21,7 @@ func TestSessionOverviewWorksWithoutConversationHandler(t *testing.T) {
 	mock.ExpectQuery(`SELECT count\(\*\) FROM "memories" WHERE session_id =`).WithArgs(70).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
 
-	router := NewRouter(nil, nil, nil, nil, NewSessionHandler(messages), nil)
+	router := NewRouter(nil, nil, nil, nil, NewSessionHandler(messages, nil), nil)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/sessions/70", nil))
 	if recorder.Code != http.StatusOK {
@@ -45,7 +45,7 @@ func TestSessionOverviewWorksWithoutConversationHandler(t *testing.T) {
 }
 
 func TestGetSessionRejectsBadID(t *testing.T) {
-	router := NewRouter(nil, nil, nil, nil, NewSessionHandler(nil), nil)
+	router := NewRouter(nil, nil, nil, nil, NewSessionHandler(nil, nil), nil)
 	request := httptest.NewRequest(http.MethodGet, "/api/sessions/abc", nil)
 	recorder := httptest.NewRecorder()
 

@@ -52,6 +52,9 @@ type getMessagesOutput struct {
 
 type memoryReader interface {
 	FindMemories(context.Context, string, types.MemoryTag, int, ...bool) ([]types.Memory, error)
+}
+
+type messageReader interface {
 	GetMessages(context.Context, uint, int, int) ([]types.Message, error)
 }
 
@@ -62,7 +65,7 @@ type McpToolSet struct {
 //作为MCP Server 向外暴露指定的MCP 工具
 //个人使用的时候，连接MCP 可以作为外置数据库
 
-func NewMcpMemoryReaderServer(reader memoryReader) *mcp.Server {
+func NewMcpMemoryReaderServer(memories memoryReader, messages messageReader) *mcp.Server {
 	server := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "recallweave",
@@ -70,11 +73,11 @@ func NewMcpMemoryReaderServer(reader memoryReader) *mcp.Server {
 		},
 		nil,
 	)
-	RegisterTools(server, reader)
+	RegisterTools(server, memories, messages)
 	return server
 }
 
-func RegisterTools(server *mcp.Server, reader memoryReader) {
+func RegisterTools(server *mcp.Server, memories memoryReader, messages messageReader) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search_memories",
 		Description: "Search RecallWeave's personal memories. Results include session and message numbers for checking original text.",
@@ -99,7 +102,7 @@ func RegisterTools(server *mcp.Server, reader memoryReader) {
 				return nil, searchOutput{}, fmt.Errorf("unknown memory tag %q", input.Tag)
 			}
 		}
-		items, err := reader.FindMemories(ctx, keyword, tag, input.Limit, input.IncludeInactive)
+		items, err := memories.FindMemories(ctx, keyword, tag, input.Limit, input.IncludeInactive)
 		if err != nil {
 			return nil, searchOutput{}, err
 		}
@@ -129,12 +132,12 @@ func RegisterTools(server *mcp.Server, reader memoryReader) {
 		if input.SeqEnd-input.SeqStart+1 > 50 {
 			return nil, getMessagesOutput{}, fmt.Errorf("message range exceeds 50 messages")
 		}
-		messages, err := reader.GetMessages(ctx, input.SessionID, input.SeqStart, input.SeqEnd)
+		items, err := messages.GetMessages(ctx, input.SessionID, input.SeqStart, input.SeqEnd)
 		if err != nil {
 			return nil, getMessagesOutput{}, err
 		}
-		out := getMessagesOutput{SessionID: input.SessionID, Messages: make([]messageLine, 0, len(messages))}
-		for _, msg := range messages {
+		out := getMessagesOutput{SessionID: input.SessionID, Messages: make([]messageLine, 0, len(items))}
+		for _, msg := range items {
 			out.Messages = append(out.Messages, messageLine{Seq: msg.Seq, Role: msg.Role, Content: msg.Content})
 		}
 		return nil, out, nil

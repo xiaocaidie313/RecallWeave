@@ -28,10 +28,10 @@ const (
 //  3. 对话层：本对话的历史消息 + 之前的简报。
 //
 // 只作知识背景的导入不挂 conversation，不会出现在导入层，仍走第 1 层。
-// 没有记忆库或没有 conversation 时跳过，测试可以不连数据库。
+// 没有会话存储或没有 conversation 时跳过，测试可以不连数据库。
 func (a *ChatService) loadContext(ctx context.Context, conversationID uint, question string) (runtime.Preload, uint, *types.Conversation, []types.ContextMessage, error) {
 	var preload runtime.Preload
-	if a.memory == nil || conversationID == 0 {
+	if a.sessions == nil || conversationID == 0 {
 		return preload, 0, nil, nil, nil
 	}
 	if a.conversationManager == nil {
@@ -55,7 +55,7 @@ func (a *ChatService) loadContext(ctx context.Context, conversationID uint, ques
 		}
 	}
 	//默认 聊天会话的session
-	session, err := a.memory.ChatSession(ctx, conversationID)
+	session, err := a.sessions.ChatSession(ctx, conversationID)
 	if err != nil {
 		return preload, 0, nil, nil, err
 	}
@@ -72,8 +72,7 @@ func (a *ChatService) loadContext(ctx context.Context, conversationID uint, ques
 	if brief != "" {
 		preload.Background = append(preload.Background, "此前对话简报：\n"+brief)
 	}
-	//@todo  session
-	messages, err := a.memory.ListMessages(ctx, session.ID)
+	messages, err := a.sessions.ListMessages(ctx, session.ID)
 	if err != nil {
 		return preload, 0, nil, nil, err
 	}
@@ -99,7 +98,7 @@ func (a *ChatService) loadContext(ctx context.Context, conversationID uint, ques
 // 这些预取的记忆不进 citations——它们是「可能的背景」，真正的引用依据走工具链。
 // 检索失败只记日志，不让预取失败拦截掉这一次提问。
 func (a *ChatService) relatedMemories(ctx context.Context, question string) string {
-	if question == "" {
+	if a.memory == nil || question == "" {
 		return ""
 	}
 	// 向量检索的 2 路召回 选取top-k
@@ -134,7 +133,10 @@ type importedPiece struct {
 // importedBackground 列出挂在这次对话上的导入会话。
 // 助手自己的 chat 会话跳过，它的原文已经在对话层。
 func (a *ChatService) importedBackground(ctx context.Context, conversationID uint) (string, error) {
-	sessions, err := a.memory.GetSessions(ctx, conversationID)
+	if a.memory == nil {
+		return "", nil
+	}
+	sessions, err := a.sessions.GetSessions(ctx, conversationID)
 	if err != nil {
 		return "", err
 	}

@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"recallweave/internal/memory"
+	"recallweave/internal/session"
 	"recallweave/internal/types"
 )
 
 func TestLoadContextRequiresConversationManager(t *testing.T) {
-	service := NewChatService(nil, memory.NewMemoryManger(nil, nil), nil)
+	service := NewChatService(nil, memory.NewMemoryManger(nil, nil), session.NewSessionManager(nil), nil)
 	_, _, _, _, err := service.loadContext(context.Background(), 7, "继续讨论")
 	if err == nil || !strings.Contains(err.Error(), "conversation manager is not configured") {
 		t.Fatalf("missing conversation manager should fail before querying storage: %v", err)

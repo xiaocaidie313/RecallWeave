@@ -14,6 +14,7 @@ import (
 	appmcp "recallweave/internal/mcp"
 	"recallweave/internal/memory"
 	"recallweave/internal/retrieval"
+	"recallweave/internal/session"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"gorm.io/gorm"
@@ -62,5 +63,6 @@ func run(ctx context.Context, configPath string) error {
 		embedder = client
 	}
 	reader := memory.NewMemoryManger(database, retrieval.New(database, embedder))
-	return appmcp.NewMcpMemoryReaderServer(reader).Run(ctx, &mcp.StdioTransport{})
+	sessions := session.NewSessionManager(database)
+	return appmcp.NewMcpMemoryReaderServer(reader, sessions).Run(ctx, &mcp.StdioTransport{})
 }

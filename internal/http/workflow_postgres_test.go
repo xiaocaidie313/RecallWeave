@@ -32,6 +32,7 @@ import (
 	"recallweave/internal/memory"
 	"recallweave/internal/retrieval"
 	"recallweave/internal/run"
+	"recallweave/internal/session"
 	"recallweave/internal/types"
 
 	"gorm.io/driver/postgres"
@@ -115,11 +116,12 @@ func workflowOpenDatabase(t *testing.T, dsn string) *gorm.DB {
 func workflowServer(t *testing.T, database *gorm.DB, model *llm.Client) (*httptest.Server, *extract.ExtractExcuter) {
 	t.Helper()
 	memories := memory.NewMemoryManger(database, retrieval.New(database, model))
+	sessions := session.NewSessionManager(database)
 	extractor := extract.NewExtractExcuter(database, model, model)
 	conversations := conversation.NewConversationManager(database)
 	runs := run.NewRunManager(database)
-	core := agent.NewAgent(1, "workflow", model, "RecallWeave 测试助手", 6, ability.NewMemoryAbility(memories))
-	service := chat.NewChatService(core, memories, extractor).
+	core := agent.NewAgent(1, "workflow", model, "RecallWeave 测试助手", 6, ability.NewMemoryAbility(memories, sessions))
+	service := chat.NewChatService(core, memories, sessions, extractor).
 		WithConversationManager(conversations).
 		WithRunManager(runs).
 		WithTurnWriter(chat.NewReportStore(database))
@@ -127,8 +129,8 @@ func workflowServer(t *testing.T, database *gorm.DB, model *llm.Client) (*httpte
 		apphttp.NewIngestHandler(ingest.NewService(database, extractor)),
 		apphttp.NewExtractHandler(extractor),
 		apphttp.NewChatHandler(service),
-		apphttp.NewConversationHandler(conversations, memories),
-		apphttp.NewSessionHandler(memories),
+		apphttp.NewConversationHandler(conversations, sessions),
+		apphttp.NewSessionHandler(sessions, memories),
 		apphttp.NewRunHandler(runs),
 	)
 	apphttp.MountConversationEvents(router, apphttp.NewEventsHandler(events.NewStore(database)))

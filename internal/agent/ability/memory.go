@@ -26,9 +26,12 @@ const memoryInstructions = `涉及用户过去的经历时，先引用系统消�
 
 type memoryBackend interface {
 	SearchMemories(context.Context, string, types.MemoryTag, int, ...bool) ([]types.Memory, error)
+	DeactivateMemory(context.Context, uint, string) (types.Memory, error)
+}
+
+type sessionReader interface {
 	GetMessages(context.Context, uint, int, int) ([]types.Message, error)
 	GetSessions(context.Context, uint) ([]types.Session, error)
-	DeactivateMemory(context.Context, uint, string) (types.Memory, error)
 }
 
 // MemoryHit 是回灌给模型的一条记忆。带上 session_id 和 seq 区间，
@@ -61,16 +64,16 @@ type getMessagesResult struct {
 }
 
 // NewMemoryAbility 提供记忆读取和用户明确要求时的停用工具；自动提炼仍由问答服务触发。
-func NewMemoryAbility(manager memoryBackend) *agent.Ability {
+func NewMemoryAbility(memories memoryBackend, sessions sessionReader) *agent.Ability {
 	return agent.NewAbility(
 		"memory",
 		"检索用户过去的记忆，并核对原文消息",
 		memoryInstructions,
 		agent.ToolBox{
-			searchMemoriesTool(manager),
-			getMessagesTool(manager),
-			getSessionsTool(manager),
-			deactivateMemoryTool(manager),
+			searchMemoriesTool(memories),
+			getMessagesTool(sessions),
+			getSessionsTool(sessions),
+			deactivateMemoryTool(memories),
 		},
 	)
 }
@@ -141,7 +144,7 @@ func searchMemoriesTool(manager memoryBackend) llm.Tool {
 	}
 }
 
-func getMessagesTool(manager memoryBackend) llm.Tool {
+func getMessagesTool(manager sessionReader) llm.Tool {
 	return llm.Tool{
 		Schema: llm.ToolSchema{
 			Name:        GetMessagesToolName,
@@ -204,7 +207,7 @@ func getMessagesTool(manager memoryBackend) llm.Tool {
 	}
 }
 
-func getSessionsTool(manager memoryBackend) llm.Tool {
+func getSessionsTool(manager sessionReader) llm.Tool {
 	return llm.Tool{
 		Schema: llm.ToolSchema{
 			Name:        "get_sessions",

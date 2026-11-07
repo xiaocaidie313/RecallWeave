@@ -11,7 +11,7 @@ import (
 	"recallweave/internal/agent"
 	"recallweave/internal/chat"
 	"recallweave/internal/conversation"
-	"recallweave/internal/memory"
+	"recallweave/internal/session"
 	"recallweave/internal/types"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -20,7 +20,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func forkHTTPManagers(t *testing.T) (*conversation.ConversationManager, *memory.MemoryManger, sqlmock.Sqlmock) {
+func forkHTTPManagers(t *testing.T) (*conversation.ConversationManager, *session.SessionManager, sqlmock.Sqlmock) {
 	t.Helper()
 	conn, mock, err := sqlmock.New()
 	if err != nil {
@@ -31,7 +31,7 @@ func forkHTTPManagers(t *testing.T) (*conversation.ConversationManager, *memory.
 	if err != nil {
 		t.Fatal(err)
 	}
-	return conversation.NewConversationManager(db), memory.NewMemoryManger(db, nil), mock
+	return conversation.NewConversationManager(db), session.NewSessionManager(db), mock
 }
 
 func forkHTTPRequest(path, body string) *http.Request {
@@ -149,7 +149,7 @@ func TestForkStorageErrorsMapToHTTPStatus(t *testing.T) {
 }
 
 func TestChatRouteUsesRenamedService(t *testing.T) {
-	service := chat.NewChatService(agent.NewAgent(1, "test", nil, "", 3), nil, nil)
+	service := chat.NewChatService(agent.NewAgent(1, "test", nil, "", 3), nil, nil, nil)
 	router := NewRouter(nil, nil, NewChatHandler(service), nil, nil, nil)
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, forkHTTPRequest("/api/chat/1", `{"question":"你好"}`))

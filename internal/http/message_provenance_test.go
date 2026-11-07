@@ -88,7 +88,7 @@ func TestMessageHistoryRetypessSavedSSEProvenance(t *testing.T) {
 			if conversation {
 				conversationHandler = NewConversationHandler(manager, messageStore)
 			} else {
-				sessionHandler = NewSessionHandler(messageStore)
+				sessionHandler = NewSessionHandler(messageStore, nil)
 			}
 			messages := readProvenanceResponse(t, path, NewRouter(nil, nil, nil, conversationHandler, sessionHandler, nil))
 			if len(messages) != 3 {
@@ -159,7 +159,7 @@ func TestMessageHistoryRejectsMalformedAndForeignProvenance(t *testing.T) {
 			}
 			mock.ExpectQuery(`SELECT .* FROM "conversation_events" WHERE conversation_id = .*AND kind = .*AND key IN`).WithArgs(7, "message.created", "message:701").
 				WillReturnRows(sqlmock.NewRows([]string{"conversation_id", "kind", "key", "data"}).AddRow(eventOwner, kind, key, raw))
-			messages := readProvenanceResponse(t, "/api/conversations/7/messages", NewRouter(nil, nil, nil, NewConversationHandler(manager, messageStore), NewSessionHandler(messageStore), nil))
+			messages := readProvenanceResponse(t, "/api/conversations/7/messages", NewRouter(nil, nil, nil, NewConversationHandler(manager, messageStore), NewSessionHandler(messageStore, nil), nil))
 			if len(messages) != 1 || messages[0]["content"] != message.Content {
 				t.Fatalf("ordinary history damaged: %+v", messages)
 			}
@@ -182,7 +182,7 @@ func TestMessageHistoryReportsProvenanceStorageFailure(t *testing.T) {
 	expectProvenanceHistory(mock, false, message)
 	mock.ExpectQuery(`SELECT .* FROM "conversation_events" WHERE conversation_id = .*AND kind = .*AND key IN`).WithArgs(7, "message.created", "message:701").WillReturnError(errors.New("storage unavailable"))
 	recorder := httptest.NewRecorder()
-	NewRouter(nil, nil, nil, nil, NewSessionHandler(messageStore), nil).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/sessions/70/messages", nil))
+	NewRouter(nil, nil, nil, nil, NewSessionHandler(messageStore, nil), nil).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/sessions/70/messages", nil))
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("silently lost provenance: %d %s", recorder.Code, recorder.Body.String())
 	}

@@ -16,6 +16,7 @@ import (
 	"recallweave/internal/extract"
 	"recallweave/internal/llm"
 	"recallweave/internal/memory"
+	"recallweave/internal/session"
 	"recallweave/internal/types"
 	"recallweave/internal/watch/useage"
 )
@@ -66,6 +67,7 @@ type Usage struct {
 type ChatService struct {
 	core                *agent.Agent
 	memory              *memory.MemoryManger
+	sessions            *session.SessionManager
 	extracter           *extract.ExtractExcuter
 	delegator           runtime.Delegator
 	turnWriter          TurnWriter
@@ -76,8 +78,8 @@ type ChatService struct {
 
 // core 或 core.Model 为 nil 表示没配 api_key，这时问答直接报错。
 // 提炼有本地兜底，问答没有——没有模型就没法组织回答。
-func NewChatService(core *agent.Agent, memoryManger *memory.MemoryManger, extracter *extract.ExtractExcuter) *ChatService {
-	return &ChatService{core: core, memory: memoryManger, extracter: extracter}
+func NewChatService(core *agent.Agent, memoryManger *memory.MemoryManger, sessions *session.SessionManager, extracter *extract.ExtractExcuter) *ChatService {
+	return &ChatService{core: core, memory: memoryManger, sessions: sessions, extracter: extracter}
 }
 
 func (a *ChatService) WithRunManager(manager *run.RunManager) *ChatService {
@@ -259,11 +261,11 @@ func (a *ChatService) extractSessionToMemory(ctx context.Context, sessionID uint
 // 最近的消息保持原文。失败只记日志。
 func (a *ChatService) condenseWindow(ctx context.Context, conversationID, sessionID uint) {
 	model := a.model()
-	if a.memory == nil || a.conversationManager == nil || model == nil || conversationID == 0 || sessionID == 0 {
+	if a.sessions == nil || a.conversationManager == nil || model == nil || conversationID == 0 || sessionID == 0 {
 		return
 	}
 
-	messages, err := a.memory.ListMessages(ctx, sessionID)
+	messages, err := a.sessions.ListMessages(ctx, sessionID)
 	if err != nil {
 		slog.Warn("condense conversation failed", "conversation_id", conversationID, "error", err)
 		return
@@ -375,10 +377,10 @@ func (a *ChatService) saveTurn(ctx context.Context, sessionID uint, question, an
 	if a.turnWriter != nil {
 		return a.turnWriter.AppendTurn(ctx, sessionID, question, answer)
 	}
-	if a.memory == nil {
+	if a.sessions == nil {
 		return nil
 	}
-	return a.memory.AppendMessages(ctx, sessionID, []types.Message{
+	return a.sessions.AppendMessages(ctx, sessionID, []types.Message{
 		{Role: "user", Content: question},
 		{Role: "assistant", Content: answer},
 	})

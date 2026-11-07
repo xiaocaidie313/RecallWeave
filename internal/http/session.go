@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"recallweave/internal/memory"
+	"recallweave/internal/session"
 	"recallweave/internal/types"
 
 	"github.com/gin-gonic/gin"
@@ -14,11 +15,12 @@ import (
 )
 
 type SessionHandler struct {
-	memory *memory.MemoryManger
+	sessions *session.SessionManager
+	memories *memory.MemoryManger
 }
 
-func NewSessionHandler(manager *memory.MemoryManger) *SessionHandler {
-	return &SessionHandler{memory: manager}
+func NewSessionHandler(sessions *session.SessionManager, memories *memory.MemoryManger) *SessionHandler {
+	return &SessionHandler{sessions: sessions, memories: memories}
 }
 
 func (h *SessionHandler) GetSession(c *gin.Context) {
@@ -27,7 +29,7 @@ func (h *SessionHandler) GetSession(c *gin.Context) {
 		return
 	}
 
-	overview, err := h.memory.SessionOverview(c.Request.Context(), sessionID)
+	overview, err := h.sessions.SessionOverview(c.Request.Context(), sessionID)
 	if err != nil {
 		writeSessionError(c, err)
 		return
@@ -55,12 +57,12 @@ func (h *SessionHandler) ListSessionMemories(c *gin.Context) {
 		return
 	}
 
-	if _, err := h.memory.GetSession(c.Request.Context(), sessionID); err != nil {
+	if _, err := h.sessions.GetSession(c.Request.Context(), sessionID); err != nil {
 		writeSessionError(c, err)
 		return
 	}
 
-	memories, err := h.memory.ListBySession(c.Request.Context(), sessionID, true)
+	memories, err := h.memories.ListBySession(c.Request.Context(), sessionID, true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list memories"})
 		return
@@ -74,18 +76,18 @@ func (h *SessionHandler) ListSessionMessages(c *gin.Context) {
 		return
 	}
 
-	session, err := h.memory.GetSession(c.Request.Context(), sessionID)
+	session, err := h.sessions.GetSession(c.Request.Context(), sessionID)
 	if err != nil {
 		writeSessionError(c, err)
 		return
 	}
 
-	messages, err := h.memory.ListMessages(c.Request.Context(), sessionID)
+	messages, err := h.sessions.ListMessages(c.Request.Context(), sessionID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
 		return
 	}
-	deliveries, err := h.memory.MessageDeliveries(c.Request.Context(), session, messages)
+	deliveries, err := h.sessions.MessageDeliveries(c.Request.Context(), session, messages)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load message provenance"})
 		return
@@ -150,10 +152,10 @@ type messageView struct {
 	Seq       int    `json:"seq"`
 	Role      string `json:"role"`
 	Content   string `json:"content"`
-	memory.MessageDelivery
+	session.MessageDelivery
 }
 
-func messageViews(messages []types.Message, deliveries map[uint]memory.MessageDelivery) []messageView {
+func messageViews(messages []types.Message, deliveries map[uint]session.MessageDelivery) []messageView {
 	views := make([]messageView, 0, len(messages))
 	for _, item := range messages {
 		views = append(views, messageView{

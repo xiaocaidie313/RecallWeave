@@ -29,6 +29,7 @@ import (
 	"recallweave/internal/memory"
 	"recallweave/internal/retrieval"
 	"recallweave/internal/run"
+	"recallweave/internal/session"
 	"recallweave/internal/skill"
 )
 
@@ -101,6 +102,7 @@ func main() {
 	// 组装依赖。HTTP 在 internal/http，这里只把业务对象传进去。
 	extracter := extract.NewExtractExcuter(database, segmenter, embedder)
 	memoryManger := memory.NewMemoryManger(database, retrieval.New(database, vectorEmbedder))
+	sessionManager := session.NewSessionManager(database)
 	skillDir := cfg.SkillDir()
 	catalog, err := skill.Open(skillDir)
 	if err != nil {
@@ -115,7 +117,7 @@ func main() {
 	}
 	defer artifacts.Close()
 	recall := agent.NewAgent(1, "recall", ChatGenerator, "RecallWeave 的助手", 6,
-		ability.NewMemoryAbility(memoryManger),
+		ability.NewMemoryAbility(memoryManger, sessionManager),
 		ability.NewArtifactAbility(artifacts),
 	).WithSkills(catalog)
 	if cfg.ExternalMCP.URL != "" {
@@ -162,7 +164,7 @@ func main() {
 	reportStore := chat.NewReportStore(database)
 	conversationManager := conversation.NewConversationManager(database)
 	runManager := run.NewRunManager(database)
-	chatService := chat.NewChatService(recall, memoryManger, extracter).
+	chatService := chat.NewChatService(recall, memoryManger, sessionManager, extracter).
 		WithDelegator(delegator).WithTurnWriter(reportStore).
 		WithConversationManager(conversationManager).WithRunManager(runManager)
 	reports, err := chat.StartReportDispatcher(serviceCtx, chatService, reportStore, chat.ReportConfig{})
@@ -183,8 +185,8 @@ func main() {
 		apphttp.NewIngestHandler(ingest.NewService(database, extracter)),
 		apphttp.NewExtractHandler(extracter),
 		apphttp.NewChatHandler(chatService),
-		apphttp.NewConversationHandler(conversationManager, memoryManger),
-		apphttp.NewSessionHandler(memoryManger),
+		apphttp.NewConversationHandler(conversationManager, sessionManager),
+		apphttp.NewSessionHandler(sessionManager, memoryManger),
 		apphttp.NewRunHandler(runManager),
 	)
 	apphttp.MountSubagentTasks(r, apphttp.NewSubagentTaskHandler(delegator))
@@ -196,7 +198,7 @@ func main() {
 	// } else {
 	// 	logger.Info("MCP Streamable HTTP disabled; set RECALLWEAVE_MCP_TOKEN to enable it")
 	// }
-	apphttp.MountMCP(r, appmcp.NewMcpMemoryReaderServer(memoryManger), os.Getenv("RECALLWEAVE_MCP_TOKEN"))
+	apphttp.MountMCP(r, appmcp.NewMcpMemoryReaderServer(memoryManger, sessionManager), os.Getenv("RECALLWEAVE_MCP_TOKEN"))
 
 	address := fmt.Sprintf(":%d", cfg.Server.Port)
 	logger.Info("RecallWeave API started", "address", address)

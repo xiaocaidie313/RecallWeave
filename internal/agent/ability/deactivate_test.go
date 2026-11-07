@@ -28,11 +28,21 @@ func (f *fakeMemoryBackend) SearchMemories(_ context.Context, _ string, _ types.
 	}
 	return items, nil
 }
-func (f *fakeMemoryBackend) GetMessages(context.Context, uint, int, int) ([]types.Message, error) {
-	return []types.Message{{Seq: 1, Role: "user", Content: "旧方案用 Python"}}, nil
+
+type fakeSessionReader struct {
+	sessionID      uint
+	seqStart       int
+	seqEnd         int
+	conversationID uint
 }
-func (f *fakeMemoryBackend) GetSessions(context.Context, uint) ([]types.Session, error) {
-	return nil, nil
+
+func (f *fakeSessionReader) GetMessages(_ context.Context, sessionID uint, seqStart, seqEnd int) ([]types.Message, error) {
+	f.sessionID, f.seqStart, f.seqEnd = sessionID, seqStart, seqEnd
+	return []types.Message{{SessionID: sessionID, Seq: 1, Role: "user", Content: "旧方案用 Python"}}, nil
+}
+func (f *fakeSessionReader) GetSessions(_ context.Context, conversationID uint) ([]types.Session, error) {
+	f.conversationID = conversationID
+	return []types.Session{{ID: 10, ConversationID: &conversationID, SourceTag: types.SourceChat}}, nil
 }
 func (f *fakeMemoryBackend) DeactivateMemory(_ context.Context, id uint, reason string) (types.Memory, error) {
 	f.deactivations++
@@ -54,8 +64,9 @@ func TestDeactivateToolAndHistorySearch(t *testing.T) {
 		{ID: 1, SessionID: 10, SeqStart: 1, SeqEnd: 2, Content: "旧方案用 Python", Status: types.MemoryActive},
 		{ID: 2, SessionID: 20, SeqStart: 1, SeqEnd: 2, Content: "现方案用 Go", Status: types.MemoryActive},
 	}}
+	sessions := &fakeSessionReader{}
 	tools := llm.NewToolHandle()
-	for _, tool := range NewMemoryAbility(backend).Tools() {
+	for _, tool := range NewMemoryAbility(backend, sessions).Tools() {
 		tools.Register(tool)
 	}
 	result, err := tools.Run(context.Background(), DeactivateMemoryToolName, `{"memory_id":1,"reason":"用户明确要求不再使用 Python 方案"}`)
@@ -97,6 +108,20 @@ func TestDeactivateToolAndHistorySearch(t *testing.T) {
 	result, err = tools.Run(context.Background(), GetMessagesToolName, `{"session_id":10,"seq_start":1,"seq_end":2}`)
 	if err != nil || result == "" {
 		t.Fatalf("original must remain readable: %s %v", result, err)
+	}
+	if sessions.sessionID != 10 || sessions.seqStart != 1 || sessions.seqEnd != 2 {
+		t.Fatalf("original lookup did not use the session reader: %+v", sessions)
+	}
+	result, err = tools.Run(context.Background(), "get_sessions", `{"conversation_id":3}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []types.Session
+	if err := json.Unmarshal([]byte(result), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if sessions.conversationID != 3 || len(listed) != 1 || listed[0].ID != 10 {
+		t.Fatalf("session listing did not use the session reader: %s", result)
 	}
 }
 
@@ -142,7 +167,7 @@ func TestAgentDeactivationPersistsAcrossRuns(t *testing.T) {
 		{ToolCalls: []llm.ToolCall{{ID: "current", Name: SearchMemoriesToolName, Arguments: `{"keyword":"项目方案"}`}}},
 		{Content: "目前使用 Go。"},
 	}}
-	a := agent.NewAgent(1, "test", model, "", 4, NewMemoryAbility(backend))
+	a := agent.NewAgent(1, "test", model, "", 4, NewMemoryAbility(backend, &fakeSessionReader{}))
 	first, err := runtime.Run(context.Background(), a, runtime.Request{Input: "请停用 Python 的旧方案记忆", ConversationID: 1})
 	if err != nil {
 		t.Fatal(err)

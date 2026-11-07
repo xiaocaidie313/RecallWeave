@@ -13,11 +13,14 @@ import (
 type fakeFinder struct {
 	keyword         string
 	limit           int
-	sessionID       uint
-	seqStart        int
-	seqEnd          int
-	messages        []types.Message
 	includeInactive bool
+}
+
+type fakeMessageReader struct {
+	sessionID uint
+	seqStart  int
+	seqEnd    int
+	messages  []types.Message
 }
 
 func (f *fakeFinder) FindMemories(_ context.Context, keyword string, _ types.MemoryTag, limit int, includeInactive ...bool) ([]types.Memory, error) {
@@ -26,7 +29,7 @@ func (f *fakeFinder) FindMemories(_ context.Context, keyword string, _ types.Mem
 	return []types.Memory{{ID: 7, SessionID: 3, SeqStart: 4, SeqEnd: 5, Title: "数据库决定", Content: "使用 PostgreSQL", ContentType: types.ContentDecision}}, nil
 }
 
-func (f *fakeFinder) GetMessages(_ context.Context, sessionID uint, seqStart, seqEnd int) ([]types.Message, error) {
+func (f *fakeMessageReader) GetMessages(_ context.Context, sessionID uint, seqStart, seqEnd int) ([]types.Message, error) {
 	f.sessionID, f.seqStart, f.seqEnd = sessionID, seqStart, seqEnd
 	return f.messages, nil
 }
@@ -35,7 +38,7 @@ func TestSearchMemoriesOverMCP(t *testing.T) {
 	ctx := context.Background()
 	finder := &fakeFinder{}
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	serverSession, err := appmcp.NewMcpMemoryReaderServer(finder).Connect(ctx, serverTransport, nil)
+	serverSession, err := appmcp.NewMcpMemoryReaderServer(finder, &fakeMessageReader{}).Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatalf("connect server: %v", err)
 	}
@@ -53,6 +56,11 @@ func TestSearchMemoriesOverMCP(t *testing.T) {
 	}
 	if len(listed.Tools) != 2 || listed.Tools[0].Name != "get_messages" || listed.Tools[1].Name != "search_memories" {
 		t.Fatalf("unexpected MCP tools: %+v", listed.Tools)
+	}
+	for _, tool := range listed.Tools {
+		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
+			t.Fatalf("memory MCP tool must remain read-only: %+v", tool)
+		}
 	}
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "search_memories", Arguments: map[string]any{"keyword": "PostgreSQL", "limit": 2},
@@ -92,9 +100,9 @@ func TestSearchMemoriesOverMCP(t *testing.T) {
 
 func TestGetMessagesOverMCP(t *testing.T) {
 	ctx := context.Background()
-	finder := &fakeFinder{messages: []types.Message{{SessionID: 3, Seq: 4, Role: "user", Content: "使用 PostgreSQL"}}}
+	messages := &fakeMessageReader{messages: []types.Message{{SessionID: 3, Seq: 4, Role: "user", Content: "使用 PostgreSQL"}}}
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
-	serverSession, err := appmcp.NewMcpMemoryReaderServer(finder).Connect(ctx, serverTransport, nil)
+	serverSession, err := appmcp.NewMcpMemoryReaderServer(&fakeFinder{}, messages).Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatalf("connect server: %v", err)
 	}
@@ -112,8 +120,8 @@ func TestGetMessagesOverMCP(t *testing.T) {
 	if err != nil || result.IsError {
 		t.Fatalf("call get_messages: result=%+v err=%v", result, err)
 	}
-	if finder.sessionID != 3 || finder.seqStart != 4 || finder.seqEnd != 5 {
-		t.Fatalf("unexpected message range: session=%d start=%d end=%d", finder.sessionID, finder.seqStart, finder.seqEnd)
+	if messages.sessionID != 3 || messages.seqStart != 4 || messages.seqEnd != 5 {
+		t.Fatalf("unexpected message range: session=%d start=%d end=%d", messages.sessionID, messages.seqStart, messages.seqEnd)
 	}
 	content, ok := result.StructuredContent.(map[string]any)
 	if !ok {
@@ -143,7 +151,7 @@ func TestGetMessagesOverMCP(t *testing.T) {
 		}
 	}
 
-	finder.messages = nil
+	messages.messages = nil
 	empty, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "get_messages", Arguments: map[string]any{"session_id": 3, "seq_start": 9, "seq_end": 10},
 	})

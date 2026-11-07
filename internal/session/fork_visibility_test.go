@@ -1,14 +1,33 @@
-package memory
+package session
 
 import (
 	"context"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
+func testSessionManager(t *testing.T) (*SessionManager, sqlmock.Sqlmock) {
+	t.Helper()
+	conn, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: conn}), &gorm.Config{
+		DisableAutomaticPing: true, Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewSessionManager(db), mock
+}
+
 func TestGlobalSourceToolsExcludeBranches(t *testing.T) {
-	manager, mock := lifecycleTestManager(t)
+	manager, mock := testSessionManager(t)
 	// Global Agent/MCP readers must not regain a branch's private messages by
 	// guessing its session/conversation IDs. Explicit UI history uses ListMessages.
 	mock.ExpectQuery(`SELECT .* FROM "messages" WHERE .*NOT EXISTS .*private_session.id = messages.session_id AND private_conversation.parent_conversation_id IS NOT NULL`).

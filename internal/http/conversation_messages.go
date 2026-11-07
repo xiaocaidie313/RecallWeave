@@ -29,7 +29,7 @@ func (h *ConversationHandler) ListConversationMessages(c *gin.Context) {
 		return
 	}
 
-	session, err := h.messages.FindChatSession(c.Request.Context(), conversationID)
+	session, err := h.sessions.FindChatSession(c.Request.Context(), conversationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load chat session"})
 		return
@@ -39,12 +39,12 @@ func (h *ConversationHandler) ListConversationMessages(c *gin.Context) {
 		return
 	}
 
-	messages, err := h.messages.ListMessages(c.Request.Context(), session.ID)
+	messages, err := h.sessions.ListMessages(c.Request.Context(), session.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list messages"})
 		return
 	}
-	deliveries, err := h.messages.MessageDeliveries(c.Request.Context(), *session, messages)
+	deliveries, err := h.sessions.MessageDeliveries(c.Request.Context(), *session, messages)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load message provenance"})
 		return

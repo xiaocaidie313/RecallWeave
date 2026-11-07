@@ -48,7 +48,7 @@ func recordingTool(name, response string, gotArguments *string) llm.Tool {
 }
 
 func newChatService(model llm.ChatGenerator, abilities ...*agent.Ability) *ChatService {
-	return NewChatService(agent.NewAgent(1, "recall", model, "test", 3, abilities...), nil, nil)
+	return NewChatService(agent.NewAgent(1, "recall", model, "test", 3, abilities...), nil, nil, nil)
 }
 
 func TestChatReturnsAnswerWithoutTools(t *testing.T) {

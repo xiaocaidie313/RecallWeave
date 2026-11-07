@@ -1,4 +1,4 @@
-package memory
+package session
 
 import (
 	"bytes"
@@ -22,7 +22,7 @@ type MessageDelivery struct {
 // MessageDeliveries retypess old and new deliveries from the durable event log.
 // The event key is indexed with conversation_id, so this needs no replay scan
 // or new message columns. The caller supplies the session it has already loaded.
-func (m *MemoryManger) MessageDeliveries(ctx context.Context, session types.Session, messages []types.Message) (map[uint]MessageDelivery, error) {
+func (m *SessionManager) MessageDeliveries(ctx context.Context, session types.Session, messages []types.Message) (map[uint]MessageDelivery, error) {
 	deliveries := make(map[uint]MessageDelivery) // 存储交付
 	if ctx == nil || m == nil || m.db == nil || session.ID == 0 {
 		return nil, fmt.Errorf("memory: message delivery session and storage are required")

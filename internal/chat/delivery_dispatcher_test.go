@@ -27,7 +27,7 @@ func noDeliveryModel(t *testing.T) (*chat.ChatService, *atomic.Int32) {
 		calls.Add(1)
 		return llm.Turn{}, errors.New("direct delivery must not call the model")
 	}}
-	return chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil), calls
+	return chat.NewChatService(agent.NewAgent(1, "recall", model, "", 2), nil, nil, nil), calls
 }
 
 func TestDefaultDirectDeliveryPublishesOriginalResultAndSourcesOverSSE(t *testing.T) {

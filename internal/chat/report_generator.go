@@ -184,10 +184,10 @@ func clipReportText(value string, limit int) string {
 }
 
 func (a *ChatService) reportHistory(ctx context.Context, owner uint) ([]llm.Message, error) {
-	if a.memory == nil {
+	if a.sessions == nil {
 		return nil, nil
 	}
-	session, err := a.memory.FindChatSession(ctx, owner)
+	session, err := a.sessions.FindChatSession(ctx, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +197,7 @@ func (a *ChatService) reportHistory(ctx context.Context, owner uint) ([]llm.Mess
 	if session.ConversationID == nil || *session.ConversationID != owner {
 		return nil, errors.New("chat: report history ownership mismatch")
 	}
-	messages, err := a.memory.ListMessages(ctx, session.ID)
+	messages, err := a.sessions.ListMessages(ctx, session.ID)
 	if err != nil {
 		return nil, err
 	}

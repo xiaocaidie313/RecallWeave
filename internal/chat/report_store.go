@@ -60,6 +60,8 @@ func (s *GormReportStore) Pending(ctx context.Context, limit int) ([]types.Subag
 	err := s.db.WithContext(ctx).Select("id", "conversation_id", "delivery_mode").Where("report_status = ? AND status IN ?", "pending", []string{"completed", "partial", "failed", "cancelled", "interrupted"}).Order("finished_at ASC").Order("id ASC").Limit(limit).Find(&rows).Error
 	return rows, err
 }
+
+// 拿的是已经可以回报、但还没发出去的那条任务。
 func (s *GormReportStore) Claim(ctx context.Context, id string, owner uint, claim string) (types.SubagentTask, bool, error) {
 	var row types.SubagentTask
 	if err := s.check(ctx); err != nil {
@@ -128,7 +130,12 @@ func (s *GormReportStore) Deliver(ctx context.Context, id string, owner uint, cl
 		if err := lockReportSession(tx, &session, owner); err != nil {
 			return err
 		}
-		message := types.Message{SourceTag: types.SourceChat, SessionID: session.ID, Role: "assistant", Content: report.Message.Content}
+		message := types.Message{
+			SourceTag: types.SourceChat,
+			SessionID: session.ID,
+			Role:      "assistant",
+			Content:   report.Message.Content,
+		}
 		if err := appendReportMessage(tx, &message); err != nil {
 			return err
 		}
