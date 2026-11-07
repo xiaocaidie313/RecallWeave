@@ -84,7 +84,7 @@ func TestRunDetailMapsStorageErrors(t *testing.T) {
 
 func TestRunListWorksWithoutConversationHandler(t *testing.T) {
 	handler, mock := runHTTPHandler(t)
-	mock.ExpectQuery(`SELECT count\(\*\) FROM "agent_runs" WHERE conversation_id =`).WithArgs(7).
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "conversations" WHERE id =`).WithArgs(7).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectQuery(`SELECT .* FROM "agent_runs" WHERE conversation_id = .*ORDER BY id DESC LIMIT`).WithArgs(7, 20).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "conversation_id", "status"}).AddRow(1, "run-1", 7, "completed"))
@@ -114,5 +114,59 @@ func TestRunListRejectsInvalidConversationIDBeforeStorage(t *testing.T) {
 		if recorder.Code != http.StatusBadRequest {
 			t.Fatalf("invalid conversation %q reached storage: %d %s", id, recorder.Code, recorder.Body.String())
 		}
+	}
+}
+
+func TestRunListDistinguishesEmptyAndMissingConversations(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		exists   int
+		wantCode int
+		wantBody string
+	}{
+		{"existing new conversation", 1, http.StatusOK, `{"runs":[]}`},
+		{"missing conversation", 0, http.StatusNotFound, `{"error":"conversation not found"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, mock := runHTTPHandler(t)
+			mock.ExpectQuery(`SELECT count\(\*\) FROM "conversations" WHERE id =`).WithArgs(7).
+				WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(tc.exists))
+			if tc.exists == 1 {
+				mock.ExpectQuery(`SELECT .* FROM "agent_runs" WHERE conversation_id = .*ORDER BY id DESC LIMIT`).WithArgs(7, 20).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "conversation_id"}))
+			}
+			recorder := httptest.NewRecorder()
+			NewRouter(nil, nil, nil, nil, nil, handler).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/conversations/7/runs", nil))
+			if recorder.Code != tc.wantCode || recorder.Body.String() != tc.wantBody {
+				t.Fatalf("got HTTP %d %s; want HTTP %d %s", recorder.Code, recorder.Body.String(), tc.wantCode, tc.wantBody)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRunListMapsLookupFailuresToServerError(t *testing.T) {
+	for _, failedLookup := range []string{"conversation", "runs"} {
+		t.Run(failedLookup, func(t *testing.T) {
+			handler, mock := runHTTPHandler(t)
+			query := mock.ExpectQuery(`SELECT count\(\*\) FROM "conversations" WHERE id =`).WithArgs(7)
+			if failedLookup == "conversation" {
+				query.WillReturnError(errors.New("conversation storage unavailable"))
+			} else {
+				query.WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+				mock.ExpectQuery(`SELECT .* FROM "agent_runs" WHERE conversation_id = .*ORDER BY id DESC LIMIT`).WithArgs(7, 20).
+					WillReturnError(errors.New("run storage unavailable"))
+			}
+			recorder := httptest.NewRecorder()
+			NewRouter(nil, nil, nil, nil, nil, handler).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/conversations/7/runs", nil))
+			if recorder.Code != http.StatusInternalServerError || recorder.Body.String() != `{"error":"failed to list runs"}` {
+				t.Fatalf("storage error misreported: HTTP %d %s", recorder.Code, recorder.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

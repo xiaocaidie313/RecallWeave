@@ -14,7 +14,6 @@ import (
 	"recallweave/internal/types"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // Title 字段是 varchar(191)，这里留出余量，按字符数而不是字节数截断。
@@ -24,12 +23,16 @@ const (
 	segmentBatchMaxMessages = 20
 	segmentBatchMaxChars    = 8000
 	segmentBatchOverlap     = 2
+	maxExtractionAttempts   = 3
 )
+
+var errExtractionConflict = errors.New("extract: memory coverage kept changing; retry extraction")
 
 type ExtractExcuter struct {
 	db        *gorm.DB
 	segmenter llm.Segmenter
 	embedder  llm.Embedder
+	sessions  sessionGate
 }
 
 // segmenter 传 nil 时退回本地兜底：每一批消息合成一段，标题取该批第一条的第一行。
@@ -41,6 +44,12 @@ func NewExtractExcuter(db *gorm.DB, segmenter llm.Segmenter, embedder llm.Embedd
 // 重复提炼同一个会话是幂等的：先删掉旧记忆，再写新的。
 // 包含停用记忆的会话禁止整体重写，以免重新激活旧内容；仍可增量提炼。
 func (e *ExtractExcuter) ExtractSessionToMemory(ctx context.Context, sessionID uint) (int, error) {
+	release, err := e.sessions.acquire(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+
 	if err := e.checkGlobalExtraction(ctx, sessionID); err != nil {
 		e.markExtract(ctx, sessionID, err)
 		return 0, err
@@ -51,27 +60,45 @@ func (e *ExtractExcuter) ExtractSessionToMemory(ctx context.Context, sessionID u
 }
 
 func (e *ExtractExcuter) extractSessionToMemory(ctx context.Context, sessionID uint) (int, error) {
-	messages, err := e.GetMessages(ctx, sessionID)
-	if err != nil {
-		return 0, err
-	}
+	for attempt := 0; attempt < maxExtractionAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		messages, err := e.GetMessages(ctx, sessionID)
+		if err != nil {
+			return 0, err
+		}
 
-	if len(messages) == 0 {
-		return 0, nil
-	}
+		if len(messages) == 0 {
+			return 0, nil
+		}
 
-	memories := e.generateMemoryFromMessage(ctx, sessionID, messages)
-	if err := e.replaceMemories(ctx, sessionID, memories); err != nil {
-		return 0, err
+		memories := e.generateMemoryFromMessage(ctx, sessionID, messages)
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		snapshotEnd := messages[len(messages)-1].Seq
+		replaced, err := e.replaceMemories(ctx, sessionID, snapshotEnd, memories)
+		if err != nil {
+			return 0, err
+		}
+		if replaced {
+			return len(memories), nil
+		}
 	}
-
-	return len(memories), nil
+	return 0, errExtractionConflict
 }
 
 // ExtractIncrementalToMemory 只提炼上次覆盖序号之后的新消息，已有记忆保留。
 // 手动的 ExtractSessionToMemory 仍会删掉旧记忆再整段重写。
 // 摘要失败做降级 ----> llm 自动重新提炼信息
 func (e *ExtractExcuter) ExtractIncrementalToMemory(ctx context.Context, sessionID uint) (int, error) {
+	release, err := e.sessions.acquire(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+
 	if err := e.checkGlobalExtraction(ctx, sessionID); err != nil {
 		e.markExtract(ctx, sessionID, err)
 		return 0, err
@@ -82,38 +109,39 @@ func (e *ExtractExcuter) ExtractIncrementalToMemory(ctx context.Context, session
 }
 
 func (e *ExtractExcuter) extractIncrementalToMemory(ctx context.Context, sessionID uint) (int, error) {
-	// 某一session的message
-	messages, err := e.GetMessages(ctx, sessionID)
-	if err != nil {
-		return 0, err
-	}
-	if len(messages) == 0 {
-		return 0, nil
-	}
-	// 获取覆盖的序号 获取最后一条记忆的序号 获得最大seq序号
-	covered, err := e.coveredSeq(ctx, sessionID)
-	if err != nil {
-		return 0, err
-	}
-	// 获取新的消息  @todo是不是有点浪费？ 获取的session下全部message 但是只要大于 covered  极端情况就只有一条
-	fresh := make([]types.Message, 0, len(messages))
-	for _, msg := range messages {
-		// 如果消息的序号大于覆盖的序号，则添加到新的消息中
-		if msg.Seq > covered {
-			fresh = append(fresh, msg)
+	for attempt := 0; attempt < maxExtractionAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return 0, err
 		}
+		covered, err := coveredSeq(e.db.WithContext(ctx), sessionID)
+		if err != nil {
+			return 0, err
+		}
+		var fresh []types.Message
+		if err := e.db.WithContext(ctx).
+			Where("session_id = ? AND seq > ?", sessionID, covered).
+			Order("seq").Find(&fresh).Error; err != nil {
+			return 0, err
+		}
+		if len(fresh) == 0 {
+			return 0, nil
+		}
+
+		// 模型调用不占用数据库事务；提交时重新检查覆盖范围。
+		memories := e.generateMemoryFromMessage(ctx, sessionID, fresh)
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		appended, err := e.appendMemories(ctx, sessionID, covered, memories)
+		if err != nil {
+			return 0, err
+		}
+		if appended {
+			return len(memories), nil
+		}
+		// 其他执行器已写入：丢弃旧摘要，重新读取剩余原文，不能只改摘要的序号。
 	}
-	if len(fresh) == 0 {
-		return 0, nil
-	}
-	// fresh里存的是全新的message
-	// 生成记忆从message
-	memories := e.generateMemoryFromMessage(ctx, sessionID, fresh)
-	// 写入记忆
-	if err := e.db.WithContext(ctx).Create(&memories).Error; err != nil {
-		return 0, err
-	}
-	return len(memories), nil
+	return 0, errExtractionConflict
 }
 
 // 标记提取状态
@@ -137,18 +165,6 @@ func (e *ExtractExcuter) markExtract(ctx context.Context, sessionID uint, extrac
 	if err := e.db.WithContext(ctx).Model(&types.Session{}).Where("id = ?", sessionID).Updates(updates).Error; err != nil {
 		slog.Warn("mark extract status failed", "session_id", sessionID, "error", err)
 	}
-}
-
-// 获取覆盖的序号 获取最后一条记忆的序号。即最大序号
-func (e *ExtractExcuter) coveredSeq(ctx context.Context, sessionID uint) (int, error) {
-	var row struct {
-		Seq int
-	}
-	err := e.db.WithContext(ctx).Model(&types.Memory{}).
-		Where("session_id = ?", sessionID).
-		Select("COALESCE(MAX(seq_end), 0) AS seq").
-		Scan(&row).Error
-	return row.Seq, err
 }
 
 // 生成记忆从message 通过将大段message 切断成多段segment 每段segment 生成一条记忆
@@ -308,30 +324,6 @@ func mergeBatchSegments(segments []llm.Segment) []llm.Segment {
 		return merged[i].SeqEnd < merged[j].SeqEnd
 	})
 	return merged
-}
-
-// #3 写入记忆
-func (e *ExtractExcuter) replaceMemories(ctx context.Context, sessionID uint, memories []types.Memory) error {
-	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existing []types.Memory
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("session_id = ?", sessionID).Order("id").Find(&existing).Error; err != nil {
-			return err
-		}
-		for _, item := range existing {
-			if item.Status != "" && item.Status != types.MemoryActive {
-				return types.ErrMemoryHistoryProtected
-			}
-		}
-		if err := tx.Where("session_id = ?", sessionID).Delete(&types.Memory{}).Error; err != nil {
-			return err
-		}
-
-		if len(memories) == 0 {
-			return nil
-		}
-
-		return tx.Create(&memories).Error
-	})
 }
 
 // keepValidSegments 丢掉编号越界或者反向的段，并给空标题补上兜底值。

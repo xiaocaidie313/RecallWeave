@@ -33,6 +33,8 @@ func TestFullReextractionPreservesReplacementHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 			mock.ExpectBegin()
+			mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE id = .*FOR UPDATE`).WithArgs(10, 1).
+				WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(10))
 			mock.ExpectQuery(`SELECT .* FROM "memories".*FOR UPDATE`).WithArgs(10).
 				WillReturnRows(sqlmock.NewRows([]string{"id", "session_id", "status"}).AddRow(1, 10, tc.status))
 			if tc.protected {
@@ -41,12 +43,15 @@ func TestFullReextractionPreservesReplacementHistory(t *testing.T) {
 				mock.ExpectExec(`DELETE FROM "memories" WHERE session_id =`).WithArgs(10).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectCommit()
 			}
-			err = NewExtractExcuter(db, nil, nil).replaceMemories(context.Background(), 10, nil)
+			replaced, err := NewExtractExcuter(db, nil, nil).replaceMemories(context.Background(), 10, 2, nil)
 			if tc.protected && !errors.Is(err, types.ErrMemoryHistoryProtected) {
 				t.Fatalf("history was not protected: %v", err)
 			}
 			if !tc.protected && err != nil {
 				t.Fatal(err)
+			}
+			if replaced == tc.protected {
+				t.Fatalf("unexpected replacement result: replaced=%v protected=%v", replaced, tc.protected)
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatal(err)

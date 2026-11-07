@@ -66,6 +66,40 @@ func delegationSchemaPresent(schemas []llm.ToolSchema) bool {
 	return false
 }
 
+func TestSummarizeDelegationHandlesOptionalError(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		status    RunStatus
+		runErr    error
+		wantError string
+	}{
+		{name: "successful child", status: RunCompleted},
+		{name: "failed child", status: RunFailed, runErr: errors.New("upstream unavailable"), wantError: "upstream unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			child := delegationChild(DelegationParent{RunID: "parent", ConversationID: 23}, tc.status)
+			reply := SummarizeDelegation(child, tc.runErr)
+			if reply.ChildRunID != child.State.RunID || reply.Status != tc.status || reply.Summary != child.Content {
+				t.Fatalf("child result was not preserved: %+v", reply)
+			}
+			if reply.Error != tc.wantError {
+				t.Fatalf("error = %q, want %q", reply.Error, tc.wantError)
+			}
+			encoded, err := json.Marshal(reply)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if _, hasError := fields["error"]; hasError != (tc.wantError != "") {
+				t.Fatalf("unexpected error field in delegation result: %s", encoded)
+			}
+		})
+	}
+}
+
 func TestDelegationToolAvailableOnlyOnConfiguredParentRun(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

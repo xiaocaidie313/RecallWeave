@@ -195,7 +195,6 @@ func SummarizeDelegation(child RunResult, runErr error) DelegationResult {
 		Usage:     total.Usage,
 		Calls:     len(calls),
 		LatencyMs: total.LatencyMs,
-		Error:     boundedText(runErr.Error(), 2<<10),
 	}
 	if runErr != nil {
 		reply.Error = boundedText(runErr.Error(), 2<<10)

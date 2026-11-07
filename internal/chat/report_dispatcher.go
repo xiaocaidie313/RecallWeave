@@ -22,7 +22,7 @@ type ReportConfig struct {
 
 type ReportDispatcher struct {
 	agent          *ChatService
-	types          ReportStore
+	reportStore    ReportStore
 	groups         GroupReportStore
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -71,7 +71,15 @@ func StartReportDispatcher(ctx context.Context, agent *ChatService, repository R
 		}
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
-	d := &ReportDispatcher{agent: agent, types: repository, groups: groups, ctx: workerCtx, cancel: cancel, done: make(chan struct{}), config: config}
+	d := &ReportDispatcher{
+		agent:       agent,
+		reportStore: repository,
+		groups:      groups,
+		ctx:         workerCtx,
+		cancel:      cancel,
+		done:        make(chan struct{}),
+		config:      config,
+	}
 	d.inFlight = make(map[uint]bool)
 	d.deliverySlots = make(chan struct{}, config.DeliveryWorkers)
 	d.synthesisSlots = make(chan struct{}, config.SynthesisWorkers)
@@ -167,7 +175,7 @@ func (d *ReportDispatcher) process(row types.SubagentTask, release func()) {
 		}
 	}()
 	ctx, cancel := context.WithTimeout(d.ctx, 3*time.Second)
-	task, ok, err := d.types.Claim(ctx, row.ID, row.ConversationID, claim)
+	task, ok, err := d.reportStore.Claim(ctx, row.ID, row.ConversationID, claim)
 	cancel()
 	if err != nil {
 		if d.ctx.Err() == nil {
@@ -202,7 +210,7 @@ func (d *ReportDispatcher) process(row types.SubagentTask, release func()) {
 		return
 	}
 	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
-	err = d.types.Deliver(ctx, row.ID, row.ConversationID, claim, generated)
+	err = d.reportStore.Deliver(ctx, row.ID, row.ConversationID, claim, generated)
 	cancel()
 	if err != nil {
 		slog.Error("persist automatic report failed", "task_id", row.ID, "error", err)
@@ -220,7 +228,7 @@ func (d *ReportDispatcher) fail(row types.SubagentTask, claim, message string, r
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if err := d.types.Fail(ctx, row.ID, row.ConversationID, claim, message, run); err != nil {
+	if err := d.reportStore.Fail(ctx, row.ID, row.ConversationID, claim, message, run); err != nil {
 		slog.Error("save automatic report failure failed", "task_id", row.ID, "error", err)
 	}
 }

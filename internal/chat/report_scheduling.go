@@ -101,10 +101,10 @@ func excludedOwner(owners []uint, owner uint) bool {
 }
 
 func (d *ReportDispatcher) pendingReports(ctx context.Context, synthesize bool, excluded []uint) ([]types.SubagentTask, error) {
-	if queue, ok := d.types.(deliveryQueue); ok {
+	if queue, ok := d.reportStore.(deliveryQueue); ok {
 		return queue.PendingDelivery(ctx, 20, synthesize, excluded)
 	}
-	rows, err := d.types.Pending(ctx, 100)
+	rows, err := d.reportStore.Pending(ctx, 100)
 	if err != nil {
 		return nil, err
 	}
