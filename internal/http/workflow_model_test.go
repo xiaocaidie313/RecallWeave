@@ -49,17 +49,20 @@ type workflowChatRequest struct {
 }
 
 type workflowModelStats struct {
-	ChatCalls      int
-	SegmentCalls   int
-	EmbeddingCalls int
-	SearchCalls    int
-	SourceCalls    int
+	ChatCalls            int
+	SegmentCalls         int
+	EmbeddingCalls       int
+	QueryEmbeddingCalls  int
+	MemoryEmbeddingCalls int
+	SearchCalls          int
+	SourceCalls          int
 }
 
 type workflowModel struct {
 	t                 *testing.T
 	mu                sync.Mutex
 	requests          []workflowChatRequest
+	embeddingInputs   []string
 	stats             workflowModelStats
 	extractionStarted chan struct{}
 	extractionRelease chan struct{}
@@ -111,6 +114,36 @@ func (m *workflowModel) Stats() workflowModelStats {
 	return m.stats
 }
 
+func (m *workflowModel) EmbeddingInputs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.embeddingInputs...)
+}
+
+func (m *workflowModel) AssertOrdinaryChatWithoutMemoryReads(t *testing.T) {
+	t.Helper()
+	ordinaryCalls := 0
+	for _, request := range m.ChatRequests() {
+		question := workflowLastUser(request.Messages)
+		if question != workflowFirstQuestion && question != workflowSecondQuestion {
+			continue
+		}
+		ordinaryCalls++
+		for _, message := range request.Messages {
+			if message.Role == "tool" || len(message.ToolCalls) != 0 {
+				t.Fatalf("ordinary chat performed a tool round: %+v", request.Messages)
+			}
+			if message.Role == "system" && strings.Contains(message.Content, "用户过去可能相关的经历：") {
+				t.Fatalf("ordinary chat received automatic global memory preload: %s", message.Content)
+			}
+		}
+	}
+	stats := m.Stats()
+	if ordinaryCalls != 2 || stats.SearchCalls != 0 || stats.SourceCalls != 0 || stats.QueryEmbeddingCalls != 0 {
+		t.Fatalf("ordinary chat unexpectedly read global memory: ordinary_calls=%d stats=%+v inputs=%q", ordinaryCalls, stats, m.EmbeddingInputs())
+	}
+}
+
 func (m *workflowModel) AssertHistory(t *testing.T) {
 	t.Helper()
 	for _, request := range m.ChatRequests() {
@@ -142,8 +175,27 @@ func (m *workflowModel) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch r.URL.Path {
 	case "/v1/embeddings":
+		var request struct {
+			Input string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Input == "" {
+			m.fail(w, "invalid embedding request: %v", err)
+			return
+		}
 		m.mu.Lock()
 		m.stats.EmbeddingCalls++
+		m.embeddingInputs = append(m.embeddingInputs, request.Input)
+		// The fixture's segmenter produces these exact title+summary inputs.
+		// Keeping them separate exposes retrieval prefetch even when ordinary
+		// chat also creates new memory embeddings asynchronously.
+		switch request.Input {
+		case "PostgreSQL 选型\n" + workflowFirstQuestion,
+			"Docker Compose 部署\n" + workflowSecondQuestion,
+			"会话记录\n" + workflowRecallQuestion:
+			m.stats.MemoryEmbeddingCalls++
+		default:
+			m.stats.QueryEmbeddingCalls++
+		}
 		m.mu.Unlock()
 		vector := make([]float64, types.EmbeddingDim)
 		vector[0] = 1

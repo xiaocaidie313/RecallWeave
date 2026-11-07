@@ -92,7 +92,7 @@ func TestBranchLoaderUsesFrozenPrefixWithoutGlobalQueries(t *testing.T) {
 			AddRow(1, "user", "本支线已压缩的消息").AddRow(2, "assistant", "本支线近期回复"))
 	service := NewChatService(nil, nil, session.NewSessionManager(db), nil).
 		WithConversationManager(conversation.NewConversationManager(db))
-	preload, sessionID, conversation, visible, err := service.loadContext(context.Background(), 3, "现在继续研究")
+	preload, sessionID, conversation, visible, err := service.loadContext(context.Background(), 3)
 	if err != nil {
 		t.Fatal(err)
 	}

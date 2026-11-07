@@ -253,6 +253,7 @@ func TestPostgresHTTPChatMemoryWorkflow(t *testing.T) {
 		t.Fatalf("second chat result: %+v", second)
 	}
 	fake.AssertHistory(t)
+	fake.AssertOrdinaryChatWithoutMemoryReads(t)
 	var history workflowHistory
 	workflowJSON(t, ctx, server, http.MethodGet, sourcePath+"/messages", nil, http.StatusOK, &history)
 	wantContents := []string{workflowFirstQuestion, workflowFirstAnswer, workflowSecondQuestion, workflowSecondAnswer}
@@ -289,6 +290,11 @@ func TestPostgresHTTPChatMemoryWorkflow(t *testing.T) {
 	if added, err := extractor.ExtractIncrementalToMemory(ctx, history.SessionID); err != nil || added != 0 {
 		t.Fatalf("repeat extraction was not idempotent: added=%d err=%v", added, err)
 	}
+	fake.AssertOrdinaryChatWithoutMemoryReads(t)
+	ordinaryStats := fake.Stats()
+	if ordinaryStats.MemoryEmbeddingCalls != 2 || ordinaryStats.EmbeddingCalls != ordinaryStats.MemoryEmbeddingCalls {
+		t.Fatalf("ordinary chat embeddings were not limited to the two saved memories: %+v inputs=%q", ordinaryStats, fake.EmbeddingInputs())
+	}
 
 	// A new DB pool and newly assembled HTTP router must read saved state.
 	reloadedDB := workflowOpenDatabase(t, dsn)
@@ -308,6 +314,13 @@ func TestPostgresHTTPChatMemoryWorkflow(t *testing.T) {
 	for _, saved := range savedRuns.Runs {
 		if saved.Status != string(runtime.RunCompleted) || saved.ConversationID != source.ID {
 			t.Fatalf("unexpected persisted Run: %+v", saved)
+		}
+		var state runtime.RunState
+		if err := json.Unmarshal(saved.State, &state); err != nil {
+			t.Fatal(err)
+		}
+		if len(state.Steps) != 0 || state.CurrentRound != 1 {
+			t.Fatalf("ordinary chat persisted an unexpected tool round: %+v", state)
 		}
 	}
 	storedEvents, err := events.NewStore(reloadedDB).List(ctx, source.ID, 0, 20)
@@ -361,15 +374,21 @@ func TestPostgresHTTPChatMemoryWorkflow(t *testing.T) {
 		t.Fatalf("other conversation contaminated source Run list: %+v", savedRuns.Runs)
 	}
 	fake.AssertHistory(t)
+	finalStats := fake.Stats()
+	if finalStats.SearchCalls != 1 || finalStats.SourceCalls != 1 || finalStats.QueryEmbeddingCalls != 1 ||
+		finalStats.MemoryEmbeddingCalls != 3 || finalStats.EmbeddingCalls != finalStats.QueryEmbeddingCalls+finalStats.MemoryEmbeddingCalls {
+		t.Fatalf("historical recall did not use exactly one on-demand search plus source read: %+v inputs=%q", finalStats, fake.EmbeddingInputs())
+	}
 	t.Logf("PASS source conversation=%d messages=4 runs=2 memories=2 ranges=1-2,3-4; recall conversation=%d rounds=%d citation=session:%d seq:1-2; model=%+v",
-		source.ID, recallConversation.ID, recalled.Rounds, citation.SessionID, fake.Stats())
+		source.ID, recallConversation.ID, recalled.Rounds, citation.SessionID, finalStats)
 	if reportPath := os.Getenv("RECALLWEAVE_WORKFLOW_REPORT_PATH"); reportPath != "" {
 		report := map[string]any{
 			"validation":          "real HTTP, production services and PostgreSQL; deterministic local model responses",
-			"checks":              []string{"new conversation empty runs", "two ordered chat turns", "chat continues during blocked extraction", "two nonoverlapping memory ranges", "repeat extraction adds zero memories", "reopened storage preserves history and runs", "four message events persisted", "cross-conversation search and original-message verification", "citation resolves to source messages", "Run records persist tool trace"},
+			"checks":              []string{"new conversation empty runs", "two ordered chat turns", "ordinary chat performs no memory tools or query embeddings", "background extraction still embeds two memories", "chat continues during blocked extraction", "two nonoverlapping memory ranges", "repeat extraction adds zero memories", "reopened storage preserves history and runs", "four message events persisted", "cross-conversation on-demand search and original-message verification", "citation resolves to source messages", "Run records persist tool trace"},
 			"source_conversation": source, "source_history": history, "source_overview": overview,
 			"source_memories": memoryResponse.Memories, "source_runs": savedRuns.Runs,
-			"recall_answer": recalled, "recall_run": savedRecall, "model_calls": fake.Stats(),
+			"recall_answer": recalled, "recall_run": savedRecall, "model_calls": finalStats,
+			"ordinary_chat_model_calls": ordinaryStats, "embedding_inputs": fake.EmbeddingInputs(),
 		}
 		encoded, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {

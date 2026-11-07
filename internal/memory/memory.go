@@ -35,7 +35,7 @@ func NewMemoryManger(db *gorm.DB, retriever *retrieval.Retriever) *MemoryManger 
 	return &MemoryManger{db: db, retriever: retriever}
 }
 
-// FindMemories 混合检索，不改活跃度。预取背景用这个，避免每次提问都给 Top-K 加分。
+// FindMemories 混合检索，不改活跃度；对外 MCP 等只读查询使用此方法。
 func (m *MemoryManger) FindMemories(ctx context.Context, keyword string, tag types.MemoryTag, limit int, includeInactive ...bool) ([]types.Memory, error) {
 	history := len(includeInactive) > 0 && includeInactive[0]
 	if limit <= 0 {

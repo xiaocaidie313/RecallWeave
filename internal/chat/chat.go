@@ -122,7 +122,7 @@ func (a *ChatService) Chat(ctx context.Context, question string, conversationID 
 	defer release()
 
 	stageStarted := time.Now()
-	preload, sessionID, conversation, inheritedMsg, err := a.loadContext(ctx, conversationID, question)
+	preload, sessionID, conversation, inheritedMsg, err := a.loadContext(ctx, conversationID)
 	timings.LoadContextMs = time.Since(stageStarted).Milliseconds()
 	if err != nil {
 		return Answer{}, err

@@ -3,7 +3,6 @@ package chat
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 
@@ -12,24 +11,17 @@ import (
 	"recallweave/internal/types"
 )
 
-// preloadedMemoriesLimit 混合检索预取的记忆条数。只放几条摘要进上下文，
-// 控制住 token 成本，细节让模型用工具自己挖。
-const preloadedMemoriesLimit = 4
-
 const (
 	maxCatalogPerSession = 8
 	maxCatalogTotal      = 24
 )
 
 // loadContext 准备这次提问需要的全部背景，并返回对应的 chat session。
-// 分三层：
-//  1. 记忆层：relatedMemories 从全库检索与问题相关的记忆（混合检索）。
-//  2. 导入层：挂到这次对话上的会话，把记忆目录放进背景。
-//  3. 对话层：本对话的历史消息 + 之前的简报。
+// 只加载本对话的历史、简报，以及明确挂到本对话的导入会话目录。
+// 全库记忆由 Agent 在需要历史依据时通过工具检索和核对原文。
 //
-// 只作知识背景的导入不挂 conversation，不会出现在导入层，仍走第 1 层。
 // 没有会话存储或没有 conversation 时跳过，测试可以不连数据库。
-func (a *ChatService) loadContext(ctx context.Context, conversationID uint, question string) (runtime.Preload, uint, *types.Conversation, []types.ContextMessage, error) {
+func (a *ChatService) loadContext(ctx context.Context, conversationID uint) (runtime.Preload, uint, *types.Conversation, []types.ContextMessage, error) {
 	var preload runtime.Preload
 	if a.sessions == nil || conversationID == 0 {
 		return preload, 0, nil, nil, nil
@@ -43,9 +35,6 @@ func (a *ChatService) loadContext(ctx context.Context, conversationID uint, ques
 	}
 	//判断是否是分支， 分支不加背景
 	if !conversation.IsBranch() {
-		if background := a.relatedMemories(ctx, question); background != "" {
-			preload.Background = append(preload.Background, background)
-		}
 		imported, err := a.importedBackground(ctx, conversationID)
 		if err != nil {
 			return preload, 0, nil, nil, err
@@ -92,36 +81,6 @@ func (a *ChatService) loadContext(ctx context.Context, conversationID uint, ques
 		})
 	}
 	return preload, session.ID, &conversation, inheritedMsg, nil
-}
-
-// relatedMemories 用当前问题从记忆库检索相关记忆，把 top-K 的标题+摘要拼成一段背景。
-// 这些预取的记忆不进 citations——它们是「可能的背景」，真正的引用依据走工具链。
-// 检索失败只记日志，不让预取失败拦截掉这一次提问。
-func (a *ChatService) relatedMemories(ctx context.Context, question string) string {
-	if a.memory == nil || question == "" {
-		return ""
-	}
-	// 向量检索的 2 路召回 选取top-k
-	hits, err := a.memory.FindMemories(ctx, question, "", preloadedMemoriesLimit)
-	if err != nil {
-		slog.Warn("preload memories failed", "error", err)
-		return ""
-	}
-	if len(hits) == 0 {
-		return ""
-	}
-
-	var builder strings.Builder
-	builder.WriteString("用户过去可能相关的经历：\n")
-	for _, hit := range hits {
-		builder.WriteString("- ")
-		builder.WriteString(hit.Title)
-		builder.WriteString("\n  ")
-		builder.WriteString(hit.Content)
-		builder.WriteByte('\n')
-	}
-	builder.WriteString("\n这些仅供参考，回答时如果你不确定，用 search_memories 或 get_messages 核实。")
-	return builder.String()
 }
 
 type importedPiece struct {

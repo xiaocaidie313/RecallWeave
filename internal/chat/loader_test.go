@@ -5,16 +5,72 @@ import (
 	"strings"
 	"testing"
 
+	"recallweave/internal/conversation"
 	"recallweave/internal/memory"
 	"recallweave/internal/session"
 	"recallweave/internal/types"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func TestLoadContextRequiresConversationManager(t *testing.T) {
 	service := NewChatService(nil, memory.NewMemoryManger(nil, nil), session.NewSessionManager(nil), nil)
-	_, _, _, _, err := service.loadContext(context.Background(), 7, "继续讨论")
+	_, _, _, _, err := service.loadContext(context.Background(), 7)
 	if err == nil || !strings.Contains(err.Error(), "conversation manager is not configured") {
 		t.Fatalf("missing conversation manager should fail before querying storage: %v", err)
+	}
+}
+
+func TestLoadContextPreservesHistoryBriefAndBoundImport(t *testing.T) {
+	conn, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: conn}), &gorm.Config{
+		DisableAutomaticPing: true, Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`SELECT .* FROM "conversations" WHERE .*`).WithArgs(7, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "brief", "brief_until_seq"}).
+			AddRow(7, "早期讨论的简报", 1))
+	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE .*`).WithArgs(7).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag", "name"}).
+			AddRow(10, 7, types.SourceChat, "chat").AddRow(12, 7, types.SourceWX, "项目原始讨论"))
+	mock.ExpectQuery(`SELECT .* FROM "memories" WHERE session_id = .*`).WithArgs(12, types.MemoryActive).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "session_id", "seq_start", "seq_end", "tag", "title"}).
+			AddRow(4, 12, 19, 30, types.TagDecision, "后端用 gin"))
+	mock.ExpectQuery(`SELECT count\(\*\) FROM "conversations"`).WithArgs(7).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE .*`).WithArgs(7, types.SourceChat, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(10, 7, types.SourceChat))
+	mock.ExpectQuery(`SELECT .* FROM "messages" WHERE session_id = .* ORDER BY seq`).WithArgs(10).
+		WillReturnRows(sqlmock.NewRows([]string{"seq", "role", "content"}).
+			AddRow(1, "user", "已压缩的历史").AddRow(2, "assistant", "近期回复").AddRow(3, "user", "近期问题"))
+	service := NewChatService(nil, memory.NewMemoryManger(db, nil), session.NewSessionManager(db), nil).
+		WithConversationManager(conversation.NewConversationManager(db))
+	preload, sessionID, loaded, visible, err := service.loadContext(context.Background(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != 10 || loaded == nil || loaded.ID != 7 || len(visible) != 3 {
+		t.Fatalf("lost current conversation or source messages: session=%d conversation=%+v visible=%+v", sessionID, loaded, visible)
+	}
+	if len(preload.History) != 2 || preload.History[0].Role != "assistant" || preload.History[0].Content != "近期回复" ||
+		preload.History[1].Role != "user" || preload.History[1].Content != "近期问题" {
+		t.Fatalf("recent history should follow the brief cutoff: %+v", preload.History)
+	}
+	if len(preload.Background) != 2 || !strings.Contains(preload.Background[0], "项目原始讨论") ||
+		!strings.Contains(preload.Background[0], "memory 4，消息 19-30") || preload.Background[1] != "此前对话简报：\n早期讨论的简报" {
+		t.Fatalf("bound import catalog or conversation brief was lost: %+v", preload.Background)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
