@@ -11,6 +11,10 @@ bin/
 *.test
 *.md
 
+# Source-backed project documentation
+!/README.md
+!docs/technical/*.md
+
 # Editor and operating-system files
 .idea/
 .vscode/

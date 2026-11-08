@@ -20,8 +20,7 @@ type Conversation struct {
 	Messages []types.Message
 }
 
-// 切割对话
-// 目前只对chatgpt 的对话做了单独的支持  其他都是 依照段落 块区分 \r\n
+// Parser 保留默认来源解析接口。格式与来源独立，Markdown 导入使用 ParseWithFormat。
 type Parser interface {
 	Parse(raw string, sourceTag types.SourceTag) ([]Conversation, error)
 	ReadFile(content []byte) (string, error)
@@ -30,20 +29,27 @@ type Parser interface {
 
 // ReadFile 把上传的字节读成字符串。zip、json、纯文本都走这里，不解析角色。
 func ReadFile(content []byte) (string, error) {
+	raw, _, err := ReadFileWithFormat(content, "")
+	return raw, err
+}
+
+// ReadFileWithFormat 同时返回最终文本的格式，供导入链路继续传递。
+// ZIP 的格式取自实际选中的条目，而不是外层 ZIP 文件名。
+func ReadFileWithFormat(content []byte, filename string) (string, Format, error) {
 	switch DetectFileType(content) {
 	case "zip":
-		return readZip(content)
+		return readZipWithFormat(content)
 	case "json", "text":
-		return string(content), nil
+		return string(content), formatFromFilename(filename), nil
 	default:
-		return "", fmt.Errorf("unsupported file")
+		return "", FormatAuto, fmt.Errorf("unsupported file")
 	}
 }
 
-func readZip(content []byte) (string, error) {
+func readZipWithFormat(content []byte) (string, Format, error) {
 	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
 	if err != nil {
-		return "", err
+		return "", FormatAuto, err
 	}
 
 	var fallback *zip.File
@@ -53,7 +59,8 @@ func readZip(content []byte) (string, error) {
 		}
 		name := filepath.Base(file.Name)
 		if strings.EqualFold(name, "conversations.json") {
-			return readZipEntry(file)
+			body, err := readZipEntry(file)
+			return body, FormatAuto, err
 		}
 		// 其他的文本
 		if fallback == nil && isTextName(name) {
@@ -61,9 +68,19 @@ func readZip(content []byte) (string, error) {
 		}
 	}
 	if fallback == nil {
-		return "", fmt.Errorf("zip 里没有可读取的文本")
+		return "", FormatAuto, fmt.Errorf("zip 里没有可读取的文本")
 	}
-	return readZipEntry(fallback)
+	body, err := readZipEntry(fallback)
+	return body, formatFromFilename(fallback.Name), err
+}
+
+func formatFromFilename(filename string) Format {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".md", ".markdown":
+		return FormatMarkdown
+	default:
+		return FormatAuto
+	}
 }
 
 func readZipEntry(file *zip.File) (string, error) {
@@ -82,7 +99,7 @@ func readZipEntry(file *zip.File) (string, error) {
 
 func isTextName(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".json", ".txt", ".md", ".html", ".htm":
+	case ".json", ".txt", ".md", ".markdown", ".html", ".htm":
 		return true
 	default:
 		return false
@@ -109,6 +126,18 @@ func DetectFileType(content []byte) string {
 // Parse 按来源把文本拆成一段或多段对话，并填上 user / assistant。
 // 拆成Message
 func Parse(raw string, sourceTag types.SourceTag) ([]Conversation, error) {
+	return ParseWithFormat(raw, sourceTag, FormatAuto)
+}
+
+// ParseWithFormat 先按显式格式解析，再退回原有的平台规则。
+// 同一来源既可能提供官方 JSON，也可能提供 Markdown 聊天导出。
+func ParseWithFormat(raw string, sourceTag types.SourceTag, format Format) ([]Conversation, error) {
+	if !format.Valid() {
+		return nil, fmt.Errorf("unsupported import format %q", format)
+	}
+	if format == FormatMarkdown {
+		return ParseMarkdown(raw, sourceTag)
+	}
 	switch sourceTag {
 	case types.SourceChatGPT:
 		return parseChatGPT(raw)

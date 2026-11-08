@@ -42,6 +42,11 @@ import (
 
 func workflowPostgres(t *testing.T) (context.Context, *gorm.DB, string) {
 	t.Helper()
+	return workflowPostgresWithTimeout(t, 60*time.Second)
+}
+
+func workflowPostgresWithTimeout(t *testing.T, timeout time.Duration) (context.Context, *gorm.DB, string) {
+	t.Helper()
 	dsn := os.Getenv("RECALLWEAVE_WORKFLOW_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("set RECALLWEAVE_WORKFLOW_DATABASE_URL to run HTTP/PostgreSQL workflow acceptance")
@@ -52,7 +57,7 @@ func workflowPostgres(t *testing.T) (context.Context, *gorm.DB, string) {
 		(endpoint.Hostname() != "127.0.0.1" && endpoint.Hostname() != "localhost") {
 		t.Fatal("workflow acceptance requires an explicit local recallweave_workflow_test database")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	admin, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		cancel()

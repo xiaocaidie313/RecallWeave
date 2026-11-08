@@ -22,9 +22,10 @@ func NewIngestHandler(service *ingest.Service) *IngestHandler {
 }
 
 type importTextRequest struct {
-	SourceTag string `json:"source_tag" binding:"required"`
-	Name      string `json:"name"`
-	Text      string `json:"text" binding:"required"`
+	SourceTag string        `json:"source_tag" binding:"required"`
+	Name      string        `json:"name"`
+	Text      string        `json:"text" binding:"required"`
+	Format    parser.Format `json:"format"`
 }
 
 // ImportText 导入知识背景。不挂对话，记忆进全库，以后按问题相似度被捞到。
@@ -37,11 +38,12 @@ func (h *IngestHandler) ImportText(c *gin.Context) {
 		return
 	}
 
-	results, err := h.service.ImportText(
+	results, err := h.service.ImportTextWithFormat(
 		c.Request.Context(),
 		types.SourceTag(req.SourceTag),
 		req.Name,
 		req.Text,
+		req.Format,
 	)
 	if err != nil {
 		writeImportError(c, err)
@@ -57,17 +59,18 @@ func (h *IngestHandler) ImportFile(c *gin.Context) {
 		return
 	}
 
-	text, err := readUploadedText(c)
+	text, format, err := readUploadedText(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	results, err := h.service.ImportText(
+	results, err := h.service.ImportTextWithFormat(
 		c.Request.Context(),
 		types.SourceTag(sourceTag),
 		c.PostForm("name"),
 		text,
+		format,
 	)
 	if err != nil {
 		writeImportError(c, err)
@@ -77,9 +80,10 @@ func (h *IngestHandler) ImportFile(c *gin.Context) {
 }
 
 type importConversationRequest struct {
-	SourceTag string `json:"source_tag" binding:"required"`
-	Name      string `json:"name"`
-	Text      string `json:"text" binding:"required"`
+	SourceTag string        `json:"source_tag" binding:"required"`
+	Name      string        `json:"name"`
+	Text      string        `json:"text" binding:"required"`
+	Format    parser.Format `json:"format"`
 }
 
 // ImportConversation 把文本挂到已有对话上，作为这次对话的 context。
@@ -95,12 +99,13 @@ func (h *IngestHandler) ImportConversation(c *gin.Context) {
 		return
 	}
 
-	results, err := h.service.ImportIntoConversation(
+	results, err := h.service.ImportIntoConversationWithFormat(
 		c.Request.Context(),
 		conversationID,
 		types.SourceTag(req.SourceTag),
 		req.Name,
 		req.Text,
+		req.Format,
 	)
 	if err != nil {
 		writeImportError(c, err)
@@ -121,18 +126,19 @@ func (h *IngestHandler) ImportConversationFile(c *gin.Context) {
 		return
 	}
 
-	text, err := readUploadedText(c)
+	text, format, err := readUploadedText(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	results, err := h.service.ImportIntoConversation(
+	results, err := h.service.ImportIntoConversationWithFormat(
 		c.Request.Context(),
 		conversationID,
 		types.SourceTag(sourceTag),
 		c.PostForm("name"),
 		text,
+		format,
 	)
 	if err != nil {
 		writeImportError(c, err)
@@ -150,23 +156,34 @@ func conversationIDFromPath(c *gin.Context) (uint, bool) {
 	return uint(id), true
 }
 
-func readUploadedText(c *gin.Context) (string, error) {
+func readUploadedText(c *gin.Context) (string, parser.Format, error) {
+	format := parser.Format(c.PostForm("format"))
+	if !format.Valid() {
+		return "", parser.FormatAuto, ingest.ErrInvalidFormat
+	}
 	file, err := c.FormFile("file")
 	if err != nil {
-		return "", errors.New("file is required")
+		return "", parser.FormatAuto, errors.New("file is required")
 	}
 
 	content, err := file.Open()
 	if err != nil {
-		return "", err
+		return "", parser.FormatAuto, err
 	}
 	defer content.Close()
 
 	data, err := io.ReadAll(io.LimitReader(content, 20<<20))
 	if err != nil {
-		return "", err
+		return "", parser.FormatAuto, err
 	}
-	return parser.ReadFile(data)
+	text, detected, err := parser.ReadFileWithFormat(data, file.Filename)
+	if err != nil {
+		return "", parser.FormatAuto, err
+	}
+	if format != parser.FormatAuto {
+		detected = format
+	}
+	return text, detected, nil
 }
 
 func writeImportError(c *gin.Context, err error) {
@@ -174,7 +191,7 @@ func writeImportError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
-	if errors.Is(err, ingest.ErrInvalidSource) || errors.Is(err, ingest.ErrEmptyText) || errors.Is(err, ingest.ErrUnreadable) || errors.Is(err, ingest.ErrChatSource) {
+	if errors.Is(err, ingest.ErrInvalidSource) || errors.Is(err, ingest.ErrInvalidFormat) || errors.Is(err, ingest.ErrEmptyText) || errors.Is(err, ingest.ErrUnreadable) || errors.Is(err, ingest.ErrChatSource) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
