@@ -14,6 +14,7 @@ bin/
 # Source-backed project documentation
 !/README.md
 !docs/technical/*.md
+!/.agents/skills/recallweave-handoff/SKILL.md
 
 # Editor and operating-system files
 .idea/

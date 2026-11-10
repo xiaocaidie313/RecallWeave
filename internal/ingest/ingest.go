@@ -101,8 +101,27 @@ func (s *Service) importText(ctx context.Context, sourceTag types.SourceTag, nam
 		return nil, ErrEmptyText
 	}
 
+	results, err := s.saveConversations(ctx, sourceTag, name, text, conversations, bind)
+	if err != nil {
+		return nil, err
+	}
+	if s.extractExcuter == nil {
+		for i := range results {
+			results[i].ExtractStatus = s.extractImport(ctx, results[i].SessionID)
+		}
+		return results, nil
+	}
+	go func() {
+		for _, result := range results {
+			s.extractImport(context.Background(), result.SessionID)
+		}
+	}()
+	return results, nil
+}
+
+func (s *Service) saveConversations(ctx context.Context, sourceTag types.SourceTag, name, text string, conversations []parser.Conversation, bind importBind) ([]ImportResult, error) {
 	results := make([]ImportResult, 0, len(conversations))
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, conv := range conversations {
 			sessionName := name
 			if conv.Title != "" {
@@ -129,30 +148,26 @@ func (s *Service) importText(ctx context.Context, sourceTag types.SourceTag, nam
 	if err != nil {
 		return nil, err
 	}
-	// 说明写入Session成功了 ---》 自动做摘要
-	// 没配 LLM（extractExcuter 为 nil）时不提炼，只入库。
-	if s.extractExcuter == nil {
-		for i := range results {
-			results[i].ExtractStatus = types.ExtractSkipped
-			if err := s.db.WithContext(ctx).Model(&types.Session{}).
-				Where("id = ?", results[i].SessionID).
-				Update("extract_status", types.ExtractSkipped).Error; err != nil {
-				slog.Warn("mark extract skipped failed", "session_id", results[i].SessionID, "error", err)
-			}
-		}
-		return results, nil
-	}
-	go func() {
-		ctx := context.Background()
-		for _, result := range results {
-			_, err := s.extractExcuter.ExtractIncrementalToMemory(ctx, result.SessionID)
-			if err != nil {
-				slog.Warn("extract incremental failed", "session_id", result.SessionID, "error", err)
-			}
-		}
-	}()
-
 	return results, nil
+}
+
+func (s *Service) extractImport(ctx context.Context, sessionID uint) string {
+	if s.extractExcuter == nil {
+		if err := s.db.WithContext(ctx).Model(&types.Session{}).
+			Where("id = ?", sessionID).
+			Update("extract_status", types.ExtractSkipped).Error; err != nil {
+			slog.Warn("mark extract skipped failed", "session_id", sessionID, "error", err)
+		}
+		return types.ExtractSkipped
+	}
+	if _, err := s.extractExcuter.ExtractIncrementalToMemory(ctx, sessionID); err != nil {
+		slog.Warn("extract incremental failed", "session_id", sessionID, "error", err)
+		if errors.Is(err, types.ErrBranchMemoryPrivate) {
+			return types.ExtractSkipped
+		}
+		return types.ExtractFailed
+	}
+	return types.ExtractDone
 }
 
 // insertSession 在调用方的事务里写入会话和它的消息。

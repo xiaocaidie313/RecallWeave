@@ -20,6 +20,8 @@ const (
 	SourceCodex       SourceTag = "codex"
 	SourceChatGPT     SourceTag = "chatgpt"
 	SourceChat        SourceTag = "chat"
+
+	SourceDeepSeekHarness SourceTag = "deepseek_harness"
 )
 
 var sourceTags = map[SourceTag]struct{}{
@@ -36,6 +38,8 @@ var sourceTags = map[SourceTag]struct{}{
 	SourceCodex:       {},
 	SourceChatGPT:     {},
 	SourceChat:        {},
+
+	SourceDeepSeekHarness: {},
 }
 
 func IsValidSourceTag(tag SourceTag) bool {
