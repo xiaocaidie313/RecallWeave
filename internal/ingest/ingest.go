@@ -35,6 +35,7 @@ type ImportResult struct {
 	SessionID     uint
 	MessageCount  int
 	ExtractStatus string
+	AddedMessages int
 }
 
 type importBind struct {

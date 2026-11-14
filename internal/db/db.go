@@ -29,6 +29,7 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(
 		&types.Conversation{},
 		&types.Session{},
+		&types.TranscriptSource{},
 		&types.Message{},
 		&types.Memory{},
 		&types.AgentRun{},

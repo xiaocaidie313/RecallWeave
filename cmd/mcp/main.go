@@ -17,6 +17,7 @@ import (
 	"recallweave/internal/memory"
 	"recallweave/internal/retrieval"
 	"recallweave/internal/session"
+	"recallweave/internal/types"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"gorm.io/gorm"
@@ -77,6 +78,9 @@ func run(ctx context.Context, configPath string, enableImport bool) error {
 	sessions := session.NewSessionManager(database)
 	server := appmcp.NewMcpMemoryReaderServer(reader, sessions)
 	if enableImport {
+		if err := database.AutoMigrate(&types.TranscriptSource{}); err != nil {
+			return err
+		}
 		appmcp.RegisterImportTranscript(server, ingest.NewService(database, extractor))
 	}
 	return server.Run(ctx, &mcp.StdioTransport{})
