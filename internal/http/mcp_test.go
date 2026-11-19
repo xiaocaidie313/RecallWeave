@@ -26,8 +26,32 @@ func TestMountMCPWithoutToken(t *testing.T) {
 	MountMCP(router, server, "")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/mcp", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("MCP must be disabled without a token, got %d", response.Code)
+	}
+}
+
+func TestMountMCPRejectsUnauthorizedRequests(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0.0"}, nil)
+	router := NewRouter(nil, nil, nil, nil, nil, nil)
+	MountMCP(router, server, "secret")
+	for _, header := range []string{"", "Basic secret", "Bearer wrong", "Bearer secret ", "Bearer"} {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
+			request := httptest.NewRequest(method, "/mcp", nil)
+			request.Header.Set("Authorization", header)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized || response.Header().Get("WWW-Authenticate") != "Bearer" {
+				t.Fatalf("%s with %q bypassed auth: %d", method, header, response.Code)
+			}
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	request.Header.Set("Authorization", "bearer secret")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
 	if response.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("stateless MCP GET should return 405, got %d", response.Code)
+		t.Fatalf("authorized stateless GET should reach MCP and return 405, got %d", response.Code)
 	}
 }
 

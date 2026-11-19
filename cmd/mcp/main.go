@@ -26,7 +26,7 @@ import (
 
 // 启mcp Server 用暴露 自身mcp工具 @todo？ 是否要单独提出成外部mcp 不放在这个agent仓库
 func main() {
-	configPath := flag.String("config", "config/config.yaml", "path to RecallWeave configuration")
+	configPath := flag.String("config", config.ConfigPath(), "path to RecallWeave configuration")
 	enableImport := flag.Bool("enable-import", false, "enable writing selected transcripts via the local MCP server")
 	flag.Parse()
 	// MCP protocol messages use stdout; all diagnostics must use stderr.
@@ -55,8 +55,9 @@ func run(ctx context.Context, configPath string, enableImport bool) error {
 	defer sqlDB.Close()
 
 	var embedder retrieval.Embedder
-	var extractor *extract.ExtractExcuter
-	if cfg.LLM.APIKey != "" && cfg.LLM.EmbeddingModel != "" {
+	var segmenter llm.Segmenter
+	var memoryEmbedder llm.Embedder
+	if cfg.LLM.APIKey != "" && (cfg.LLM.EmbeddingModel != "" || enableImport) {
 		client, err := llm.NewClient(llm.Config{
 			BaseURL: cfg.LLM.BaseURL, APIKey: cfg.LLM.APIKey,
 			Model: cfg.LLM.Model, EmbeddingModel: cfg.LLM.EmbeddingModel,
@@ -65,13 +66,12 @@ func run(ctx context.Context, configPath string, enableImport bool) error {
 		if err != nil {
 			return err
 		}
-		embedder = client
+		if cfg.LLM.EmbeddingModel != "" {
+			embedder = client
+			memoryEmbedder = client
+		}
 		if enableImport {
-			var segmenter llm.Segmenter
-			if cfg.LLM.Model != "" {
-				segmenter = client
-			}
-			extractor = extract.NewExtractExcuter(database, segmenter, client)
+			segmenter = client
 		}
 	}
 	reader := memory.NewMemoryManger(database, retrieval.New(database, embedder))
@@ -81,6 +81,8 @@ func run(ctx context.Context, configPath string, enableImport bool) error {
 		if err := database.AutoMigrate(&types.TranscriptSource{}); err != nil {
 			return err
 		}
+		// Keep explicitly saved transcripts searchable even without a model key.
+		extractor := extract.NewExtractExcuter(database, segmenter, memoryEmbedder)
 		appmcp.RegisterImportTranscript(server, ingest.NewService(database, extractor))
 	}
 	return server.Run(ctx, &mcp.StdioTransport{})

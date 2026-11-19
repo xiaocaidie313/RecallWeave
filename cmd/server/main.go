@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
+	"flag"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -33,9 +34,9 @@ import (
 	"recallweave/internal/skill"
 )
 
-const defaultConfigPath = "config/config.yaml"
-
 func main() {
+	configPath := flag.String("config", config.ConfigPath(), "path to RecallWeave configuration")
+	flag.Parse()
 	exitCode := 0
 	defer func() {
 		if exitCode != 0 {
@@ -45,7 +46,7 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// 加载配置
-	cfg, err := config.LoadConfig(defaultConfigPath)
+	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
 		os.Exit(1)
@@ -62,6 +63,12 @@ func main() {
 		logger.Error("failed to connect database", "error", err)
 		os.Exit(1)
 	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		logger.Error("failed to open database pool", "error", err)
+		os.Exit(1)
+	}
+	defer sqlDB.Close()
 
 	if err := db.AutoMigrate(database); err != nil {
 		logger.Error("failed to migrate database", "error", err)
@@ -94,8 +101,10 @@ func main() {
 	var ChatGenerator llm.ChatGenerator
 	if client != nil {
 		segmenter = client
-		embedder = client
-		vectorEmbedder = client
+		if cfg.LLM.EmbeddingModel != "" {
+			embedder = client
+			vectorEmbedder = client
+		}
 		ChatGenerator = client
 	}
 
@@ -120,34 +129,21 @@ func main() {
 		ability.NewMemoryAbility(memoryManger, sessionManager),
 		ability.NewArtifactAbility(artifacts),
 	).WithSkills(catalog)
-	if cfg.ExternalMCP.URL != "" {
-		if cfg.ExternalMCP.TokenEnv != "" && os.Getenv(cfg.ExternalMCP.TokenEnv) == "" {
-			logger.Error("external MCP token environment variable is empty", "name", cfg.ExternalMCP.TokenEnv)
-			os.Exit(1)
-		}
-		//@todo 这里有问题吧？？ 1 只能单独连接一个MCP Server
-		//2 @todo 修一下config
-		remoteClient, err := appmcp.NewRemoteClient(context.Background(), cfg.ExternalMCP.Name, cfg.ExternalMCP.Version, cfg.ExternalMCP.URL, map[string]string{cfg.ExternalMCP.TokenEnv: os.Getenv(cfg.ExternalMCP.TokenEnv)})
-		if err != nil {
-			logger.Error("failed to connect external MCP", "error", err)
-			os.Exit(1)
-		}
-		defer remoteClient.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		remoteTools, err := remoteClient.AgentTools(ctx, cfg.ExternalMCP.Tools)
-		cancel()
-		if err != nil {
-			logger.Error("failed to load external MCP tools", "error", err)
-			os.Exit(1)
-		}
-		if err := recall.WithExternalTools(remoteTools); err != nil {
-			logger.Error("failed to register external MCP tools", "error", err)
-			os.Exit(1)
-		}
-		logger.Info("external MCP tools registered", "count", len(remoteTools))
-	}
 	serviceCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	remoteFleet, err := appmcp.ConnectConfigured(serviceCtx, cfg)
+	if err != nil {
+		logger.Error("failed to connect external MCP servers", "error", err)
+		exitCode = 1
+		return
+	}
+	defer remoteFleet.Close()
+	if err := recall.WithExternalTools(remoteFleet.Tools); err != nil {
+		logger.Error("failed to register external MCP tools", "error", err)
+		exitCode = 1
+		return
+	}
+	logger.Info("external MCP tools registered", "count", len(remoteFleet.Tools))
 	backgroundTasks := subagent.NewTaskStore(database).WithEvents().WithTaskGroups()
 	if err := delegator.StartBackground(serviceCtx, backgroundTasks, subagent.BackgroundConfig{Workers: 2, QueueCapacity: 8}); err != nil {
 		logger.Error("failed to start background subagents", "error", err)
@@ -192,15 +188,10 @@ func main() {
 	apphttp.MountSubagentTasks(r, apphttp.NewSubagentTaskHandler(delegator))
 	apphttp.MountTaskGroups(r, apphttp.NewTaskGroupHandler(delegator))
 	apphttp.MountConversationEvents(r, apphttp.NewEventsHandler(events.NewStore(database)))
-	// if token := os.Getenv("RECALLWEAVE_MCP_TOKEN"); token != "" {
-	// 	apphttp.MountMCP(r, appmcp.NewMcpServer(memoryManger), token)
-	// 	logger.Info("MCP Streamable HTTP enabled", "path", "/mcp")
-	// } else {
-	// 	logger.Info("MCP Streamable HTTP disabled; set RECALLWEAVE_MCP_TOKEN to enable it")
-	// }
+	apphttp.MountMemorySearch(r, memoryManger)
 	apphttp.MountMCP(r, appmcp.NewMcpMemoryReaderServer(memoryManger, sessionManager), os.Getenv("RECALLWEAVE_MCP_TOKEN"))
 
-	address := fmt.Sprintf(":%d", cfg.Server.Port)
+	address := net.JoinHostPort(cfg.Server.Host, strconv.Itoa(cfg.Server.Port))
 	logger.Info("RecallWeave API started", "address", address)
 
 	server := &http.Server{Addr: address, Handler: r, ReadHeaderTimeout: 5 * time.Second,

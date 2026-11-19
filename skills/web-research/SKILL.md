@@ -8,7 +8,7 @@ description: 查询公开外部资料、核对最新信息，或结合用户历�
 ## 按需选择信息
 
 - 问过去说过什么，用记忆与原文工具；问公开现状或明确要求联网，用已提供的外部搜索/正文工具。只有问题依赖个人约束时才额外查记忆；上下文已有足够约束就不重复查。
-- 工具名和参数以实际提供的 schema 为准。Tavily 接入后通常是 mcp_tavily_search 和 mcp_tavily_extract；没有相应工具就说明未配置，不能假装联网成功。
+- 工具名和参数以实际提供的 schema 为准。多服务配置下 Tavily 通常是 mcp__tavily__tavily_search 和 mcp__tavily__tavily_extract；旧单服务配置保留 mcp_tavily_search 和 mcp_tavily_extract。没有相应工具就说明未配置，不能假装联网成功。
 - 用户禁止联网时不调用外部工具。只发送必要主题词和经脱敏的约束，不把原始聊天、私密项目细节或密钥拼进查询。
 
 ## 搜索与读取

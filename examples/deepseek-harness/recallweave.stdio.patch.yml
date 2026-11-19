@@ -1,0 +1,11 @@
+# Replace both absolute paths before use. Build cmd/mcp and start cmd/server once
+# to migrate the database. The stdio server is read-only unless -enable-import is added.
+- id: mcp-recallweave
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: recallweave
+    transport: stdio
+    command: 'C:/path/to/RecallWeave/bin/recallweave-mcp.exe'
+    args: ['-config', 'C:/path/to/RecallWeave/config/config.yaml']
+    cwd: 'C:/path/to/RecallWeave'
+    startupTimeoutMs: 30000

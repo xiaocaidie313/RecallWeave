@@ -46,3 +46,15 @@ func TestDelegationSourcesUseKnownWebToolResults(t *testing.T) {
 		t.Fatalf("duplicate tool result duplicated sources: %+v", got)
 	}
 }
+
+func TestDelegationSourcesKeepNamespacedTavilyEvidence(t *testing.T) {
+	steps := []RunStep{
+		{ToolName: "mcp__tavily__tavily_search", Result: `{"results":[{"url":"https://example.test/search","content":"snippet"}]}`},
+		{ToolName: "mcp__tavily__tavily_extract", Result: `{"results":[{"url":"https://example.test/page","raw_content":"body"}]}`},
+		{ToolName: "mcp__unknown__tavily_search", Result: `{"results":[{"url":"https://example.test/unknown","content":"body"}]}`},
+	}
+	got := SourcesFromSteps(steps)
+	if len(got) != 2 || got[0].Tool != steps[0].ToolName || got[1].Tool != steps[1].ToolName || got[0].Kind != "web" || got[1].URL != "https://example.test/page" {
+		t.Fatalf("namespaced evidence missing or unrecognized server admitted: %+v", got)
+	}
+}

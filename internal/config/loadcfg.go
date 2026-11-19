@@ -3,22 +3,23 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Server      ServerConfig      `yaml:"server"`
-	Database    DatabaseConfig    `yaml:"database"`
-	LLM         LLMConfig         `yaml:"llm"`
-	Skills      SkillsConfig      `yaml:"skills"`
-	Artifacts   ArtifactsConfig   `yaml:"artifacts"`
-	ExternalMCP ExternalMCPConfig `yaml:"external_mcp"`
-	Subagents   SubagentsConfig   `yaml:"subagents"`
+	Server       ServerConfig        `yaml:"server"`
+	Database     DatabaseConfig      `yaml:"database"`
+	LLM          LLMConfig           `yaml:"llm"`
+	Skills       SkillsConfig        `yaml:"skills"`
+	Artifacts    ArtifactsConfig     `yaml:"artifacts"`
+	ExternalMCP  ExternalMCPConfig   `yaml:"external_mcp"`
+	ExternalMCPs []ExternalMCPConfig `yaml:"external_mcps"`
+	Subagents    SubagentsConfig     `yaml:"subagents"`
 }
 
-// ExternalMCPConfig enables one remote Streamable HTTP MCP server. Empty URL
-// disables it; Tools is an explicit allowlist of remote tool names.
+// ExternalMCPConfig describes a Streamable HTTP server and an explicit tool allowlist.
 type ExternalMCPConfig struct {
 	Name     string   `yaml:"name"`
 	Version  string   `yaml:"version"`
@@ -28,7 +29,8 @@ type ExternalMCPConfig struct {
 }
 
 type ServerConfig struct {
-	Port int `yaml:"port"`
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
 }
 
 type DatabaseConfig struct {
@@ -81,33 +83,88 @@ func (c *Config) SkillDir() string {
 
 // 自定义  通过加载配置文件
 func LoadConfig(configPath string) (*Config, error) {
-	var cfg Config
+	cfg, _ := LoadDefaultConfig()
 	// 获得二进制流 文件 ----> 待 转化为配置文件
 	cfgFile, err := os.ReadFile(configPath)
 	if err != nil {
 		return &Config{}, fmt.Errorf("failed to read config file: %w", err)
 	}
-	if err := yaml.Unmarshal(cfgFile, &cfg); err != nil {
+	if err := yaml.Unmarshal(cfgFile, cfg); err != nil {
 		return &Config{}, fmt.Errorf("failed to unmarshal config file: %w", err)
+	}
+	if err := cfg.applyEnvironment(); err != nil {
+		return &Config{}, err
 	}
 	if err := cfg.Subagents.Validate(); err != nil {
 		return &Config{}, fmt.Errorf("invalid subagent configuration: %w", err)
 	}
-	return &cfg, nil
+	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
+		return &Config{}, fmt.Errorf("server.port must be between 1 and 65535")
+	}
+	if cfg.Database.Port < 1 || cfg.Database.Port > 65535 {
+		return &Config{}, fmt.Errorf("database.port must be between 1 and 65535")
+	}
+	if cfg.LLM.TimeoutSeconds < 0 || cfg.LLM.TimeoutSeconds > 3600 {
+		return &Config{}, fmt.Errorf("llm.timeout_seconds must be between 0 and 3600")
+	}
+	if _, err := cfg.MCPServers(); err != nil {
+		return &Config{}, err
+	}
+	return cfg, nil
 }
 
 // 环境默认配置
 func LoadDefaultConfig() (*Config, error) {
 	cfg := &Config{
-		Server: ServerConfig{Port: 8008},
+		Server: ServerConfig{Host: "127.0.0.1", Port: 8008},
 		Database: DatabaseConfig{
 			Host:     "localhost",
-			Port:     3306,
-			UserName: "root",
-			Password: "123456",
+			Port:     5434,
+			UserName: "postgres",
 			DBName:   "recallweave",
 		},
 		Skills: SkillsConfig{Dir: "skills"},
+		LLM:    LLMConfig{TimeoutSeconds: 30},
 	}
 	return cfg, nil
+}
+
+// ConfigPath is shared by the HTTP and stdio entry points; -config overrides it.
+func ConfigPath() string {
+	if path := os.Getenv("RECALLWEAVE_CONFIG"); path != "" {
+		return path
+	}
+	return "config/config.yaml"
+}
+
+func (c *Config) applyEnvironment() error {
+	for name, field := range map[string]*string{
+		"RECALLWEAVE_HOST":            &c.Server.Host,
+		"RECALLWEAVE_DB_HOST":         &c.Database.Host,
+		"RECALLWEAVE_DB_USER":         &c.Database.UserName,
+		"RECALLWEAVE_DB_PASSWORD":     &c.Database.Password,
+		"RECALLWEAVE_DB_NAME":         &c.Database.DBName,
+		"RECALLWEAVE_LLM_BASE_URL":    &c.LLM.BaseURL,
+		"RECALLWEAVE_LLM_API_KEY":     &c.LLM.APIKey,
+		"RECALLWEAVE_LLM_MODEL":       &c.LLM.Model,
+		"RECALLWEAVE_EMBEDDING_MODEL": &c.LLM.EmbeddingModel,
+	} {
+		if value, ok := os.LookupEnv(name); ok {
+			*field = value
+		}
+	}
+	for name, field := range map[string]*int{
+		"RECALLWEAVE_PORT":                &c.Server.Port,
+		"RECALLWEAVE_DB_PORT":             &c.Database.Port,
+		"RECALLWEAVE_LLM_TIMEOUT_SECONDS": &c.LLM.TimeoutSeconds,
+	} {
+		if value, ok := os.LookupEnv(name); ok {
+			parsed, err := strconv.Atoi(value)
+			if err != nil {
+				return fmt.Errorf("%s must be an integer", name)
+			}
+			*field = parsed
+		}
+	}
+	return nil
 }

@@ -15,10 +15,20 @@ import (
 const maxRemoteResultBytes = 64 << 10
 
 var validAgentToolName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,60}$`)
+var validNamespace = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 
 // AgentTools discovers remote tools once and wraps only the explicitly allowed
 // names as local Agent tools. The returned closures use this client's session.
 func (c *McpClient) AgentTools(ctx context.Context, allowed []string) ([]llm.Tool, error) {
+	return c.NamespacedAgentTools(ctx, "", allowed)
+}
+
+// NamespacedAgentTools preserves the raw wire name and isolates local tool names.
+// An empty namespace retains the legacy mcp_<tool> naming contract.
+func (c *McpClient) NamespacedAgentTools(ctx context.Context, namespace string, allowed []string) ([]llm.Tool, error) {
+	if namespace != "" && !validNamespace.MatchString(namespace) {
+		return nil, fmt.Errorf("invalid external MCP namespace")
+	}
 	if len(allowed) == 0 {
 		return nil, fmt.Errorf("external MCP tools allowlist is empty")
 	}
@@ -28,7 +38,12 @@ func (c *McpClient) AgentTools(ctx context.Context, allowed []string) ([]llm.Too
 	}
 	byName := make(map[string]*mcp.Tool, len(remote))
 	for _, tool := range remote {
-		// 根据名字找tool
+		if tool == nil {
+			return nil, fmt.Errorf("external MCP advertised a nil tool")
+		}
+		if _, duplicate := byName[tool.Name]; duplicate {
+			return nil, fmt.Errorf("external MCP advertised duplicate tool names")
+		}
 		byName[tool.Name] = tool
 	}
 	seen := make(map[string]bool)
@@ -47,9 +62,16 @@ func (c *McpClient) AgentTools(ctx context.Context, allowed []string) ([]llm.Too
 			return nil, fmt.Errorf("external MCP tool %q has unsupported input schema", name)
 		}
 		remoteName := name
+		localName := "mcp_" + remoteName
+		if namespace != "" {
+			localName = "mcp__" + namespace + "__" + remoteName
+		}
+		if len(localName) > 64 {
+			return nil, fmt.Errorf("external MCP model-facing tool name exceeds 64 characters")
+		}
 		wrapped = append(wrapped, llm.Tool{
 			Schema: llm.ToolSchema{
-				Name:        "mcp_" + remoteName,
+				Name:        localName,
 				Description: tool.Description,
 				Parameters:  parameters,
 			},

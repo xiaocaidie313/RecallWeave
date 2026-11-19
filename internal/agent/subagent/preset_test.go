@@ -177,7 +177,7 @@ func TestReviewerHasIndependentRoleAndNarrowerToolScope(t *testing.T) {
 			names = append(names, tool.Name)
 		}
 		slices.Sort(names)
-		if !slices.Equal(names, []string{"get_messages", "mcp_tavily_extract", "update_plan"}) {
+		if !slices.Equal(names, []string{"get_messages", "mcp__tavily__tavily_extract", "mcp_tavily_extract", "update_plan"}) {
 			t.Fatalf("reviewer gained researcher discovery tools: %v", names)
 		}
 		return llm.Turn{Content: "结论一有依据，结论二缺少原文支持。"}, nil

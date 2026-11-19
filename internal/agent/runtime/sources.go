@@ -85,7 +85,7 @@ func SourcesFromSteps(steps []RunStep) []Source {
 				}
 				add(Source{Kind: "message", Tool: step.ToolName, SessionID: result.SessionID, SeqStart: start, SeqEnd: end})
 			}
-		case "mcp_tavily_search", "mcp_tavily_extract":
+		case "mcp_tavily_search", "mcp_tavily_extract", "mcp__tavily__tavily_search", "mcp__tavily__tavily_extract":
 			var result struct {
 				Results []struct {
 					URL        string `json:"url"`

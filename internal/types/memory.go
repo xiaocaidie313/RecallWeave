@@ -20,8 +20,9 @@ var ErrMemoryHistoryProtected = errors.New("memory: session contains inactive me
 // SeqStart 到 SeqEnd 指回原文，所以回答时能说清这条记忆的依据是哪几条消息。
 // 这里不存原文副本，需要时按 (SessionID, Seq 区间) 查 Message。
 type Memory struct {
-	ID                 uint            `gorm:"primaryKey" json:"id"`
-	Embedding          pgvector.Vector `gorm:"type:vector(1536)" json:"embedding"`
+	ID uint `gorm:"primaryKey" json:"id"`
+	// A zero vector must use SQL NULL; pgvector rejects the literal empty vector [].
+	Embedding          pgvector.Vector `gorm:"type:vector(1536);default:null" json:"embedding"`
 	SessionID          uint            `gorm:"index;not null" json:"session_id"`
 	SeqStart           int             `gorm:"not null" json:"seq_start"`
 	SeqEnd             int             `gorm:"not null" json:"seq_end"`

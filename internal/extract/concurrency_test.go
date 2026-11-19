@@ -73,7 +73,7 @@ func expectSessionWriteLock(mock sqlmock.Sqlmock, sessionID uint) {
 
 func expectMemoryInsert(mock sqlmock.Sqlmock, sessionID uint, start, end int, summary string) {
 	mock.ExpectQuery(`INSERT INTO "memories"`).
-		WithArgs(sqlmock.AnyArg(), sessionID, start, end, "memory", summary, types.TagTech, types.ContentOther, types.MemoryActive,
+		WithArgs(sessionID, start, end, "memory", summary, types.TagTech, types.ContentOther, types.MemoryActive,
 			nil, "", 0, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(end))
 }

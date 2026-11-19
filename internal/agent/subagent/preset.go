@@ -30,13 +30,13 @@ func DefaultPresetAgents() []PresetAgent {
 			Name:         "researcher",
 			Description:  "只读研究员：检索历史或外部资料，核对原文并返回来源与未解决的问题。",
 			Instructions: "你是只读研究员。独立检索、核对原文或网页，必要时调整查询；只依据实际取回的资料回答。",
-			AllowedTools: []string{"search_memories", "get_messages", "get_sessions", "mcp_tavily_search", "mcp_tavily_extract"},
+			AllowedTools: []string{"search_memories", "get_messages", "get_sessions", "mcp_tavily_search", "mcp_tavily_extract", "mcp__tavily__tavily_search", "mcp__tavily__tavily_extract"},
 		},
 		{
 			Name:         "reviewer",
 			Description:  "只读核查员：检查已有结论与给定来源是否一致，指出证据缺口和推断过度。",
 			Instructions: "你是只读核查员。围绕任务中已有的结论和给定来源进行核对，区分已支持、存在冲突和证据不足的部分；明确指出未解决的缺口，不能把复核自动当成独立事实验证。",
-			AllowedTools: []string{"get_messages", "mcp_tavily_extract"},
+			AllowedTools: []string{"get_messages", "mcp_tavily_extract", "mcp__tavily__tavily_extract"},
 		},
 	}
 }

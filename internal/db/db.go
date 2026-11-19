@@ -2,8 +2,11 @@ package db
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"recallweave/internal/config"
 	"recallweave/internal/types"
+	"strconv"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -11,13 +14,7 @@ import (
 
 // 目前只做postgres 的 连接
 func NewDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s",
-		cfg.UserName,
-		cfg.Password,
-		cfg.Host,
-		cfg.Port,
-		cfg.DBName,
-	)
+	dsn := databaseDSN(cfg)
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, err
@@ -25,7 +22,20 @@ func NewDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	return db, nil
 }
 
+func databaseDSN(cfg config.DatabaseConfig) string {
+	endpoint := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(cfg.UserName, cfg.Password),
+		Host:   net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
+		Path:   "/" + cfg.DBName,
+	}
+	return endpoint.String()
+}
+
 func AutoMigrate(db *gorm.DB) error {
+	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
+		return fmt.Errorf("db: enable pgvector extension: %w", err)
+	}
 	if err := db.AutoMigrate(
 		&types.Conversation{},
 		&types.Session{},

@@ -11,8 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// McpClient owns connections to external Streamable HTTP MCP servers.
-// Client/Session are the first successful connection; others holds the rest.
+// McpClient owns one external Streamable HTTP MCP session.
 type McpClient struct {
 	name    string
 	Client  *mcp.Client
@@ -29,6 +28,8 @@ func NewRemoteClient(ctx context.Context, name, version, url string, headers map
 	}
 	httpClient := &http.Client{
 		Timeout: 15 * time.Second,
+		// Credentials belong to this endpoint; redirects must not forward them.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		Transport: headerTransport{
 			base:       http.DefaultTransport,
 			headers:    headers,
@@ -49,26 +50,24 @@ func NewRemoteClient(ctx context.Context, name, version, url string, headers map
 		return nil, fmt.Errorf("connect to external MCP server: %w", err)
 	}
 
-	toolResult, err := session.ListTools(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("list tools: %w", err)
-	}
-
-	var success bool
-	success = false
+	success := false
 	defer func() {
 		if !success {
 			session.Close()
 		}
 	}()
 
-	success = true
-	return &McpClient{
+	connected := &McpClient{
 		name:    name,
 		Client:  client,
 		Session: session,
-		Tools:   toolResult.Tools,
-	}, nil
+	}
+	connected.Tools, err = connected.ListTools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	success = true
+	return connected, nil
 }
 func (c *McpClient) Name() string { return c.name }
 

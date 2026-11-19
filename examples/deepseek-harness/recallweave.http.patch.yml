@@ -1,0 +1,11 @@
+# Export the SAME RECALLWEAVE_MCP_TOKEN in RecallWeave and Harness processes.
+# This connects Harness -> RecallWeave; it is not an external_mcps entry.
+- id: mcp-recallweave
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: recallweave
+    transport: streamable-http
+    url: http://127.0.0.1:8008/mcp
+    headers:
+      Authorization: !!js '`Bearer ${process.env.RECALLWEAVE_MCP_TOKEN}`'
+    startupTimeoutMs: 30000
