@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"recallweave/internal/chat"
+	"recallweave/internal/llm"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -87,6 +88,8 @@ func (h *ChatHandler) Chat(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
 	case errors.Is(err, chat.ErrNoModel), errors.Is(err, chat.ErrThinkingUnavailable):
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+	case errors.Is(err, llm.ErrPaymentRequired):
+		c.JSON(http.StatusPaymentRequired, gin.H{"error": llm.ErrPaymentRequired.Error()})
 	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	default:
