@@ -80,7 +80,7 @@ function describeError(status: number, detail: string) {
   if (detail.startsWith('thinking mode is unavailable')) return '思考模式暂时不可用，请检查后端的 thinking-partner 技能和配置。'
   if (status === 400) return '提交的内容有误，请检查后再试。'
   if (status === 404) return '找不到所请求的数据或接口，请刷新并检查后端版本。'
-  if (status === 502 || status === 504) return '暂时连不上 RecallWeave 后端，请确认服务已启动。'
+  if (status === 502 || status === 504 || (status === 500 && !detail)) return '暂时连不上 RecallWeave 后端，请确认服务已启动。'
   return `请求未能完成（HTTP ${status}），请检查后端服务并重试。`
 }
 

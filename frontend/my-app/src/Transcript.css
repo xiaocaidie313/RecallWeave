@@ -1,0 +1,118 @@
+.transcript {
+  flex: 1 1 0;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: #202124;
+  text-align: left;
+}
+
+.transcript-column {
+  box-sizing: content-box;
+  max-width: 720px;
+  margin-inline: auto;
+  padding: 32px clamp(20px, 5vw, 64px);
+}
+
+.transcript-log,
+.transcript-turn,
+.transcript-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.transcript-log { gap: 32px; }
+.transcript-turn { gap: 8px; align-items: flex-start; }
+.transcript-user { align-items: flex-end; }
+
+.transcript-speaker,
+.transcript-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #595d64;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.transcript-speaker img,
+.transcript-pending img { object-fit: contain; }
+
+.transcript-inherited,
+.transcript-anchor,
+.transcript-sources,
+.transcript-notice {
+  color: #62666d;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.transcript-inherited { font-weight: 400; }
+.transcript-text {
+  box-sizing: border-box;
+  gap: 0.8em;
+  max-width: 100%;
+  font-size: 15px;
+  line-height: 1.85;
+  overflow-wrap: anywhere;
+}
+.transcript-text p { margin: 0; white-space: pre-wrap; }
+.transcript-user .transcript-text {
+  max-width: min(88%, 620px);
+  padding: 10px 16px;
+  background: #eff2f7;
+  border-radius: 16px 4px 16px 16px;
+}
+.transcript-text pre {
+  box-sizing: border-box;
+  margin: 0;
+  max-width: 100%;
+  padding: 12px 16px;
+  overflow-x: auto;
+  border: 1px solid #e2e5eb;
+  border-radius: 8px;
+  background: #f7f8fa;
+}
+.transcript-text code {
+  display: block;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: 13px/1.65 'IBM Plex Mono', Consolas, monospace;
+  white-space: pre;
+}
+.transcript-anchor { text-align: end; }
+.transcript-sources { max-width: 100%; }
+.transcript-sources summary {
+  padding: 6px 2px;
+  cursor: pointer;
+  color: #365d97;
+  width: fit-content;
+}
+.transcript-sources ul { margin: 0; padding: 4px 0 0 20px; }
+.transcript-sources li { margin-bottom: 6px; overflow-wrap: anywhere; }
+.transcript-sources small { display: block; font-size: 12px; }
+.transcript-notice {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.transcript-notice button {
+  appearance: none;
+  border: 1px solid #d3d9e1;
+  background: #fff;
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: #2b4f84;
+  font: inherit;
+  cursor: pointer;
+}
+.transcript-notice button:focus-visible,
+.transcript-sources summary:focus-visible { outline: 2px solid #2c64cf; outline-offset: 2px; }
+.transcript-pending { font-weight: 400; }
