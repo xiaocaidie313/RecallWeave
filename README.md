@@ -116,11 +116,17 @@ npm run dev
 打开 Vite 输出的本地地址，默认是 `http://127.0.0.1:5173`。前端将同源的 `/api` 请求代理至 `http://127.0.0.1:8008`。若后端监听其他地址，在启动 Vite 的终端设置 `RECALLWEAVE_API_TARGET`。模型密钥由 Go 服务读取。
 
 - 输入框默认使用「接着想」，也可以切换到「普通对话」。提问建议会先填入输入框，编辑后按 Enter 发送，Shift + Enter 换行。
-- 首次发送会创建对话。左侧固定显示服务返回的最近 20 条对话，可按标题筛选。刷新或重开带 `#chat/编号` 的地址会从后端读回原始消息。
+- 首次发送或首次导入笔记会创建对话。左侧显示服务返回的最近 20 条对话，可按标题筛选。刷新或重开带 `#chat/编号` 的地址会从后端读回原始消息。
 - 即时回答可展开已核对的原文位置。刷新后，历史接口提供原始消息与用户选中的来源，逐条回答的即时引用仅在当前页面保留。
 - 服务不可用时，输入框保留发送失败的文字。重试同一个问题前，页面会先核对这段对话是否已经写入回答。
 
 在前端目录用 `npm run lint` 检查代码，用 `npm run build` 生成 `dist/`。使用独立静态服务托管构建结果时，将同域的 `/api` 转发到 Go 服务。
+
+### 在对话里导入 Markdown 和 TXT
+
+1. 打开目标对话，点输入框下方的 **导入笔记**，选择一个 UTF-8 编码的 `.md` 或 `.txt` 文件。单个文件最多 20 MiB。在新对话中先选文件，会以文件名创建对话。
+2. 页面提示已保存后，点 **查看笔记**。列表显示这段对话中的文件名和记忆提炼状态。刷新浏览器后仍可打开。Markdown 按文档结构解析，普通 TXT 按空行分段。
+3. 找到想继续讨论的原文，点 **从这段接着想**。输入框会显示文件名和段号。直接按 Enter 可从这段继续，也可以先写下自己的问题。原文保存后即可选取，跨笔记的记忆检索需要等待提炼完成。
 
 ## 试一次接着想
 
@@ -156,7 +162,7 @@ npm run dev
 .\examples\think.ps1 -SessionId 9 -SeqStart 2 -Question '这和我以前在哪些场合更容易想清楚，有什么联系？'
 ```
 
-可以只选原文，也可以加上自己的问题。省略 `-SeqEnd` 时取一条。直接选择依赖已保存的原文，跨主题检索则依赖历史资料已经提炼出可查的记忆。分支中的选择限于继承快照和本分支消息。每次最多 50 条，所选范围必须完整可读。
+可以只选原文，也可以加上自己的问题。省略 `-SeqEnd` 时取一条。直接选择依赖已保存的原文，跨主题检索则依赖历史资料已经提炼出可查的记忆。分支中可以选择继承快照、本分支消息，以及显式导入本分支的本地笔记。每次最多 50 条，所选范围必须完整可读。
 
 **怎样理解回答。** `thinking.source` 是本次打开的笔记区间，`citations` 是工具实际核过的记忆原文。二者可分别查看。Agent 会据此尝试提出联系。评估时可以在空白演示库先问一次，导入两段自己的旧思考后再开新对话问同一个问题。对照两次回答，看哪条联系确实依赖那两段原话。再明确否定一次联想，观察下一轮是否转向你认可的方向。
 
@@ -239,7 +245,14 @@ curl.exe -X POST http://127.0.0.1:8008/api/imports/file -F source_tag=codex -F f
 curl.exe -X POST http://127.0.0.1:8008/api/imports/file -F source_tag=chatgpt -F "file=@conversations.json"
 ```
 
-`format` 为 `auto`（也可省略）或 `markdown`，独立于 `source_tag`。Markdown 支持普通文档以及成对 User/Assistant 标题的聊天导出。ZIP 优先选 `conversations.json`，否则只读取首个可识别文本条目，不批量导入整个压缩包。
+要在 PC 界面的「查看笔记」中看到自己的文件，请指定已创建的对话、`local_note` 来源和文件名。以下示例使用对话 3。
+
+```powershell
+curl.exe -F "source_tag=local_note" -F "name=notes.md" -F "file=@notes.md" http://127.0.0.1:8008/api/conversations/3/imports/file
+curl.exe -F "source_tag=local_note" -F "name=ideas.txt" -F "file=@ideas.txt" http://127.0.0.1:8008/api/conversations/3/imports/file
+```
+
+省略 `format` 可按文件名识别 Markdown，也可以显式传 `markdown`。Markdown 支持普通文档以及成对 User/Assistant 标题的聊天导出。ZIP 优先选 `conversations.json`，否则只读取首个可识别文本条目，不批量导入整个压缩包。
 
 来源标签包括 `wx`、`qq`、`weibo`、`twitter`、`facebook`、`instagram`、`youtube`、`tiktok`、`cursor_ide`、`cursor_agent`、`codex`、`chatgpt`、`deepseek_harness`。**标签不代表已有对应平台专用解析器**：ChatGPT 官方 JSON 有专用解析，其他来源默认按文本处理。`chat` 是内部聊天来源，不应作为外部导入标签。
 
@@ -282,6 +295,7 @@ ID 应从实际响应取得，不要假定首次创建一定是 `1`。错误通�
 | POST | `/api/imports/file` | multipart：`source_tag`、`file`，可选 `name`、`format` |
 | POST | `/api/conversations/:conversation_id/imports` | 资料导入并绑定现有对话 |
 | POST | `/api/conversations/:conversation_id/imports/file` | 文件导入并绑定现有对话 |
+| GET | `/api/conversations/:conversation_id/notes` | 当前对话的本地笔记，返回文件名、Session ID、提炼状态 |
 | GET | `/api/sessions/:session_id` | 数量、状态和提炼错误 |
 | GET | `/api/sessions/:session_id/messages` | 原始消息与后台投递来源 |
 | GET | `/api/sessions/:session_id/memories` | 会话记忆，包含停用记录 |
