@@ -147,11 +147,13 @@ func memoryViews(memories []types.Memory) []memoryView {
 }
 
 type messageView struct {
-	ID        uint   `json:"id"`
-	SessionID uint   `json:"session_id"`
-	Seq       int    `json:"seq"`
-	Role      string `json:"role"`
-	Content   string `json:"content"`
+	ID              uint                   `json:"id"`
+	SessionID       uint                   `json:"session_id"`
+	Seq             int                    `json:"seq"`
+	Role            string                 `json:"role"`
+	Content         string                 `json:"content"`
+	Thinking        bool                   `json:"thinking,omitempty"`
+	ThinkingContext *types.ThinkingContext `json:"thinking_context,omitempty"`
 	session.MessageDelivery
 }
 
@@ -164,6 +166,8 @@ func messageViews(messages []types.Message, deliveries map[uint]session.MessageD
 			Seq:             item.Seq,
 			Role:            item.Role,
 			Content:         item.Content,
+			Thinking:        item.Thinking,
+			ThinkingContext: item.ThinkingContext,
 			MessageDelivery: deliveries[item.ID],
 		})
 	}

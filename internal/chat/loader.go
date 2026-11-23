@@ -54,8 +54,12 @@ func (a *ChatService) loadContext(ctx context.Context, conversationID uint) (run
 		return preload, 0, nil, nil, fmt.Errorf("invalid fork snapshot: %w", err)
 	}
 	for _, message := range inheritedMsg {
+		content := message.Content
+		if message.Navigation {
+			content = "【打开或接续思路的操作】" + content
+		}
 		preload.History = append(preload.History, llm.Message{Seq: message.Seq, Role: message.Role,
-			Content: fmt.Sprintf("【继承原文：会话 %d，消息 %d】\n%s", message.SessionID, message.Seq, message.Content)})
+			Content: fmt.Sprintf("【继承原文：会话 %d，消息 %d】\n%s", message.SessionID, message.Seq, content)})
 	}
 	brief, untilSeq := conversation.Brief, conversation.BriefUntilSeq
 	if brief != "" {
@@ -66,13 +70,13 @@ func (a *ChatService) loadContext(ctx context.Context, conversationID uint) (run
 		return preload, 0, nil, nil, err
 	}
 	for _, msg := range messages {
-		inheritedMsg = append(inheritedMsg, types.ContextMessage{SessionID: session.ID, Seq: msg.Seq, Role: msg.Role, Content: msg.Content})
+		inheritedMsg = append(inheritedMsg, msg.OriginalContext(session.ID))
 		if untilSeq > 0 && msg.Seq <= untilSeq {
 			continue
 		}
-		content := msg.Content
+		content := historicalMessageText(msg)
 		if conversation.IsBranch() {
-			content = fmt.Sprintf("【分支原文：会话 %d，消息 %d】\n%s", session.ID, msg.Seq, msg.Content)
+			content = fmt.Sprintf("【分支原文：会话 %d，消息 %d】\n%s", session.ID, msg.Seq, content)
 		}
 		preload.History = append(preload.History, llm.Message{
 			Seq:     msg.Seq,

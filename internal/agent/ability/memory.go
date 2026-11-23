@@ -53,9 +53,10 @@ type SearchMemoriesResult struct {
 }
 
 type messageLine struct {
-	Seq     int    `json:"seq"`
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Seq        int    `json:"seq"`
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	Navigation bool   `json:"navigation,omitempty"`
 }
 
 type getMessagesResult struct {
@@ -196,9 +197,10 @@ func getMessagesTool(manager sessionReader) llm.Tool {
 			}
 			for _, msg := range messages {
 				result.Messages = append(result.Messages, messageLine{
-					Seq:     msg.Seq,
-					Role:    msg.Role,
-					Content: msg.Content,
+					Seq:        msg.Seq,
+					Role:       msg.Role,
+					Content:    msg.Content,
+					Navigation: msg.IsThinkingNavigation(),
 				})
 			}
 

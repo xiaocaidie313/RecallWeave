@@ -5,6 +5,7 @@ import (
 
 	"recallweave/internal/llm"
 	"recallweave/internal/plan"
+	"recallweave/internal/types"
 	"recallweave/internal/watch/useage"
 )
 
@@ -28,6 +29,7 @@ type RunState struct {
 	AgentName            string                    `json:"agent_name,omitempty"`
 	ConversationID       uint                      `json:"conversation_id"`
 	Input                string                    `json:"input"`
+	Thinking             *types.ThinkingContext    `json:"thinking,omitempty"`
 	Status               RunStatus                 `json:"status"`
 	CurrentRound         int                       `json:"current_round"`
 	Steps                []RunStep                 `json:"steps"`

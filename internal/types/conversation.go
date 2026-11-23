@@ -25,10 +25,21 @@ type Conversation struct {
 
 // 传递切片  上下文消息
 type ContextMessage struct {
-	SessionID uint   `json:"session_id"`
-	Seq       int    `json:"seq"`
-	Role      string `json:"role"`
-	Content   string `json:"content"`
+	SessionID  uint   `json:"session_id"`
+	Seq        int    `json:"seq"`
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	Navigation bool   `json:"navigation,omitempty"`
+}
+
+// OriginalContext exposes the source location and authorship marker without
+// copying a potentially private checkpoint into a fork or source read.
+func (m Message) OriginalContext(sessionID uint) ContextMessage {
+	return ContextMessage{SessionID: sessionID, Seq: m.Seq, Role: m.Role, Content: m.Content, Navigation: m.IsThinkingNavigation()}
+}
+
+func (m Message) IsThinkingNavigation() bool {
+	return m.Role == "user" && m.ThinkingContext != nil && m.ThinkingContext.Navigation
 }
 
 func (c Conversation) IsBranch() bool { return c.ParentConversationID != nil }

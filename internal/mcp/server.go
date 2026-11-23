@@ -40,9 +40,10 @@ type getMessagesInput struct {
 }
 
 type messageLine struct {
-	Seq     int    `json:"seq"`
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Seq        int    `json:"seq"`
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	Navigation bool   `json:"navigation,omitempty" jsonschema:"True for a service-generated navigation action rather than a typed user message"`
 }
 
 type getMessagesOutput struct {
@@ -138,7 +139,7 @@ func RegisterTools(server *mcp.Server, memories memoryReader, messages messageRe
 		}
 		out := getMessagesOutput{SessionID: input.SessionID, Messages: make([]messageLine, 0, len(items))}
 		for _, msg := range items {
-			out.Messages = append(out.Messages, messageLine{Seq: msg.Seq, Role: msg.Role, Content: msg.Content})
+			out.Messages = append(out.Messages, messageLine{Seq: msg.Seq, Role: msg.Role, Content: msg.Content, Navigation: msg.IsThinkingNavigation()})
 		}
 		return nil, out, nil
 	})

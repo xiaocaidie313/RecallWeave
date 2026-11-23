@@ -242,6 +242,14 @@ func (s *GormReportStore) InterruptProcessing(ctx context.Context) error {
 }
 
 func (s *GormReportStore) AppendTurn(ctx context.Context, sessionID uint, question, answer string) error {
+	return s.appendTurn(ctx, sessionID, question, answer, nil)
+}
+
+func (s *GormReportStore) AppendThinkingTurn(ctx context.Context, sessionID uint, question, answer string, thinking *types.ThinkingContext) error {
+	return s.appendTurn(ctx, sessionID, question, answer, thinking)
+}
+
+func (s *GormReportStore) appendTurn(ctx context.Context, sessionID uint, question, answer string, thinking *types.ThinkingContext) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
@@ -264,7 +272,10 @@ func (s *GormReportStore) AppendTurn(ctx context.Context, sessionID uint, questi
 			return err
 		}
 		for _, item := range []struct{ role, content string }{{"user", question}, {"assistant", answer}} {
-			message := types.Message{SourceTag: types.SourceChat, SessionID: session.ID, Role: item.role, Content: item.content}
+			message := types.Message{SourceTag: types.SourceChat, SessionID: session.ID, Role: item.role, Content: item.content, Thinking: thinking != nil}
+			if item.role == "user" {
+				message.ThinkingContext = thinking
+			}
 			if err := appendReportMessage(tx, &message); err != nil {
 				return err
 			}

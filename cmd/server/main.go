@@ -32,6 +32,7 @@ import (
 	"recallweave/internal/run"
 	"recallweave/internal/session"
 	"recallweave/internal/skill"
+	"recallweave/internal/thinking"
 )
 
 func main() {
@@ -160,8 +161,9 @@ func main() {
 	reportStore := chat.NewReportStore(database)
 	conversationManager := conversation.NewConversationManager(database)
 	runManager := run.NewRunManager(database)
+	thinkingStore := thinking.NewStore(database)
 	chatService := chat.NewChatService(recall, memoryManger, sessionManager, extracter).
-		WithDelegator(delegator).WithTurnWriter(reportStore).
+		WithDelegator(delegator).WithTurnWriter(reportStore).WithThinkingStore(thinkingStore).
 		WithConversationManager(conversationManager).WithRunManager(runManager)
 	reports, err := chat.StartReportDispatcher(serviceCtx, chatService, reportStore, chat.ReportConfig{})
 	if err != nil {
@@ -188,6 +190,7 @@ func main() {
 	apphttp.MountSubagentTasks(r, apphttp.NewSubagentTaskHandler(delegator))
 	apphttp.MountTaskGroups(r, apphttp.NewTaskGroupHandler(delegator))
 	apphttp.MountConversationEvents(r, apphttp.NewEventsHandler(events.NewStore(database)))
+	apphttp.MountThinkingCheckpoints(r, thinkingStore)
 	apphttp.MountMemorySearch(r, memoryManger)
 	apphttp.MountMCP(r, appmcp.NewMcpMemoryReaderServer(memoryManger, sessionManager), os.Getenv("RECALLWEAVE_MCP_TOKEN"))
 

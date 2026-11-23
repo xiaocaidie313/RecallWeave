@@ -62,8 +62,8 @@ func expectMarkdownImport(mock sqlmock.Sqlmock, bound bool) {
 		WithArgs(owner, types.SourceChatGPT, "项目讨论", markdownImportFixture, types.ExtractPending, "", nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(12))
 	mock.ExpectQuery(`INSERT INTO "messages" .*RETURNING "id"`).
-		WithArgs(types.SourceChatGPT, uint(12), 1, "user", "数据库选择 PostgreSQL。", sqlmock.AnyArg(), sqlmock.AnyArg(),
-			types.SourceChatGPT, uint(12), 2, "assistant", "使用 pgvector 检索记忆。", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(types.SourceChatGPT, uint(12), 1, "user", "数据库选择 PostgreSQL。", false, nil, sqlmock.AnyArg(), sqlmock.AnyArg(),
+			types.SourceChatGPT, uint(12), 2, "assistant", "使用 pgvector 检索记忆。", false, nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(31).AddRow(32))
 	mock.ExpectCommit()
 	mock.ExpectBegin()

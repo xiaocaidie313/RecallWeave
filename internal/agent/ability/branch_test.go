@@ -42,7 +42,7 @@ func TestBranchContextPreservesOriginalAndOwnMessages(t *testing.T) {
 	tool := branchToolForTest(t, []types.ContextMessage{
 		{SessionID: 10, Seq: 3, Role: "user", Content: "旧方案：先保留 PostgreSQL。"},
 		{SessionID: 10, Seq: 8, Role: "assistant", Content: "这是建议，不是用户决定。"},
-		{SessionID: 20, Seq: 1, Role: "user", Content: "在支线研究另一种方案。"},
+		{SessionID: 20, Seq: 1, Role: "user", Content: "接着我留下的思考继续。", Navigation: true},
 		{SessionID: 20, Seq: 2, Role: "assistant", Content: "支线自己的回答。"},
 	})
 	inherited := readBranchMessages(t, tool, 10, 1, 10)
@@ -55,7 +55,7 @@ func TestBranchContextPreservesOriginalAndOwnMessages(t *testing.T) {
 	}
 	own := readBranchMessages(t, tool, 20, 1, 2)
 	wantOwn := []messageLine{
-		{Seq: 1, Role: "user", Content: "在支线研究另一种方案。"},
+		{Seq: 1, Role: "user", Content: "接着我留下的思考继续。", Navigation: true},
 		{Seq: 2, Role: "assistant", Content: "支线自己的回答。"},
 	}
 	if !reflect.DeepEqual(own.Messages, wantOwn) {
@@ -78,6 +78,19 @@ func TestBranchContextOwnsImmutableCopy(t *testing.T) {
 	want := []messageLine{{Seq: 3, Role: "user", Content: "分叉时的原文"}}
 	if !reflect.DeepEqual(got.Messages, want) {
 		t.Fatalf("caller mutation leaked into branch: %+v", got.Messages)
+	}
+}
+
+func TestMemoryToolPreservesNavigationProvenance(t *testing.T) {
+	const text = "接着我留下的思考继续。"
+	reader := &fakeSessionReader{messages: []types.Message{
+		{SessionID: 5, Seq: 1, Role: "user", Content: text, Thinking: true, ThinkingContext: &types.ThinkingContext{Navigation: true}},
+		{SessionID: 5, Seq: 2, Role: "user", Content: text}, // Identical wording typed explicitly.
+	}}
+	result := readBranchMessages(t, getMessagesTool(reader), 5, 1, 2)
+	want := []messageLine{{Seq: 1, Role: "user", Content: text, Navigation: true}, {Seq: 2, Role: "user", Content: text}}
+	if !reflect.DeepEqual(result.Messages, want) {
+		t.Fatalf("original read changed navigation provenance: %+v", result.Messages)
 	}
 }
 

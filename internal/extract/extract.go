@@ -132,6 +132,11 @@ func (e *ExtractExcuter) extractIncrementalToMemory(ctx context.Context, session
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
+		// MAX(seq_end) may point at the user's last thought while a later
+		// assistant reply remains in history. Retrying that tail is a no-op.
+		if len(memories) == 0 {
+			return 0, nil
+		}
 		appended, err := e.appendMemories(ctx, sessionID, covered, memories)
 		if err != nil {
 			return 0, err
@@ -217,6 +222,24 @@ func (e *ExtractExcuter) GetMessages(ctx context.Context, sessionID uint) ([]typ
 // #2 切段。长会话按批交给模型，单批失败只降级该批。
 
 func (e *ExtractExcuter) segment(ctx context.Context, messages []types.Message) []llm.Segment {
+	var segments []llm.Segment
+	ordinaryStart := 0
+	for i, msg := range messages {
+		if !msg.Thinking {
+			continue
+		}
+		segments = append(segments, e.segmentOrdinary(ctx, messages[ordinaryStart:i])...)
+		ordinaryStart = i + 1
+		// Only the user's typed words become memories. Generated navigation
+		// and assistant hypotheses remain available in the conversation history.
+		if msg.Role == "user" && !msg.IsThinkingNavigation() && strings.TrimSpace(msg.Content) != "" {
+			segments = append(segments, wholeSessionSegment(messages[i:i+1]))
+		}
+	}
+	return append(segments, e.segmentOrdinary(ctx, messages[ordinaryStart:])...)
+}
+
+func (e *ExtractExcuter) segmentOrdinary(ctx context.Context, messages []types.Message) []llm.Segment {
 	if len(messages) == 0 {
 		return nil
 	}

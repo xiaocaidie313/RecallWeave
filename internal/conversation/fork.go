@@ -65,9 +65,7 @@ func (m *ConversationManager) ForkConversation(ctx context.Context, parentID uin
 			if message.Role != "user" && message.Role != "assistant" {
 				return fmt.Errorf("%w: unsupported message role", ErrInvalidFork)
 			}
-			inherited = append(inherited, types.ContextMessage{
-				SessionID: source.ID, Seq: message.Seq, Role: message.Role, Content: message.Content,
-			})
+			inherited = append(inherited, message.OriginalContext(source.ID))
 		}
 		if len(inherited) > MaxForkMessages {
 			return ErrForkTooLarge

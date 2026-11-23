@@ -31,12 +31,14 @@ type Session struct {
 // Message 是会话里的单条消息。(SessionID, Seq) 唯一，既防重复导入，
 // 也方便按区间把某条记忆的原文捞回来。
 type Message struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	SourceTag SourceTag `gorm:"size:32;index;not null" json:"source_tag"`
-	SessionID uint      `gorm:"uniqueIndex:idx_session_seq;not null" json:"session_id"`
-	Seq       int       `gorm:"uniqueIndex:idx_session_seq;not null" json:"seq"`
-	Role      string    `gorm:"size:32;not null" json:"role"`
-	Content   string    `gorm:"type:text;not null" json:"content"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID              uint             `gorm:"primaryKey" json:"id"`
+	SourceTag       SourceTag        `gorm:"size:32;index;not null" json:"source_tag"`
+	SessionID       uint             `gorm:"uniqueIndex:idx_session_seq;not null" json:"session_id"`
+	Seq             int              `gorm:"uniqueIndex:idx_session_seq;not null" json:"seq"`
+	Role            string           `gorm:"size:32;not null" json:"role"`
+	Content         string           `gorm:"type:text;not null" json:"content"`
+	Thinking        bool             `gorm:"not null;default:false" json:"thinking,omitempty"`
+	ThinkingContext *ThinkingContext `gorm:"serializer:json;type:jsonb" json:"thinking_context,omitempty"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
 }

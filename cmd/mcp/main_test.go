@@ -100,7 +100,12 @@ func TestSearchMemoriesOverMCP(t *testing.T) {
 
 func TestGetMessagesOverMCP(t *testing.T) {
 	ctx := context.Background()
-	messages := &fakeMessageReader{messages: []types.Message{{SessionID: 3, Seq: 4, Role: "user", Content: "使用 PostgreSQL"}}}
+	messages := &fakeMessageReader{messages: []types.Message{
+		{SessionID: 3, Seq: 4, Role: "user", Content: "使用 PostgreSQL"},
+		{SessionID: 3, Seq: 5, Role: "user", Content: "接着我留下的思考继续。", Thinking: true, ThinkingContext: &types.ThinkingContext{
+			Navigation: true, Checkpoint: &types.ThinkingCheckpoint{Text: "私人停笔点"},
+		}},
+	}}
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 	serverSession, err := appmcp.NewMcpMemoryReaderServer(&fakeFinder{}, messages).Connect(ctx, serverTransport, nil)
 	if err != nil {
@@ -128,7 +133,7 @@ func TestGetMessagesOverMCP(t *testing.T) {
 		t.Fatalf("unexpected structured content: %T", result.StructuredContent)
 	}
 	items, ok := content["messages"].([]any)
-	if !ok || len(items) != 1 {
+	if !ok || len(items) != 2 {
 		t.Fatalf("unexpected messages: %+v", content["messages"])
 	}
 	message := items[0].(map[string]any)
@@ -137,6 +142,11 @@ func TestGetMessagesOverMCP(t *testing.T) {
 	}
 	if _, leaked := message["source_tag"]; leaked {
 		t.Fatal("message metadata must not be exposed by MCP")
+	}
+	navigation := items[1].(map[string]any)
+	if navigation["navigation"] != true || navigation["role"] != "user" || navigation["content"] != "接着我留下的思考继续。" ||
+		navigation["thinking_context"] != nil || message["navigation"] != nil {
+		t.Fatalf("MCP changed navigation provenance or disclosed the checkpoint: %+v", items)
 	}
 
 	for _, args := range []map[string]any{

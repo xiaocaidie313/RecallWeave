@@ -34,10 +34,14 @@ type fakeSessionReader struct {
 	seqStart       int
 	seqEnd         int
 	conversationID uint
+	messages       []types.Message
 }
 
 func (f *fakeSessionReader) GetMessages(_ context.Context, sessionID uint, seqStart, seqEnd int) ([]types.Message, error) {
 	f.sessionID, f.seqStart, f.seqEnd = sessionID, seqStart, seqEnd
+	if f.messages != nil {
+		return f.messages, nil
+	}
 	return []types.Message{{SessionID: sessionID, Seq: 1, Role: "user", Content: "旧方案用 Python"}}, nil
 }
 func (f *fakeSessionReader) GetSessions(_ context.Context, conversationID uint) ([]types.Session, error) {

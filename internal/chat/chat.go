@@ -29,19 +29,20 @@ const keepRecentMessages = 20
 
 const titlePrompt = `根据用户的问题给这段对话起一个简短标题。只返回标题本身，不要解释，不要加引号。`
 
-const briefPrompt = `把对话压缩成一份可供后续继续聊天使用的简报。保留决定、偏好、未完成的事和关键事实。只返回简报本身，不要解释。`
+const briefPrompt = `把对话压缩成一份可供后续继续聊天使用的简报。保留决定、偏好、未完成的事和关键事实。标明谁说了什么。助手提出的联想、假设和问题保持为助手推测，只有用户明确认可或修正时才记录用户的回应。只返回简报本身，不要解释。`
 
 // systemPrompt 是问答场景的通用规则。身份由 Agent 的 Role 给出，
 // 记忆工具的用法由 memory ability 的 Instructions 给出，这里不再重复。
 const systemPrompt = `普通问题直接回答，不要为了检索而检索。`
 
 type Answer struct {
-	Text      string     `json:"answer"`
-	Citations []Citation `json:"citations"`
-	Rounds    int        `json:"rounds"`
-	RunID     string     `json:"run_id,omitempty"`
-	Usage     Usage      `json:"usage"`
-	Timings   Timings    `json:"timings"`
+	Text      string                 `json:"answer"`
+	Citations []Citation             `json:"citations"`
+	Rounds    int                    `json:"rounds"`
+	RunID     string                 `json:"run_id,omitempty"`
+	Usage     Usage                  `json:"usage"`
+	Timings   Timings                `json:"timings"`
+	Thinking  *types.ThinkingContext `json:"thinking,omitempty"`
 }
 
 // Timings 记录请求关键路径；后台标题和提炼不计入 TotalMs。
@@ -74,6 +75,7 @@ type ChatService struct {
 	gate                conversationGate
 	runStateManager     *run.RunManager
 	conversationManager *conversation.ConversationManager
+	thinkingStore       checkpointReader
 }
 
 // core 或 core.Model 为 nil 表示没配 api_key，这时问答直接报错。
@@ -108,6 +110,10 @@ func (a *ChatService) model() llm.ChatGenerator {
 }
 
 func (a *ChatService) Chat(ctx context.Context, question string, conversationID uint) (Answer, error) {
+	return a.runChat(ctx, question, conversationID, nil)
+}
+
+func (a *ChatService) runChat(ctx context.Context, question string, conversationID uint, thinking *ThinkingOptions) (Answer, error) {
 	requestStarted := time.Now() // 标记请求开始时间
 	var timings Timings
 	if a.model() == nil {
@@ -123,26 +129,34 @@ func (a *ChatService) Chat(ctx context.Context, question string, conversationID 
 
 	stageStarted := time.Now()
 	preload, sessionID, conversation, inheritedMsg, err := a.loadContext(ctx, conversationID)
-	timings.LoadContextMs = time.Since(stageStarted).Milliseconds()
 	if err != nil {
 		return Answer{}, err
 	}
-	// 请求结束后上下文会被取消，标题生成改用不会跟着取消的上下文，并写回数据库。
-	go a.generateTitle(context.WithoutCancel(ctx), conversationID, question)
 	core := a.core
 	if conversation != nil && conversation.IsBranch() {
 		core = branchCore(a.core, inheritedMsg)
 	}
+	req := runtime.Request{
+		Input: question, ConversationID: conversationID, SystemPrompt: systemPrompt,
+		Preload: preload, Delegator: a.delegator,
+	}
+	var thinkingContext *types.ThinkingContext
+	if thinking != nil {
+		core, thinkingContext, err = a.prepareThinking(ctx, core, &req, *thinking, conversation, inheritedMsg)
+		if err != nil {
+			return Answer{}, err
+		}
+	}
+	timings.LoadContextMs = time.Since(stageStarted).Milliseconds()
+	go a.generateTitle(context.WithoutCancel(ctx), conversationID, req.Input)
 	// 标记开始
 	stageStarted = time.Now()
 	// 运行agent
-	result, err := runtime.Run(ctx, core, runtime.Request{
-		Input:          question,
-		ConversationID: conversationID,
-		SystemPrompt:   systemPrompt,
-		Preload:        preload,
-		Delegator:      a.delegator,
-	})
+	result, err := runtime.Run(ctx, core, req)
+	if thinkingContext == nil && loadedThinkingSkill(result.State.Steps) {
+		thinkingContext = &types.ThinkingContext{}
+	}
+	result.State.Thinking = thinkingContext
 	timings.AgentMs = time.Since(stageStarted).Milliseconds() // 标记agent 运行时间
 	logToolErrors(result.State)
 	// 不管 http 的取消 还是 模型超时 都保存运行结果 都保存 run结果
@@ -153,7 +167,7 @@ func (a *ChatService) Chat(ctx context.Context, question string, conversationID 
 
 	stageStarted = time.Now()
 	// 保存单轮对话
-	if err := a.saveTurn(ctx, sessionID, question, result.Content); err != nil {
+	if err := a.saveTurn(ctx, sessionID, req.Input, result.Content, thinkingContext); err != nil {
 		return Answer{}, err
 	}
 	timings.SaveTurnMs = time.Since(stageStarted).Milliseconds() // 标记保存单轮对话时间
@@ -182,6 +196,7 @@ func answerFromResult(result runtime.RunResult) Answer {
 	return Answer{
 		Text:      result.Content,
 		Citations: verifiedCitations(result.State.AllSteps()),
+		Thinking:  result.State.Thinking,
 		Rounds:    result.State.CurrentRound,
 		RunID:     result.State.RunID,
 		Usage: Usage{
@@ -319,7 +334,7 @@ func joinbrief(brief string, messages []types.Message) string {
 	for _, msg := range messages {
 		builder.WriteString(msg.Role)
 		builder.WriteString(": ")
-		builder.WriteString(msg.Content)
+		builder.WriteString(historicalMessageText(msg))
 		builder.WriteByte('\n')
 	}
 	// 一次直接取出  缓存区的String
@@ -370,18 +385,27 @@ func cleanTitle(title string) string {
 }
 
 // 保存单轮对话
-func (a *ChatService) saveTurn(ctx context.Context, sessionID uint, question, answer string) error {
+func (a *ChatService) saveTurn(ctx context.Context, sessionID uint, question, answer string, thinking *types.ThinkingContext) error {
 	if sessionID == 0 {
 		return nil
 	}
 	if a.turnWriter != nil {
+		if thinking != nil {
+			writer, ok := a.turnWriter.(interface {
+				AppendThinkingTurn(context.Context, uint, string, string, *types.ThinkingContext) error
+			})
+			if !ok {
+				return errors.New("chat: turn writer does not support thinking turns")
+			}
+			return writer.AppendThinkingTurn(ctx, sessionID, question, answer, thinking)
+		}
 		return a.turnWriter.AppendTurn(ctx, sessionID, question, answer)
 	}
 	if a.sessions == nil {
 		return nil
 	}
 	return a.sessions.AppendMessages(ctx, sessionID, []types.Message{
-		{Role: "user", Content: question},
-		{Role: "assistant", Content: answer},
+		{Role: "user", Content: question, Thinking: thinking != nil, ThinkingContext: thinking},
+		{Role: "assistant", Content: answer, Thinking: thinking != nil},
 	})
 }

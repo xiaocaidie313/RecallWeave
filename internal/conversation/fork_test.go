@@ -94,12 +94,13 @@ func TestForkConversationFreezesSourcePrefix(t *testing.T) {
 				inherited = []types.ContextMessage{{SessionID: 10, Seq: 5, Role: "user", Content: "祖先原文"}}
 			}
 			want := append(append([]types.ContextMessage{}, inherited...),
-				types.ContextMessage{SessionID: 70, Seq: 1, Role: "user", Content: "讨论 Go"},
+				types.ContextMessage{SessionID: 70, Seq: 1, Role: "user", Content: "接着我留下的思考继续。", Navigation: true},
 				types.ContextMessage{SessionID: 70, Seq: 2, Role: "assistant", Content: "相关建议"})
 			mock.ExpectBegin()
 			expectForkParent(mock, inherited)
-			expectForkMessages(mock, 2, sqlmock.NewRows([]string{"seq", "role", "content"}).
-				AddRow(1, "user", "讨论 Go").AddRow(2, "assistant", "相关建议"))
+			expectForkMessages(mock, 2, sqlmock.NewRows([]string{"seq", "role", "content", "thinking_context"}).
+				AddRow(1, "user", "接着我留下的思考继续。", []byte(`{"navigation":true,"checkpoint":{"text":"私人停笔点"}}`)).
+				AddRow(2, "assistant", "相关建议", nil))
 			expectForkInserts(mock, "选型分支", want, nil)
 			mock.ExpectCommit()
 			got, err := manager.ForkConversation(context.Background(), 7, 2, "  选型分支  ")
@@ -117,6 +118,9 @@ func TestForkConversationFreezesSourcePrefix(t *testing.T) {
 			snapshot, err := got.Conversation.InheritedMessages()
 			if err != nil || !reflect.DeepEqual(snapshot, want) {
 				t.Fatalf("source provenance/order/roles lost: %+v, %v", snapshot, err)
+			}
+			if strings.Contains(string(got.Conversation.ForkSnapshot), "私人停笔点") {
+				t.Fatal("fork copied checkpoint text into original-message metadata")
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatal(err)

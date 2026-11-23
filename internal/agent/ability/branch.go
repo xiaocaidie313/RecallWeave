@@ -50,7 +50,7 @@ func NewBranchContextAbility(messages []types.ContextMessage) *agent.Ability {
 					}
 					knownSession = true
 					if message.Seq >= args.Start && message.Seq <= args.End {
-						result.Messages = append(result.Messages, messageLine{Seq: message.Seq, Role: message.Role, Content: message.Content})
+						result.Messages = append(result.Messages, messageLine{Seq: message.Seq, Role: message.Role, Content: message.Content, Navigation: message.Navigation})
 					}
 				}
 				if !knownSession {

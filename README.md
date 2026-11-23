@@ -1,6 +1,6 @@
 # RecallWeave
 
-**保留原文、按需检索、能够追溯依据的个人记忆 Agent。**
+**从过去的思考继续往下想。** 带来一个还没想完的问题，或者选一段旧笔记。RecallWeave 可以从你的历史里找一个跨主题的联系，说明这个联想来自哪里，再用一个反例或追问陪你往深处走。你可以留下自己的下一步，过几天再回来。
 
 RecallWeave 将聊天记录和 Markdown 文档保存为原始消息，再提炼为带有消息区间的记忆。回答历史问题时，Agent 可以先检索记忆，再读取原文；后端根据实际取回的消息生成结构化引用。它也可以通过 MCP 给外部 Agent 提供记忆，或调用外部 MCP 工具完成研究任务。
 
@@ -12,6 +12,7 @@ RecallWeave 将聊天记录和 Markdown 文档保存为原始消息，再提炼�
 
 - [已有能力](#已有能力)
 - [快速启动](#快速启动)
+- [试一次接着想](#试一次接着想)
 - [完成一次导入与查询](#完成一次导入与查询)
 - [配置与环境变量](#配置与环境变量)
 - [HTTP API](#http-api)
@@ -32,6 +33,8 @@ RecallWeave 将聊天记录和 Markdown 文档保存为原始消息，再提炼�
 | 混合检索 | 关键词与 pgvector 余弦近邻两路召回，经活跃度重排和 RRF 融合后取 Top-K |
 | 独立检索 | `GET /api/memories/search`，无聊天模型也可查关键词并取得原文位置 |
 | 溯源问答 | 工具循环；引用只覆盖实际读取并与记忆区间相交的原始消息 |
+| 接着想 | 从问题或旧笔记区间开始，按需核对过往原话、提出新联系、根据你的反馈继续 |
+| 保存思考进度 | 每段对话保留一个你亲自写的停留点，可在本对话或新的普通对话中接续 |
 | 生命周期 | 停用过时记忆，默认搜索排除 inactive；保留历史，限制整体重写 |
 | 对话分支 | 从消息序号创建分支，保存继承快照并限制分支问答中的记忆可见范围 |
 | 运行追踪 | 保存 Run、工具参数/结果、错误、模型用量、耗时与父子关系 |
@@ -98,6 +101,66 @@ go run ./cmd/server -config config/config.yaml
 当前支持入库 1536 维向量，或按现有策略截取前 1536 维并归一化的 4096 维输出。其他维度不会写入向量。切换嵌入模型前需核对维度和截断适用性；相同维度不代表不同模型向量可以混用。
 
 Linux/macOS 可用 `cp` 创建配置，用 `export RECALLWEAVE_LLM_API_KEY='...'` 导出变量，其余 Go 与 Docker 命令相同。
+
+## 试一次接着想
+
+按上节启动带聊天模型的后端，在仓库根目录另开 PowerShell 5.1 或更新版本的终端。
+
+```powershell
+.\examples\think.ps1 -Question '为什么我记下了许多念头，后来却很少继续想？'
+```
+
+脚本会创建对话并打印对话 ID。直接输入下一句即可交谈。比如你觉得“因为缺少反馈”这个解释过于笼统，可以追一句“即便对方不回信，我写给朋友时也会想得更清楚”。看看下一轮的问题有没有因你的反例而改变。
+
+| 终端输入 | 作用 |
+| --- | --- |
+| `/save 我想弄清楚，具体的听者如何改变我的表达` | 留下希望继续探索的方向 |
+| `/reject 散步和写作的联系太牵强，我想先放下它` | 记下你否定哪条联系和理由 |
+| `/reframe 如果对方永远不会回信，我还会写得更清楚吗？` | 用你重新表述的问题替换当前停留点 |
+| `/continue` | 从已保存的停留点或本对话最近讨论接下去 |
+| `/exit` | 退出客户端 |
+
+每个对话只有一个当前停留点。三条保存命令都会替换它，成功后终端回显原文。重新打开原对话可以看到上次留下的话。在新对话中接续时只带入明确选定的停留点，原对话的完整历史仍归属原对话。以下编号请换成实际输出。
+
+```powershell
+.\examples\think.ps1 -ConversationId 12
+.\examples\think.ps1 -ResumeFrom 12
+```
+
+### 从一段你选中的旧笔记出发
+
+通过下节的导入接口保存自己的笔记，再从消息列表里选择原文区间。已有 Session 时也可以直接运行。
+
+```powershell
+# 将 9、2 换成实际的 session_id 和消息 seq
+.\examples\think.ps1 -SessionId 9 -SeqStart 2 -Question '这和我以前在哪些场合更容易想清楚，有什么联系？'
+```
+
+可以只选原文，也可以加上自己的问题。省略 `-SeqEnd` 时取一条。直接选择依赖已保存的原文，跨主题检索则依赖历史资料已经提炼出可查的记忆。分支中的选择限于继承快照和本分支消息。每次最多 50 条，所选范围必须完整可读。
+
+**怎样理解回答。** `thinking.source` 是本次打开的笔记区间，`citations` 是工具实际核过的记忆原文。二者可分别查看。Agent 会据此尝试提出联系。评估时可以在空白演示库先问一次，导入两段自己的旧思考后再开新对话问同一个问题。对照两次回答，看哪条联系确实依赖那两段原话。再明确否定一次联想，观察下一轮是否转向你认可的方向。
+
+**哪些东西会留下。** 聊天记录保留双方原文。提炼思考回合时，系统逐条保留用户实际输入的话，助手提出的假设留在聊天记录里。点击旧笔记或空问题续接产生的导航消息带有 `thinking_context.navigation` 标记，跳过长期记忆提炼。只有显式保存停留点才更新进度。用户可以在本地服务上无模型保存和读取进度，生成思考回应需要聊天模型。
+
+### 从其他客户端调用
+
+向 `POST /api/chat/:conversation_id` 发送以下任意一个 JSON 请求体。会话 ID 从创建对话的响应取得。
+
+```json
+{"mode":"thinking","question":"我在什么情况下会主动修正自己的想法？"}
+```
+
+```json
+{"mode":"thinking","source":{"session_id":9,"seq_start":2,"seq_end":2}}
+```
+
+```json
+{"mode":"thinking","resume_from":12}
+```
+
+可用 `POST /api/conversations/:id/thinking/checkpoint` 保存进度，例如 `{"text":"下次我想追问，谁在听真的重要吗？","direction":"reframe"}`。同路径 GET 返回 `{"checkpoint": ...}`，已有对话尚未保存时值为 `null`。文本最多 2000 个字符。方向可省略，也可选 `explore`、`reject`、`reframe`。跨对话接续要求来源和目标都是普通对话。分支可以在自身内部接续。
+
+显式思考请求由服务加载 [thinking-partner 技能](skills/thinking-partner/SKILL.md)，模型根据中间结果选择检索、读原文或直接回答。思考模式只开放当前范围的记忆读取业务工具。响应中的 `run_id` 可以在 `GET /api/runs/:run_id` 查看每一步和该次使用的起点。未设 `mode` 的请求沿用原有聊天接口。
 
 前台 Go 进程用 `Ctrl+C` 退出，会尝试停止 worker 并关闭 HTTP。`docker compose stop` 停止数据库并保留数据；`docker compose down` 也保留 named volume，添加 `-v` 则会删除数据库数据。
 
@@ -209,7 +272,8 @@ ID 应从实际响应取得，不要假定首次创建一定是 `1`。错误通�
 | GET | `/api/conversations/list/with_title` | 最近对话及标题 |
 | GET | `/api/conversations/:conversation_id/messages` | 本对话消息与继承消息快照 |
 | POST | `/api/conversations/:conversation_id/fork` | JSON：`from_seq`、可选 `title` |
-| POST | `/api/chat/:conversation_id` | JSON：`question`，同步完整回答 |
+| POST | `/api/chat/:conversation_id` | 普通问答或 `mode=thinking`，可选 `source`、`resume_from` |
+| GET / POST | `/api/conversations/:conversation_id/thinking/checkpoint` | 读取或替换用户亲自填写的思考停留点 |
 | GET | `/api/runs/:run_id` | 运行状态、工具步骤、用量和耗时 |
 | GET | `/api/conversations/:conversation_id/runs` | 对话运行列表 |
 | GET | `/api/conversations/:conversation_id/subagent-tasks` | 后台任务列表 |
@@ -398,7 +462,19 @@ go test -tags integration ./internal/http ./internal/extract ./internal/ingest -
 
 覆盖 HTTP 问答和原文引用、无模型提炼/搜索、停用过滤、提炼并发保护、MCP transcript 去重/冲突/追加。真实模型验收需另设 `RECALLWEAVE_LIVE_MODEL=1` 和 `RECALLWEAVE_LIVE_CONFIG_PATH`，按对应测试代码运行，可能产生模型费用。
 
-### 本轮验证记录（2026-11-19）
+### 验证「接着想」
+
+配置好上面的专用工作流测试库后，运行下面的两条 PostgreSQL 验收用例。
+
+```powershell
+go test -tags integration ./internal/http -run 'TestPostgres(ThinkingPartnerWorkflow|HTTPThinkingCheckpoint)$' -count=1 -v
+```
+
+第一条场景经 HTTP 导入两段 Markdown 讨论，从一段写作原文出发去核对一段音乐练习的原话。它检查引用范围、说话人、写入长期记忆的内容，以及保存进度后重新组装服务、跨对话接续时能否还原起点。第二条检查停留点的替换、隔离和重新连接数据库后的读回。场景使用确定性模型与真实 PostgreSQL。个人是否觉得某个联想有启发，需要用自己的笔记和配置的聊天模型判断。
+
+2026-11-23 还用编译出的 Go 服务、独立 PostgreSQL 18 / pgvector 测试库和本机模拟模型实跑了 PowerShell 客户端。中文提问并用 `/save` 保存后，停止并重新启动 Go 进程，再用 `-ConversationId` 和 `-ResumeFrom` 接回同一问题。HTTP 读回了两次完成的 Run 和四条消息，恢复操作带有导航标记。
+
+### 验证记录（2026-11-19）
 
 - 完整后端普通测试、`go vet` 与入口构建通过。
 - 独立 PostgreSQL 18 / pgvector 临时容器中的 HTTP、提炼和 transcript 集成测试通过；模型由测试实现模拟。

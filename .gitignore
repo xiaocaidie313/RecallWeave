@@ -15,6 +15,7 @@ bin/
 !/README.md
 !docs/technical/*.md
 !docs/deepseek-harness.md
+!/skills/*/SKILL.md
 !/.agents/skills/recallweave-handoff/SKILL.md
 
 # Editor and operating-system files

@@ -328,11 +328,11 @@ func (w *reportTestTurnWriter) AppendTurn(_ context.Context, sessionID uint, que
 func TestChatTurnWriterReceivesTurnAndPropagatesPersistenceFailure(t *testing.T) {
 	writer := &reportTestTurnWriter{err: errors.New("event transaction failed")}
 	service := NewChatService(nil, nil, nil, nil).WithTurnWriter(writer)
-	err := service.saveTurn(context.Background(), 11, "question", "answer")
+	err := service.saveTurn(context.Background(), 11, "question", "answer", nil)
 	if !errors.Is(err, writer.err) || writer.calls != 1 || writer.sessionID != 11 || writer.question != "question" || writer.answer != "answer" {
 		t.Fatalf("turn writer not used: %+v %v", writer, err)
 	}
-	if err := service.saveTurn(context.Background(), 0, "ignored", "ignored"); err != nil || writer.calls != 1 {
+	if err := service.saveTurn(context.Background(), 0, "ignored", "ignored", nil); err != nil || writer.calls != 1 {
 		t.Fatal("unpersisted test turn unexpectedly emitted events")
 	}
 }

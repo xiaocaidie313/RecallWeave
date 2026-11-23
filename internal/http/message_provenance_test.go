@@ -30,7 +30,8 @@ func provenancePayload(t *testing.T, message types.Message, metadata map[string]
 	return raw
 }
 
-func expectProvenanceHistory(mock sqlmock.Sqlmock, conversation bool, messages ...types.Message) {
+func expectProvenanceHistory(t *testing.T, mock sqlmock.Sqlmock, conversation bool, messages ...types.Message) {
+	t.Helper()
 	if conversation {
 		mock.ExpectQuery(`SELECT .* FROM "conversations" WHERE .*id.*ORDER BY .*LIMIT`).WithArgs(7, 1).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
@@ -40,9 +41,13 @@ func expectProvenanceHistory(mock sqlmock.Sqlmock, conversation bool, messages .
 		mock.ExpectQuery(`SELECT .* FROM "sessions" WHERE .*id.*ORDER BY .*LIMIT`).WithArgs(70, 1).
 			WillReturnRows(sqlmock.NewRows([]string{"id", "conversation_id", "source_tag"}).AddRow(70, 7, "chat"))
 	}
-	rows := sqlmock.NewRows([]string{"id", "session_id", "seq", "role", "content"})
+	rows := sqlmock.NewRows([]string{"id", "session_id", "seq", "role", "content", "thinking", "thinking_context"})
 	for _, message := range messages {
-		rows.AddRow(message.ID, message.SessionID, message.Seq, message.Role, message.Content)
+		contextJSON, err := json.Marshal(message.ThinkingContext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows.AddRow(message.ID, message.SessionID, message.Seq, message.Role, message.Content, message.Thinking, contextJSON)
 	}
 	mock.ExpectQuery(`SELECT .* FROM "messages" WHERE session_id = .*ORDER BY seq`).WithArgs(70).WillReturnRows(rows)
 }
@@ -72,9 +77,14 @@ func TestMessageHistoryRetypessSavedSSEProvenance(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			manager, messageStore, mock := forkHTTPManagers(t)
 			question := provenanceMessage(700, 1, "user", "question")
+			question.Thinking = true
+			question.ThinkingContext = &types.ThinkingContext{
+				Source:     &types.ThoughtSource{SessionID: 42, SeqStart: 4, SeqEnd: 6},
+				Navigation: true,
+			}
 			direct := provenanceMessage(701, 2, "assistant", "original result without inline URL")
 			group := provenanceMessage(702, 3, "assistant", "combined saved result")
-			expectProvenanceHistory(mock, conversation, question, direct, group)
+			expectProvenanceHistory(t, mock, conversation, question, direct, group)
 			sources := []map[string]any{{"kind": "web", "tool": "mcp_tavily_search", "url": "https://example.test/original", "source_run_id": "child-run"}, {"kind": "memory", "tool": "get_messages", "session_id": 42, "seq_start": 4, "seq_end": 6, "source_run_id": "other-child"}}
 			directMeta := map[string]any{"task_id": "task-1", "group_id": "group-1", "task_run_id": "child-run", "sources": sources}
 			groupMeta := map[string]any{"group_id": "group-2", "run_id": "synthesis-run", "sources": sources}
@@ -102,6 +112,15 @@ func TestMessageHistoryRetypessSavedSSEProvenance(t *testing.T) {
 			if _, exists := messages[0]["sources"]; exists {
 				t.Fatal("ordinary message invented sources")
 			}
+			if messages[0]["thinking"] != true || messages[1]["thinking"] != nil {
+				t.Fatalf("history lost the thinking-turn marker: %+v", messages)
+			}
+			var context types.ThinkingContext
+			rawContext, err := json.Marshal(messages[0]["thinking_context"])
+			if err != nil || json.Unmarshal(rawContext, &context) != nil ||
+				!reflect.DeepEqual(context, *question.ThinkingContext) || messages[1]["thinking_context"] != nil {
+				t.Fatalf("history changed thinking navigation provenance: %+v", messages)
+			}
 			for index, metadata := range []map[string]any{directMeta, groupMeta} {
 				encoded, _ := json.Marshal(metadata)
 				var expected map[string]any
@@ -127,7 +146,7 @@ func TestMessageHistoryRejectsMalformedAndForeignProvenance(t *testing.T) {
 	for _, scenario := range []string{"event owner", "payload owner", "message id", "session", "seq", "role", "content", "key", "kind", "invalid payload", "invalid sources"} {
 		t.Run(scenario, func(t *testing.T) {
 			manager, messageStore, mock := forkHTTPManagers(t)
-			expectProvenanceHistory(mock, true, message)
+			expectProvenanceHistory(t, mock, true, message)
 			eventOwner, payloadOwner, key, kind := 7, 7, "message:701", "message.created"
 			typesd := message
 			metadata := map[string]any{"conversation_id": payloadOwner, "task_id": "must-not-leak", "sources": []map[string]any{{"kind": "web", "url": "https://private.test"}}}
@@ -179,7 +198,7 @@ func TestMessageHistoryRejectsMalformedAndForeignProvenance(t *testing.T) {
 func TestMessageHistoryReportsProvenanceStorageFailure(t *testing.T) {
 	_, messageStore, mock := forkHTTPManagers(t)
 	message := provenanceMessage(701, 2, "assistant", "saved result")
-	expectProvenanceHistory(mock, false, message)
+	expectProvenanceHistory(t, mock, false, message)
 	mock.ExpectQuery(`SELECT .* FROM "conversation_events" WHERE conversation_id = .*AND kind = .*AND key IN`).WithArgs(7, "message.created", "message:701").WillReturnError(errors.New("storage unavailable"))
 	recorder := httptest.NewRecorder()
 	NewRouter(nil, nil, nil, nil, NewSessionHandler(messageStore, nil), nil).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/sessions/70/messages", nil))
