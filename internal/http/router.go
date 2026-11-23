@@ -52,6 +52,7 @@ func NewRouter(
 			ConversationGroup.POST("/:conversation_id/fork", conversationHandler.Fork)
 			ConversationGroup.GET("/list/with_title", conversationHandler.ListWithTitle)
 			ConversationGroup.GET("/:conversation_id/messages", conversationHandler.ListConversationMessages)
+			ConversationGroup.GET("/:conversation_id/notes", conversationHandler.ListNotes)
 		}
 	}
 

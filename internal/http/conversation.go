@@ -73,3 +73,26 @@ func (h *ConversationHandler) ListWithTitle(c *gin.Context) {
 		"conversations": items,
 	})
 }
+
+func (h *ConversationHandler) ListNotes(c *gin.Context) {
+	id, ok := conversationIDFromPath(c)
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	exists, err := h.manager.ConversationExists(ctx, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load conversation"})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
+		return
+	}
+	notes, err := h.sessions.ListLocalNotes(ctx, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list notes"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"notes": notes})
+}

@@ -20,6 +20,7 @@ const (
 	SourceCodex       SourceTag = "codex"
 	SourceChatGPT     SourceTag = "chatgpt"
 	SourceChat        SourceTag = "chat"
+	SourceLocalNote   SourceTag = "local_note"
 
 	SourceDeepSeekHarness SourceTag = "deepseek_harness"
 )
@@ -38,6 +39,7 @@ var sourceTags = map[SourceTag]struct{}{
 	SourceCodex:       {},
 	SourceChatGPT:     {},
 	SourceChat:        {},
+	SourceLocalNote:   {},
 
 	SourceDeepSeekHarness: {},
 }

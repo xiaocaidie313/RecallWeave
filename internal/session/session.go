@@ -18,6 +18,21 @@ func NewSessionManager(db *gorm.DB) *SessionManager {
 	return &SessionManager{db: db}
 }
 
+type LocalNote struct {
+	SessionID     uint   `json:"session_id"`
+	Name          string `json:"name"`
+	ExtractStatus string `json:"extract_status"`
+}
+
+func (m *SessionManager) ListLocalNotes(ctx context.Context, conversationID uint) ([]LocalNote, error) {
+	notes := []LocalNote{}
+	err := m.db.WithContext(ctx).Model(&types.Session{}).
+		Select("id AS session_id, name, extract_status").
+		Where("conversation_id = ? AND source_tag = ?", conversationID, types.SourceLocalNote).
+		Order("created_at DESC, id DESC").Find(&notes).Error
+	return notes, err
+}
+
 func (m *SessionManager) GetSessions(ctx context.Context, conversationID uint) ([]types.Session, error) {
 	var sessions []types.Session
 	if err := m.db.WithContext(ctx).Model(&types.Session{}).Where("conversation_id = ?", conversationID).

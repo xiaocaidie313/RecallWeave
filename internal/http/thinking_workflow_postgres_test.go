@@ -90,6 +90,11 @@ func nextThinkingStep(messages []thinkingModelMessage) (llm.Turn, error) {
 			return llm.Turn{}, err
 		}
 		switch last.Content {
+		case "读回选中的第二段":
+			if len(data.Originals) != 1 || data.Originals[0].Content != "第二段。" || data.Originals[0].Seq != 2 {
+				return llm.Turn{}, fmt.Errorf("selected local note passage was lost: %+v", data)
+			}
+			return llm.Turn{Content: "第二段。"}, nil
 		case firstThought:
 			if len(data.Originals) != 2 || data.Originals[0].Role != "user" || data.Originals[0].Content != writingNote ||
 				data.Originals[1].Role != "assistant" || data.Originals[1].Content != oldAssistantNote {

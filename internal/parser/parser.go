@@ -135,6 +135,9 @@ func ParseWithFormat(raw string, sourceTag types.SourceTag, format Format) ([]Co
 	if !format.Valid() {
 		return nil, fmt.Errorf("unsupported import format %q", format)
 	}
+	if sourceTag == types.SourceLocalNote && (!utf8.ValidString(raw) || strings.ContainsRune(raw, '\x00')) {
+		return nil, fmt.Errorf("notes must contain UTF-8 text")
+	}
 	if format == FormatMarkdown {
 		return ParseMarkdown(raw, sourceTag)
 	}
@@ -151,7 +154,7 @@ func ParseWithFormat(raw string, sourceTag types.SourceTag, format Format) ([]Co
 }
 
 func splitPlain(raw string, sourceTag types.SourceTag) []types.Message {
-	normalized := strings.ReplaceAll(raw, "\r\n", "\n")
+	normalized := strings.ReplaceAll(strings.TrimPrefix(raw, "\ufeff"), "\r\n", "\n")
 	var messages []types.Message
 	for _, block := range strings.Split(normalized, "\n\n") {
 		block = strings.TrimSpace(block)

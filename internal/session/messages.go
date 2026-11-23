@@ -22,6 +22,16 @@ func (m *SessionManager) GetMessages(ctx context.Context, sessionID uint, seqSta
 	return messages, nil
 }
 
+// LocalNoteMessages reads explicitly selected passages only from notes attached to this conversation.
+func (m *SessionManager) LocalNoteMessages(ctx context.Context, conversationID, sessionID uint, start, end int) ([]types.Message, error) {
+	var messages []types.Message
+	err := m.db.WithContext(ctx).Joins("JOIN sessions ON sessions.id = messages.session_id").
+		Where("sessions.conversation_id = ? AND sessions.source_tag = ?", conversationID, types.SourceLocalNote).
+		Where("messages.session_id = ? AND messages.seq BETWEEN ? AND ?", sessionID, start, end).
+		Order("messages.seq").Find(&messages).Error
+	return messages, err
+}
+
 // ListMessages 按顺序返回一次聊天里已经保存的消息。
 func (m *SessionManager) ListMessages(ctx context.Context, sessionID uint) ([]types.Message, error) {
 	var messages []types.Message
