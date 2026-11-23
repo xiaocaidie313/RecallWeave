@@ -2,7 +2,9 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/param"
@@ -38,6 +40,16 @@ type ChatGenerator interface {
 	NewOneTurnChat(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 }
 
+var ErrPaymentRequired = errors.New("model provider requires payment")
+
+func chatCompletionError(err error) error {
+	var providerError *openai.Error
+	if errors.As(err, &providerError) && providerError.StatusCode == http.StatusPaymentRequired {
+		return ErrPaymentRequired
+	}
+	return fmt.Errorf("llm: chat completion failed: %w", err)
+}
+
 // Next 请求模型的下一轮输出，并把模型这轮的回复追加进对话历史。
 // 历史里必须保留带 tool_calls 的那条 assistant 消息，否则下一轮回灌结果时
 // 模型会因为找不到对应的调用而报错。
@@ -62,7 +74,7 @@ func (c *Client) Next(ctx context.Context, conv *Conversation, tools []ToolSchem
 	// 模型新对话
 	response, err := c.sdk.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return Turn{}, fmt.Errorf("llm: chat completion failed: %w", err)
+		return Turn{}, chatCompletionError(err)
 	}
 
 	if len(response.Choices) == 0 {
@@ -117,7 +129,7 @@ func (c *Client) NewOneTurnChat(ctx context.Context, systemPrompt, userPrompt st
 	}
 	response, err := c.sdk.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return "", fmt.Errorf("llm: chat completion failed: %w", err)
+		return "", chatCompletionError(err)
 	}
 	if len(response.Choices) == 0 {
 		return "", fmt.Errorf("llm: response has no choices")
