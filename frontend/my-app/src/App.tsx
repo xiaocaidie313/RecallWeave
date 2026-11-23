@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { NoteLibrary } from './NoteLibrary'
 import ConversationSidebar from './ConversationSidebar'
 import { Transcript } from './Transcript'
 import { useChat, type ChatMode } from './useChat'
@@ -6,6 +7,7 @@ import './App.css'
 
 const icons = {
   arrow: <path d="M12 19V5m-6 6 6-6 6 6" />,
+  attach: <path d="m8 13 6-6a2.4 2.4 0 0 1 3.4 3.4l-8 8a4.2 4.2 0 0 1-6-6l8.5-8.5a5.7 5.7 0 0 1 8.1 8.1l-8.1 8.1" />,
   chevron: <path d="m7 10 5 5 5-5" />,
   path: <path d="m10 7 5 5-5 5" />,
   chat: <path d="M19 16a3 3 0 0 0 2-3V7a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v9a2 2 0 0 0 2 2h1v3l4-3h5" />,
@@ -29,11 +31,13 @@ export default function App() {
   const chat = useChat()
   const { room } = chat
   const editor = useRef<HTMLTextAreaElement>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const [openLibrary, setOpenLibrary] = useState<number | null>(null)
   const channel = chat.conversations.find(item => item.id === chat.id)
   const title = channel?.title || (chat.id ? '当前对话' : '新对话')
   const welcome = room.messages?.length === 0 && room.pending === undefined
   const waiting = room.pending !== undefined
-  const editorDisabled = waiting || room.messages === undefined
+  const editorDisabled = waiting || !!room.importing || room.messages === undefined
   const statusLabel = { loading: '正在连接', ready: '服务已连接', error: '连接异常' }[chat.listState]
 
   useEffect(() => { document.title = title + ' · RecallWeave' }, [title])
@@ -46,8 +50,14 @@ export default function App() {
   const composer = (
     <div className="compose-wrap">
       {room.sendError && <div role="alert" className="send-error"><span>{room.sendError}</span><button type="button" onClick={() => void chat.send()}>重试发送</button></div>}
+      {room.importNotice && <div key={room.importNotice.text} className={'note-notice' + (room.importNotice.error ? ' note-error' : '')}
+        role={room.importNotice.error ? 'alert' : 'status'}>{room.importNotice.text}</div>}
       <div className="compose-box">
-        <textarea ref={editor} rows={2} aria-label="输入消息" placeholder={welcome ? '写下一个问题，或还没想完的念头…' : '继续这段对话…'}
+        {room.passage && <div className="chosen-passage">
+          <span>选中的原文 · {room.passage.name} · 第 {room.passage.source.seq_start} 段</span>
+          <button type="button" aria-label="取消选中的原文" disabled={editorDisabled} onClick={chat.clearPassage}>×</button>
+        </div>}
+        <textarea ref={editor} rows={2} aria-label="输入消息" placeholder={room.passage ? '按 Enter 从这段原文接着想，也可以写下自己的问题…' : welcome ? '写下一个问题，或还没想完的念头…' : '继续这段对话…'}
           value={room.draft} disabled={editorDisabled} onChange={event => chat.setDraft(event.target.value)}
           onKeyDown={event => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
@@ -56,17 +66,27 @@ export default function App() {
             }
           }} />
         <div className="compose-tools">
-          <label className="mode-choice">
-            <Icon name={room.mode === 'thinking' ? 'branch' : 'chat'} size={15} />
-            <select aria-label="对话模式" value={room.mode} disabled={editorDisabled} onChange={event => chat.setMode(event.target.value as ChatMode)}>
-              <option value="thinking">接着想</option>
-              <option value="chat">普通对话</option>
-            </select>
-            <Icon name="chevron" size={13} />
-          </label>
+          <div className="compose-actions">
+            <label className="mode-choice">
+              <Icon name={room.mode === 'thinking' ? 'branch' : 'chat'} size={15} />
+              <select aria-label="对话模式" value={room.mode} disabled={editorDisabled} onChange={event => chat.setMode(event.target.value as ChatMode)}>
+                <option value="thinking">接着想</option>
+                <option value="chat">普通对话</option>
+              </select>
+              <Icon name="chevron" size={13} />
+            </label>
+            <input ref={fileInput} type="file" accept=".md,.txt" aria-label="选择笔记文件" hidden onChange={event => {
+              const file = event.currentTarget.files?.[0]
+              event.currentTarget.value = ''
+              if (file) void chat.uploadNote(file)
+            }} />
+            <button type="button" className="note-tool" disabled={editorDisabled} title="导入 Markdown 或 TXT 文件"
+              onClick={() => fileInput.current?.click()}><Icon name="attach" size={15} />导入笔记</button>
+            {chat.id > 0 && <button type="button" className="note-tool" disabled={editorDisabled} onClick={() => setOpenLibrary(chat.id)}>查看笔记</button>}
+          </div>
           <div className="send-tools">
             <span className="keyboard-tip">Shift + Enter 换行</span>
-            <button type="button" className="send-button" aria-label="发送消息" title="发送消息 (Enter)" disabled={editorDisabled || !room.draft.trim()} onClick={() => void chat.send()}>
+            <button type="button" className="send-button" aria-label="发送消息" title="发送消息 (Enter)" disabled={editorDisabled || (!room.draft.trim() && !room.passage)} onClick={() => void chat.send()}>
               <Icon name="arrow" size={20} />
             </button>
           </div>
@@ -109,6 +129,12 @@ export default function App() {
           </>
         )}
       </main>
+      {openLibrary !== null && chat.id === openLibrary && <NoteLibrary key={chat.id} id={chat.id} onClose={() => setOpenLibrary(null)}
+        onPick={(name, source) => {
+          chat.choosePassage(name, source)
+          setOpenLibrary(null)
+          requestAnimationFrame(() => editor.current?.focus())
+        }} />}
     </div>
   )
 }
