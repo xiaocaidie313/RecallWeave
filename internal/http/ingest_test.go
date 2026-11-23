@@ -110,11 +110,11 @@ func TestImportMarkdownTextHonorsExplicitFormat(t *testing.T) {
 	}
 }
 
-func markdownFileRequest(t *testing.T, path, filename, format string, content []byte) *http.Request {
+func importFileRequest(t *testing.T, path, source, filename, format string, content []byte) *http.Request {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	for key, value := range map[string]string{"source_tag": "chatgpt", "format": format} {
+	for key, value := range map[string]string{"source_tag": source, "format": format} {
 		if err := writer.WriteField(key, value); err != nil {
 			t.Fatal(err)
 		}
@@ -164,7 +164,7 @@ func TestImportMarkdownFileDetectsAndOverridesFormat(t *testing.T) {
 			if tc.bound {
 				path = "/api/conversations/7/imports/file"
 			}
-			assertMarkdownImported(t, handler, mock, markdownFileRequest(t, path, tc.filename, tc.format, tc.content))
+			assertMarkdownImported(t, handler, mock, importFileRequest(t, path, "chatgpt", tc.filename, tc.format, tc.content))
 		})
 	}
 }
@@ -176,7 +176,7 @@ func TestImportRejectsInvalidFormat(t *testing.T) {
 			handler := NewIngestHandler(ingest.NewService(nil, nil))
 			var request *http.Request
 			if strings.HasSuffix(path, "/file") {
-				request = markdownFileRequest(t, path, "conversation.md", "html", []byte(markdownImportFixture))
+				request = importFileRequest(t, path, "chatgpt", "conversation.md", "html", []byte(markdownImportFixture))
 			} else {
 				body, err := json.Marshal(map[string]string{"source_tag": "chatgpt", "text": markdownImportFixture, "format": "html"})
 				if err != nil {
@@ -191,6 +191,39 @@ func TestImportRejectsInvalidFormat(t *testing.T) {
 				t.Fatalf("expected invalid format rejection, got %d: %s", recorder.Code, recorder.Body.String())
 			}
 		})
+	}
+}
+
+func TestImportRejectsOversizedFileBeforeStorage(t *testing.T) {
+	router := NewRouter(NewIngestHandler(nil), nil, nil, nil, nil, nil)
+	content := bytes.Repeat([]byte("a"), maxImportFileSize+1)
+	for _, path := range []string{"/api/imports/file", "/api/conversations/7/imports/file"} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, importFileRequest(t, path, "local_note", "large.txt", "", content))
+		if recorder.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("%s: got HTTP %d", path, recorder.Code)
+		}
+	}
+}
+
+func TestLocalNoteDoesNotUnpackRenamedArchive(t *testing.T) {
+	var body bytes.Buffer
+	archive := zip.NewWriter(&body)
+	entry, err := archive.Create("inner.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write([]byte("unrelated archived text")); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter(NewIngestHandler(ingest.NewService(nil, nil)), nil, nil, nil, nil, nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, importFileRequest(t, "/api/imports/file", "local_note", "disguised.md", "", body.Bytes()))
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "UTF-8") {
+		t.Fatalf("renamed archive: HTTP %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 

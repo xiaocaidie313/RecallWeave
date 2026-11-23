@@ -125,7 +125,7 @@ func (s *Service) saveConversations(ctx context.Context, sourceTag types.SourceT
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, conv := range conversations {
 			sessionName := name
-			if conv.Title != "" {
+			if conv.Title != "" && (sourceTag != types.SourceLocalNote || name == "") {
 				sessionName = conv.Title
 			}
 			session := &types.Session{
@@ -183,5 +183,6 @@ func insertSession(tx *gorm.DB, session *types.Session, messages []types.Message
 	for i := range messages {
 		messages[i].SessionID = session.ID
 	}
-	return tx.Create(&messages).Error
+	// A long text file can produce more messages than PostgreSQL allows bind parameters in one statement.
+	return tx.CreateInBatches(&messages, 500).Error
 }

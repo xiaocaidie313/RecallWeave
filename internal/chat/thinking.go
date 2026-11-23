@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"recallweave/internal/agent"
@@ -148,11 +149,19 @@ func (a *ChatService) thinkingCheckpoint(ctx context.Context, current, from uint
 }
 
 func (a *ChatService) thoughtOriginals(ctx context.Context, source ThoughtSource, conv *types.Conversation, visible []types.ContextMessage) ([]types.ContextMessage, error) {
-	if conv == nil || !conv.IsBranch() {
+	branch := conv != nil && conv.IsBranch()
+	// A source in the branch snapshot must always be read from that frozen copy.
+	if !branch || !slices.ContainsFunc(visible, func(m types.ContextMessage) bool { return m.SessionID == source.SessionID }) {
 		if a.sessions == nil {
 			return nil, ErrThoughtSourceNotFound
 		}
-		messages, err := a.sessions.GetMessages(ctx, source.SessionID, source.SeqStart, source.SeqEnd)
+		var messages []types.Message
+		var err error
+		if branch {
+			messages, err = a.sessions.LocalNoteMessages(ctx, conv.ID, source.SessionID, source.SeqStart, source.SeqEnd)
+		} else {
+			messages, err = a.sessions.GetMessages(ctx, source.SessionID, source.SeqStart, source.SeqEnd)
+		}
 		if err != nil {
 			return nil, err
 		}

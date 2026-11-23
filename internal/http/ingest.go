@@ -4,7 +4,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"recallweave/internal/ingest"
 	"recallweave/internal/parser"
@@ -16,6 +18,10 @@ import (
 type IngestHandler struct {
 	service *ingest.Service
 }
+
+const maxImportFileSize = 20 << 20
+
+var errImportFileTooLarge = errors.New("file exceeds 20 MiB")
 
 func NewIngestHandler(service *ingest.Service) *IngestHandler {
 	return &IngestHandler{service: service}
@@ -61,7 +67,7 @@ func (h *IngestHandler) ImportFile(c *gin.Context) {
 
 	text, format, err := readUploadedText(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeUploadError(c, err)
 		return
 	}
 
@@ -128,7 +134,7 @@ func (h *IngestHandler) ImportConversationFile(c *gin.Context) {
 
 	text, format, err := readUploadedText(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		writeUploadError(c, err)
 		return
 	}
 
@@ -165,6 +171,9 @@ func readUploadedText(c *gin.Context) (string, parser.Format, error) {
 	if err != nil {
 		return "", parser.FormatAuto, errors.New("file is required")
 	}
+	if file.Size > maxImportFileSize {
+		return "", parser.FormatAuto, errImportFileTooLarge
+	}
 
 	content, err := file.Open()
 	if err != nil {
@@ -172,9 +181,21 @@ func readUploadedText(c *gin.Context) (string, parser.Format, error) {
 	}
 	defer content.Close()
 
-	data, err := io.ReadAll(io.LimitReader(content, 20<<20))
+	data, err := io.ReadAll(content)
 	if err != nil {
 		return "", parser.FormatAuto, err
+	}
+	if c.PostForm("source_tag") == string(types.SourceLocalNote) {
+		switch strings.ToLower(filepath.Ext(file.Filename)) {
+		case ".md", ".markdown":
+			format = parser.FormatMarkdown
+		case ".txt":
+		default:
+			return "", parser.FormatAuto, errors.New("local note must be a Markdown or TXT file")
+		}
+		// Notes are text, even when their first bytes resemble an archive.
+		// ParseWithFormat validates UTF-8 before a note can be stored.
+		return string(data), format, nil
 	}
 	text, detected, err := parser.ReadFileWithFormat(data, file.Filename)
 	if err != nil {
@@ -184,6 +205,14 @@ func readUploadedText(c *gin.Context) (string, parser.Format, error) {
 		detected = format
 	}
 	return text, detected, nil
+}
+
+func writeUploadError(c *gin.Context, err error) {
+	status := http.StatusBadRequest
+	if errors.Is(err, errImportFileTooLarge) {
+		status = http.StatusRequestEntityTooLarge
+	}
+	c.JSON(status, gin.H{"error": err.Error()})
 }
 
 func writeImportError(c *gin.Context, err error) {
