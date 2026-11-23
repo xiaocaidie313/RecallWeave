@@ -75,7 +75,14 @@ const errorMessages: Record<string, string> = {
   'provide a question, select original messages, or save a thinking checkpoint first': '请先写下一个想继续探讨的问题。',
 }
 
-function describeError(status: number, detail: string) {
+function describeError(path: string, status: number, detail: string) {
+  if (/^\/chat\/\d+$/.test(path)) {
+    const paymentRequired = status === 402 && detail === 'model provider requires payment'
+    const legacyPaymentRequired = status === 500 && /(?:^|: )llm: chat completion failed: POST "[^"]+": 402 Payment Required\b/.test(detail)
+    if (paymentRequired || legacyPaymentRequired) {
+      return '模型服务商要求付费。请检查后端 API Key 所属账户的余额和所选模型的计费要求，处理后重新发送。'
+    }
+  }
   if (Object.hasOwn(errorMessages, detail)) return errorMessages[detail]
   if (detail.startsWith('thinking mode is unavailable')) return '思考模式暂时不可用，请检查后端的 thinking-partner 技能和配置。'
   if (status === 400) return '提交的内容有误，请检查后再试。'
@@ -95,7 +102,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     const detail = typeof body?.error === 'string' ? body.error : ''
-    throw new ApiError(response.status, describeError(response.status, detail))
+    throw new ApiError(response.status, describeError(path, response.status, detail))
   }
   try {
     return await response.json() as T
