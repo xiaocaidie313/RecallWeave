@@ -1,18 +1,18 @@
-# RecallWeave
+# 旁通 · Sidewise
 
-**从过去的思考继续往下想。** 带来一个还没想完的问题，或者选一段旧笔记。RecallWeave 可以从你的历史里找一个跨主题的联系，说明这个联想来自哪里，再用一个反例或追问陪你往深处走。你可以留下自己的下一步，过几天再回来。
+旁通是一款从个人笔记出发的思考助手。把 Markdown 或 TXT 文件导入对话，选中一句至今还没想透的话，点 **从这段接着想**。Agent 会带着你的问题寻找其他记录，尝试提出一个新解释，并给出它读过的原文位置。你可以回到原文判断这个联系是否成立，也可以指出反例，让对话沿着另一条线索继续。
 
-RecallWeave 将聊天记录和 Markdown 文档保存为原始消息，再提炼为带有消息区间的记忆。回答历史问题时，Agent 可以先检索记忆，再读取原文；后端根据实际取回的消息生成结构化引用。它也可以通过 MCP 给外部 Agent 提供记忆，或调用外部 MCP 工具完成研究任务。
+一次测试中，用户从读书会笔记里选了这样一个猜想：“那天大家终于聊起来，是因为我少讲了十分钟。”Agent 自己找到一篇换乘随记。估计走 7 分钟却走了 19 分钟时，记录者特意回去查了原因。另一次估计走 12 分钟，结果正好 12 分钟，记录者就径直去买书了。这给原问题带来了另一种解释：也许让读者开口的，是先猜了结局，又读到了出乎意料的一页。[查看这次实测](#跨笔记联想实测)
 
-技术栈：Go · Gin · GORM · PostgreSQL · pgvector · OpenAI 兼容模型接口 · MCP · SSE。
-
-项目面向本地个人使用。PC 浏览器对话界面位于 `frontend/my-app`，连接 Go 服务，支持普通对话和「接着想」。普通 HTTP API 默认监听 `127.0.0.1:8008`，远程使用需要在入口层配置访问控制。
+项目面向本地个人使用。PC 浏览器界面采用 React、TypeScript 和 Vite，Go 后端使用 Gin、GORM、PostgreSQL 和 pgvector，并提供 MCP 接口。**旁通（Sidewise）** 是作品名，源码仓库使用 **RecallWeave**，配置环境变量使用 `RECALLWEAVE_` 前缀。HTTP 服务默认监听 `127.0.0.1:8008`，远程部署需要在入口层配置访问控制。
 
 ## 阅读导航
 
 - [已有能力](#已有能力)
 - [快速启动](#快速启动)
 - [打开浏览器对话界面](#打开浏览器对话界面)
+- [导入 Markdown / TXT 并选段](#在对话里导入-markdown-和-txt)
+- [跨笔记联想实测](#跨笔记联想实测)
 - [试一次接着想](#试一次接着想)
 - [完成一次导入与查询](#完成一次导入与查询)
 - [配置与环境变量](#配置与环境变量)
@@ -21,6 +21,7 @@ RecallWeave 将聊天记录和 Markdown 文档保存为原始消息，再提炼�
 - [MCP 接入](#mcp-接入)
 - [DeepSeek Harness 与二次开发](#deepseek-harness-与二次开发)
 - [架构与源码入口](#架构与源码入口)
+- [技术说明](#技术说明)
 - [测试与验证](#测试与验证)
 - [排障与已知边界](#排障与已知边界)
 
@@ -105,7 +106,7 @@ Linux/macOS 可用 `cp` 创建配置，用 `export RECALLWEAVE_LLM_API_KEY='...'
 
 ## 打开浏览器对话界面
 
-先按上节启动带聊天模型的 Go 服务。在仓库根目录另开终端运行以下命令。
+先按上节启动 Go 服务。导入和阅读笔记可以在无模型模式下使用，发送问题需要配置聊天模型。在仓库根目录另开终端运行以下命令。
 
 ```powershell
 cd frontend/my-app
@@ -254,7 +255,7 @@ curl.exe -F "source_tag=local_note" -F "name=ideas.txt" -F "file=@ideas.txt" htt
 
 省略 `format` 可按文件名识别 Markdown，也可以显式传 `markdown`。Markdown 支持普通文档以及成对 User/Assistant 标题的聊天导出。ZIP 优先选 `conversations.json`，否则只读取首个可识别文本条目，不批量导入整个压缩包。
 
-来源标签包括 `wx`、`qq`、`weibo`、`twitter`、`facebook`、`instagram`、`youtube`、`tiktok`、`cursor_ide`、`cursor_agent`、`codex`、`chatgpt`、`deepseek_harness`。**标签不代表已有对应平台专用解析器**：ChatGPT 官方 JSON 有专用解析，其他来源默认按文本处理。`chat` 是内部聊天来源，不应作为外部导入标签。
+来源标签包括本地笔记的 `local_note`，以及 `wx`、`qq`、`weibo`、`twitter`、`facebook`、`instagram`、`youtube`、`tiktok`、`cursor_ide`、`cursor_agent`、`codex`、`chatgpt`、`deepseek_harness`。标签记录资料出处。ChatGPT 官方 JSON 有专用解析，其余平台的文本导出走通用解析。`chat` 保留给内部聊天。
 
 ## 配置与环境变量
 
@@ -339,7 +340,7 @@ curl.exe -N "http://127.0.0.1:8008/api/conversations/1/events?after=0"
 
 事件帧包含 `id`、`event`、`data`。重连可用 `Last-Event-ID` 请求头或 `after` 参数，请求头优先；游标必须属于该对话。SSE 用于后台任务、消息和报告通知；普通聊天当前仍返回完整 JSON，尚无逐 token 回答流。
 
-常见状态：`400` 参数不合法；`404` 资源不存在或 MCP 未启用；`401` MCP 令牌不匹配；`409` 历史/分支保护冲突；`503` 模型或对应能力不可用；`500` 内部失败；导入成功为 `201`。
+成功导入返回 `201`。常见客户端错误有 `400`（参数不合法）、`401`（MCP 令牌不匹配）、`404`（资源不存在或 MCP 未启用）、`409`（历史或分支保护冲突）和 `413`（上传的文件超过 20 MiB）。聊天接口用 `402` 表示模型服务商要求付费，用 `503` 表示模型或对应能力不可用。内部失败返回 `500`。
 
 ## Agent 与后台任务
 
@@ -428,6 +429,12 @@ npx @deepseek-ai/dsh --profile web --patch 'C:/path/to/RecallWeave/examples/deep
 
 ## 架构与源码入口
 
+### 技术说明
+
+1. **保存原文。** 导入器把笔记保存为一个 Session。Markdown 按文档结构解析，TXT 按空行分段，每段原文都有会话内的消息序号 `seq`。后台按批提炼记忆，每条记忆携带 `session_id`、`seq_start` 和 `seq_end`，因此即使多条笔记都讨论同一件事，也能回到各自的原话。[解析与导入](internal/ingest/ingest.go)
+2. **跨笔记找线索。** 用户选段后，后端把该段原文和提问一起交给模型。Agent 可以调用 `search_memories` 找候选记忆。关键词检索适合人名、短语等明确线索。配置可用的嵌入模型时，系统还可通过 pgvector 的余弦近邻检索找到措辞不同的相关内容，再用倒数排名融合（RRF）合并两路结果。[思考上下文](internal/chat/thinking.go) · [记忆检索](internal/memory)
+3. **读取并核对。** Agent 可以调用 `get_messages` 读回候选记忆对应的原文，再决定继续搜索还是作答。后端将检索命中的区间与工具成功读到的段落取交集，据此生成 `citations`。用户主动选中的起点由 `thinking.source` 单独记录。一次问答的工具调用、结果和错误可通过 `run_id` 回看。[工具循环](internal/agent/runtime/runtime.go) · [引用生成](internal/chat/citation.go)
+
 ```mermaid
 flowchart LR
     A[文本 / JSON / Markdown] --> B[解析与导入]
@@ -468,7 +475,7 @@ flowchart LR
 | [internal/llm](internal/llm) | 模型协议、工具调用和上下文快照 |
 | [internal/conversation](internal/conversation) / [internal/session](internal/session) | 对话、消息、分支与投递来源 |
 | [internal/config](internal/config) / [internal/db](internal/db) / [internal/types](internal/types) | 配置、数据库初始化和持久化模型 |
-| [skills](skills) | memory-audit、topic-review、web-research |
+| [skills](skills) | thinking-partner、memory-audit、topic-review、web-research |
 | [internal/eval](internal/eval) | 固定样例验证，非公开基准成绩 |
 
 问答阅读路线：`cmd/server/main.go → internal/http/chat.go → internal/chat/chat.go → internal/agent/runtime/runtime.go`；随后看 parser/ingest/extract 的导入链路。
@@ -508,7 +515,52 @@ go test -tags integration ./internal/http -run 'TestPostgres(ThinkingPartnerWork
 
 2026-11-23 还用编译出的 Go 服务、独立 PostgreSQL 18 / pgvector 测试库和本机模拟模型实跑了 PowerShell 客户端。中文提问并用 `/save` 保存后，停止并重新启动 Go 进程，再用 `-ConversationId` 和 `-ResumeFrom` 接回同一问题。HTTP 读回了两次完成的 Run 和四条消息，恢复操作带有导航标记。
 
-### 验证记录（2026-11-19）
+### 跨笔记联想实测
+
+2026-11-26，使用桌面 Chromium 和配置的 `deepseek-ai/DeepSeek-V4.1-Flash` 实测。测试对话里有两份示例笔记：《周三读书会》（Markdown，2 段）和《换乘随记》（TXT，3 段）。用户只选了读书会第 1 段，提问中没有出现“换乘”或“车票”。
+
+> 我猜那天大家聊起来，是因为我少讲了十分钟。翻翻我别的记录，有没有一件看似无关的事，会让你对这个解释产生怀疑？请拿原话说说，最后帮我想一个下次读书会就能试的小改动。
+
+<details>
+<summary>展开两份示例原文，复现这次提问</summary>
+
+分别将下面两段内容保存为 UTF-8 文件，在同一段新对话中导入。等两份笔记都显示「已提炼」，打开第一份，在「散场后的猜想」点「从这段接着想」，发送上面的问题。
+
+**01-周三读书会.md**
+
+```markdown
+# 周三读书会
+
+## 散场后的猜想
+
+我猜，那天大家终于聊起来，是因为我少讲了十分钟。以前我会把短篇从头介绍到尾，再问一句“大家怎么看”，最后常常还是我自己接话。
+
+## 那天的经过
+
+这次读到倒数第二页我就停了，请每个人在折好的纸角写下：主角会不会把那封信寄出去？不用署名，也不用交给我。翻过最后一页，小孟自己摊开纸，说：“我写的是会。可他连邮票都买了，怎么反而把信放回抽屉？”后面十几分钟几乎都是他们在聊。我挺想知道，下次只把开场缩短，会不会也这样。
+```
+
+**02-换乘随记.txt**
+
+```text
+这阵子每周四都去同一家旧书店。换乘通道很长，我通常一路走一路听播客。上周耳机没电，我在背包里翻出一张蓝色车票，在背面写了“从下车到走出南口，7分钟”，看一眼表才开始走。
+
+走出南口一算，整整19分钟。我第一次想弄清楚那12分钟丢在哪里。回程特意又走了一遍，才发现自己一直跟着“换乘大厅”的人流绕远，楼梯侧面还有一块很小的南口指示牌。
+
+今天坐同一班车，耳机也没戴。我又在票背写了一个数，这次估12分钟，出来正好12分钟。我把票塞回口袋就去买书了，连沿路的指示牌都没再看。
+```
+
+</details>
+
+| 核对项 | 本次结果 |
+| --- | --- |
+| Agent 实际做了什么 | 经过 4 轮模型调用，主动检索了 2 次记忆，随后用 `get_messages` 分别读取两份笔记。 |
+| 引用能否回到原文 | 回答附带两个引用区间，分别指向读书会第 1–2 段和换乘随记第 1–3 段。 |
+| 联想是否站得住 | 回答找到了读书会里“先写下对结局的判断”这个细节。换乘的两次经历里都写了预测，只有猜错的那次回头追查，因此还值得追问：猜错结局的读者，是否比猜对的人更想发问？ |
+
+要用自己的资料做同样的检验，可以选两份主题不同的笔记，只点选第一份的原文，让 Agent 自己寻找另一种解释。回答后展开「已核对的原文」，看第二份里的哪处细节支持这个解释，又有哪处细节会让它站不住。
+
+### 基础服务验证记录（2026-11-19）
 
 - 完整后端普通测试、`go vet` 与入口构建通过。
 - 独立 PostgreSQL 18 / pgvector 临时容器中的 HTTP、提炼和 transcript 集成测试通过；模型由测试实现模拟。
@@ -525,6 +577,8 @@ go test -tags integration ./internal/http -run 'TestPostgres(ThinkingPartnerWork
 | vector 类型/扩展错误 | 安装 pgvector，由有权限账号启用扩展 |
 | 旧向量列宽度不兼容 | 备份后按报错要求重新嵌入；迁移不静默改写旧向量 |
 | 问答 503 | 模型 key 是否进入启动进程，是否被空环境变量覆盖 |
+| 问答 402 | 模型服务商拒绝了本次计费请求。核对后端 API Key 所属账户的可用余额和模型计费要求，处理后可在原对话重试。 |
+| 能打开聊天页，但「查看笔记」返回 404 | 若聊天记录可读而笔记路由不存在，在仓库根目录用 `go run ./cmd/server` 重启更新后的后端，确认前端代理指向该实例。 |
 | 导入后无结果 | 先查 Session 提炼状态，再核对关键词、标签与 inactive |
 | 无嵌入模型仅关键词 | 支持的降级路径，空向量存为 SQL NULL |
 | 外部 MCP 启动失败 | 变量名/值、最终端点、白名单工具是否实际存在 |
